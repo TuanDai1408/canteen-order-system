@@ -58,6 +58,8 @@ export interface Order {
   cancellationDeadline: string;
   cancelledAt?: string;
   cancelReason?: string;
+  note?: string;
+  notes?: string;
   isExceptionOrder?: boolean;
   exceptionTokenUsed?: string;
   deviceInfo?: {
@@ -94,6 +96,8 @@ export interface AuditLog {
     | 'QR_TOKEN_USED'
     | 'WALLET_UPDATE'
     | 'USER_CREATE'
+    | 'USER_ROLE_CHANGED'
+    | 'TIMEGATE_OVERRIDE'
     | 'WALLET_RESET_ALL';
   actorId: string;
   actorName: string;

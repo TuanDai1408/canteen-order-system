@@ -216,6 +216,83 @@ export async function getUsers(): Promise<UserProfile[]> {
   return (data || []).map(mapUser);
 }
 
+export async function createUserByAdmin(
+  params: {
+    name: string;
+    email: string;
+    password?: string;
+    role: string;
+    department?: string;
+    phoneNumber?: string;
+    defaultRoom?: string;
+    walletBalance?: number;
+    monthlyAllowance?: number;
+  },
+  actor: UserProfile
+): Promise<UserProfile> {
+  checkSupabase();
+  const cleanEmail = params.email.trim().toLowerCase();
+  const pwd = params.password?.trim() || 'Canteen@123456';
+
+  let authUserId = `usr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  // Thử đăng ký Supabase Auth
+  try {
+    const { data: authData } = await supabase.auth.signUp({
+      email: cleanEmail,
+      password: pwd,
+      options: {
+        data: {
+          full_name: params.name.trim(),
+          role: params.role,
+        },
+      },
+    });
+    if (authData?.user?.id) {
+      authUserId = authData.user.id;
+    }
+  } catch (e) {
+    console.warn('Auth signup note on createUserByAdmin:', e);
+  }
+
+  const roleTitle =
+    params.role === 'admin'
+      ? 'Quản lý Căn tin'
+      : params.role === 'data_entry'
+      ? 'Nhân viên Bếp'
+      : params.role === 'executive'
+      ? 'Ban Giám hiệu'
+      : 'Giáo viên';
+
+  const newRow = {
+    id: authUserId,
+    auth_user_id: authUserId,
+    name: params.name.trim(),
+    email: cleanEmail,
+    role: params.role,
+    role_title: roleTitle,
+    department: params.department || 'Bộ phận nhà trường',
+    phone_number: params.phoneNumber || '',
+    default_room: params.defaultRoom || '',
+    wallet_balance: params.walletBalance ?? 1000000,
+    monthly_allowance: params.monthlyAllowance ?? 1000000,
+    is_active: true,
+  };
+
+  const { data, error } = await supabase.from('users').upsert(newRow).select().single();
+  if (error) {
+    throw new Error(`Lỗi tạo thành viên trong bảng users: ${error.message}`);
+  }
+
+  await addAuditLog({
+    action: 'USER_ROLE_CHANGED',
+    actor,
+    details: `Tạo tài khoản cán bộ mới: ${params.name} (${cleanEmail}) - Vai trò: ${roleTitle}`,
+  });
+
+  return mapUser(data);
+}
+
 export async function updateUserWallet(
   userId: string,
   newBalance: number,
@@ -767,26 +844,95 @@ async function addAuditLog(params: {
 }
 
 // ============================================================
-// TIME GATE
+// TIME GATE & CONFIGURATION
 // ============================================================
 
-export function getTimeGateStatus(openHour = 7, closeHour = 16): TimeGateStatus {
+const TIME_GATE_STORAGE_KEY = 'canteen_time_gate_config';
+
+export function getCustomTimeGateConfig(): { openTime: string; closeTime: string } {
+  try {
+    const saved = localStorage.getItem(TIME_GATE_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed.openTime && parsed.closeTime) return parsed;
+    }
+  } catch {
+    // fallback
+  }
+  return { openTime: '07:00', closeTime: '16:00' };
+}
+
+export async function setCustomTimeGateConfig(
+  openTime: string,
+  closeTime: string,
+  actor?: UserProfile
+): Promise<void> {
+  try {
+    localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify({ openTime, closeTime }));
+    if (isSupabaseConfigured && supabase) {
+      await supabase.from('system_settings').upsert({
+        key: 'time_gate_config',
+        value: { openTime, closeTime, updated_by: actor?.name || 'Admin', updated_at: new Date().toISOString() },
+      });
+    }
+    if (actor) {
+      await addAuditLog({
+        action: 'TIMEGATE_OVERRIDE',
+        actor,
+        details: `Cập nhật khung giờ nhận đơn thường: ${openTime} - ${closeTime}`,
+      });
+    }
+  } catch (e) {
+    console.warn('Set time gate config notice:', e);
+  }
+}
+
+export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: number): TimeGateStatus {
+  const cfg = getCustomTimeGateConfig();
+  const [cfgOpenH, cfgOpenM] = cfg.openTime.split(':').map(Number);
+  const [cfgCloseH, cfgCloseM] = cfg.closeTime.split(':').map(Number);
+
+  const openH = customOpenHour ?? (isNaN(cfgOpenH) ? 7 : cfgOpenH);
+  const openM = isNaN(cfgOpenM) ? 0 : cfgOpenM;
+  const closeH = customCloseHour ?? (isNaN(cfgCloseH) ? 16 : cfgCloseH);
+  const closeM = isNaN(cfgCloseM) ? 0 : cfgCloseM;
+
   const now = new Date();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-  const isOpen = hour >= openHour && hour < closeHour;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const openMinutes = openH * 60 + openM;
+  const closeMinutes = closeH * 60 + closeM;
+
+  const isOpen = currentMinutes >= openMinutes && currentMinutes < closeMinutes;
 
   return {
     isOpen,
-    currentHour: hour,
-    currentMinute: minute,
+    currentHour: now.getHours(),
+    currentMinute: now.getMinutes(),
     message: isOpen
-      ? `Căn tin đang nhận đơn đặt suất (đến ${closeHour}:00)`
-      : `Căn tin đã đóng cổng đặt món. Mở lại từ ${openHour}:00 – ${closeHour}:00`,
-    opensAt: `${String(openHour).padStart(2, '0')}:00`,
-    closesAt: `${String(closeHour).padStart(2, '0')}:00`,
-    remainingMinutes: isOpen ? (closeHour - hour) * 60 - minute : undefined,
+      ? `Căn tin đang nhận đơn đặt suất (đến ${cfg.closeTime})`
+      : `Căn tin đã đóng cổng đặt món. Mở lại từ ${cfg.openTime} – ${cfg.closeTime}`,
+    opensAt: cfg.openTime,
+    closesAt: cfg.closeTime,
+    remainingMinutes: isOpen ? closeMinutes - currentMinutes : undefined,
   };
+}
+
+/**
+ * Đọc file ảnh từ máy tính cá nhân thành Data URL base64
+ */
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to read file as data URL'));
+      }
+    };
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(file);
+  });
 }
 
 // ============================================================

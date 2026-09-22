@@ -31,7 +31,6 @@ import {
   QrCode,
   ArrowRight,
   X,
-  Printer,
   ShieldAlert,
   Info,
 } from 'lucide-react';
@@ -73,7 +72,6 @@ export function OrderHome({
   const [showExceptionField, setShowExceptionField] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
-  const [viewBillOrder, setViewBillOrder] = useState<Order | null>(null);
 
   // Categories list extracted from menu
   const categories = useMemo(() => {
@@ -470,7 +468,7 @@ export function OrderHome({
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-4">
                 {filteredMenu.map((item) => {
                   const qtyInCart = cart[item.id] || 0;
                   const isSoldOut = item.currentStock <= 0;
@@ -479,18 +477,18 @@ export function OrderHome({
                   return (
                     <div
                       key={item.id}
-                      className={`bg-white rounded-3xl border border-slate-200/80 shadow-sm hover:shadow-md transition-all overflow-hidden flex flex-col justify-between ${
+                      className={`bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between ${
                         isSoldOut ? 'opacity-70 bg-slate-50/80' : ''
                       }`}
                     >
-                      <div className="p-4 flex gap-4">
+                      <div>
                         {/* Food Image */}
-                        <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl overflow-hidden bg-slate-100 flex-shrink-0 relative border border-slate-100">
+                        <div className="w-full h-28 sm:h-36 bg-slate-100 relative overflow-hidden">
                           {item.imageUrl ? (
                             <img
                               src={item.imageUrl}
                               alt={item.name}
-                              className="w-full h-full object-cover"
+                              className="w-full h-full object-cover transition-transform duration-300 hover:scale-105"
                               loading="lazy"
                             />
                           ) : (
@@ -499,81 +497,83 @@ export function OrderHome({
                             </div>
                           )}
                           {item.category && (
-                            <span className="absolute top-1.5 left-1.5 text-[10px] font-semibold bg-slate-900/80 text-white px-2 py-0.5 rounded-md backdrop-blur-xs">
+                            <span className="absolute top-1.5 left-1.5 text-[9px] sm:text-[10px] font-semibold bg-slate-900/80 text-white px-1.5 sm:px-2 py-0.5 rounded-md backdrop-blur-xs">
                               {item.category}
                             </span>
                           )}
+                          <div className="absolute bottom-1.5 right-1.5">
+                            {isSoldOut ? (
+                              <span className="text-[9px] sm:text-[10px] font-bold text-red-600 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
+                                Hết suất
+                              </span>
+                            ) : isLowStock ? (
+                              <span className="text-[9px] sm:text-[10px] font-bold text-amber-700 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
+                                Còn {item.currentStock}
+                              </span>
+                            ) : (
+                              <span className="text-[9px] sm:text-[10px] font-semibold text-emerald-700 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
+                                Còn {item.currentStock}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Food Info */}
-                        <div className="flex-1 flex flex-col justify-between min-w-0">
-                          <div>
-                            <h3 className="font-bold text-slate-800 text-sm sm:text-base leading-snug">
-                              {item.name}
-                            </h3>
-                            <p className="text-xs text-slate-500 mt-1 line-clamp-2 leading-relaxed">
-                              {item.description || 'Suất ăn dinh dưỡng tiêu chuẩn chuẩn bị bởi Canteen.'}
-                            </p>
-                          </div>
+                        <div className="p-2.5 sm:p-3.5">
+                          <h3 className="font-bold text-slate-800 text-xs sm:text-sm leading-snug line-clamp-2 min-h-[32px] sm:min-h-[38px]">
+                            {item.name}
+                          </h3>
+                          <p className="text-[10px] sm:text-xs text-slate-500 mt-1 line-clamp-1 sm:line-clamp-2 leading-relaxed">
+                            {item.description || 'Suất ăn dinh dưỡng tiêu chuẩn chuẩn bị bởi Căn tin.'}
+                          </p>
 
                           <div className="mt-2 flex items-center justify-between">
-                            <span className="text-base font-extrabold text-teal-700 tracking-tight">
+                            <span className="text-xs sm:text-sm md:text-base font-extrabold text-teal-700 font-mono">
                               {formatVnd(item.price)}
                             </span>
-
-                            {/* Stock Indicator */}
-                            {isSoldOut ? (
-                              <span className="text-[11px] font-medium text-red-600 bg-red-50 px-2 py-0.5 rounded-lg border border-red-100">
-                                Đã hết suất
-                              </span>
-                            ) : isLowStock ? (
-                              <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-100">
-                                Chỉ còn {item.currentStock} suất
-                              </span>
-                            ) : (
-                              <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-lg border border-emerald-100">
-                                Còn {item.currentStock} suất
-                              </span>
-                            )}
                           </div>
                         </div>
                       </div>
 
                       {/* Card Footer Action */}
-                      <div className="px-4 py-2.5 bg-slate-50/70 border-t border-slate-100 flex items-center justify-between">
-                        <span className="text-xs text-slate-500">
+                      <div className="px-2.5 sm:px-3.5 py-2 bg-slate-50/80 border-t border-slate-100 flex items-center justify-between gap-1">
+                        <span className="text-[10px] sm:text-xs text-slate-500 truncate">
                           {qtyInCart > 0 ? (
-                            <span className="text-teal-700 font-semibold">
-                              Đã chọn: {qtyInCart} ({formatVnd(qtyInCart * item.price)})
+                            <span className="text-teal-700 font-semibold font-mono">
+                              x{qtyInCart}
                             </span>
                           ) : (
-                            'Chưa chọn'
+                            <span className="text-slate-400">Chọn</span>
                           )}
                         </span>
 
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 sm:gap-1.5">
                           {qtyInCart > 0 && (
                             <>
                               <button
                                 onClick={() => removeFromCart(item.id)}
-                                className="w-8 h-8 rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-sm shadow-xs transition cursor-pointer"
+                                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs shadow-xs transition cursor-pointer"
                                 aria-label="Giảm số lượng"
                               >
-                                <Minus className="w-3.5 h-3.5" />
+                                <Minus className="w-3 h-3" />
                               </button>
-                              <span className="w-6 text-center font-bold text-sm text-slate-800">
+                              <span className="w-5 text-center font-bold text-slate-800 text-xs font-mono">
                                 {qtyInCart}
                               </span>
                             </>
                           )}
-
                           <button
                             onClick={() => addToCart(item.id)}
                             disabled={isSoldOut || qtyInCart >= item.currentStock}
-                            className="px-3.5 h-8 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:opacity-40 disabled:hover:bg-teal-600 text-white flex items-center justify-center gap-1.5 font-semibold text-xs shadow-sm transition cursor-pointer"
+                            className={`h-7 sm:h-8 px-2 sm:px-2.5 rounded-lg sm:rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition cursor-pointer shadow-xs ${
+                              isSoldOut || qtyInCart >= item.currentStock
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-teal-700 hover:bg-teal-800 text-white shadow-teal-700/20'
+                            }`}
+                            aria-label="Thêm vào khay"
                           >
                             <Plus className="w-3.5 h-3.5" />
-                            <span>{qtyInCart > 0 ? 'Thêm' : 'Chọn món'}</span>
+                            <span className="text-[10px] sm:text-xs">{qtyInCart === 0 ? 'Thêm' : ''}</span>
                           </button>
                         </div>
                       </div>
@@ -635,14 +635,6 @@ export function OrderHome({
                             ) : (
                               <Copy className="w-3.5 h-3.5" />
                             )}
-                          </button>
-                          <button
-                            onClick={() => setViewBillOrder(o)}
-                            className="text-slate-500 hover:text-teal-700 p-1 flex items-center gap-1 text-[11px] font-mono cursor-pointer rounded hover:bg-slate-100"
-                            title="Xem & In phiếu hóa đơn nhiệt POS"
-                          >
-                            <Printer className="w-3.5 h-3.5 text-teal-600" />
-                            <span className="hidden sm:inline font-mono">Bill POS</span>
                           </button>
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
@@ -1032,131 +1024,6 @@ export function OrderHome({
                 className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
               >
                 {submitting ? 'Đang hủy...' : 'Xác nhận hủy'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* POS Thermal Receipt Modal (JetBrains Mono / Courier New) */}
-      {viewBillOrder && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-teal-400" />
-                <span className="font-bold text-sm">Phiếu Hóa Đơn Nhiệt POS</span>
-              </div>
-              <button
-                onClick={() => setViewBillOrder(null)}
-                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto max-h-[75vh]">
-              {/* Thermal paper slip formatted with JetBrains Mono / Courier New */}
-              <div className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px]">
-                <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                  <h4 className="font-bold text-sm uppercase tracking-wider">CANTEEN HỌC ĐƯỜNG</h4>
-                  <p className="text-[11px] text-slate-600">PHIẾU ĐẶT & NHẬN SUẤT ĂN</p>
-                  <p className="text-[10px] text-slate-500">Khổ in nhiệt K80 / K58</p>
-                </div>
-
-                <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Mã đơn:</span>
-                    <span className="font-bold text-slate-900 font-mono">{viewBillOrder.orderCode}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Thời gian đặt:</span>
-                    <span className="font-medium text-slate-800">
-                      {new Date(viewBillOrder.createdAt).toLocaleString('vi-VN')}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Cán bộ:</span>
-                    <span className="font-bold text-slate-900">{viewBillOrder.userName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Đơn vị:</span>
-                    <span className="font-semibold text-slate-800">
-                      {viewBillOrder.userDepartment || currentUser.department || 'Giáo viên'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Hình thức:</span>
-                    <span className="font-bold text-teal-700">
-                      {viewBillOrder.deliveryMethod === 'room_delivery'
-                        ? `Giao phòng (${viewBillOrder.roomNumber || 'Theo phòng'})`
-                        : 'Ăn tại Căn tin'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Giờ nhận:</span>
-                    <span className="font-bold text-slate-900">{viewBillOrder.pickupTime}</span>
-                  </div>
-                </div>
-
-                {/* Monospace aligned column table */}
-                <div className="py-2.5 border-b border-dashed border-slate-400">
-                  <div className="flex justify-between font-bold text-[11px] pb-1 border-b border-slate-200 mb-1.5">
-                    <span className="w-1/2">Tên món</span>
-                    <span className="w-10 text-center">SL</span>
-                    <span className="w-16 text-right">Đơn giá</span>
-                    <span className="w-18 text-right">T.Tiền</span>
-                  </div>
-                  <div className="space-y-1.5 text-[11px]">
-                    {viewBillOrder.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between items-start">
-                        <span className="w-1/2 pr-1 truncate font-medium">{it.name}</span>
-                        <span className="w-10 text-center font-bold">{it.quantity}</span>
-                        <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
-                        <span className="w-18 text-right font-bold text-slate-900">
-                          {formatVnd(it.price * it.quantity).replace(' ₫', '')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
-                  <div className="flex justify-between font-bold text-xs pt-1">
-                    <span>TỔNG CỘNG:</span>
-                    <span className="text-teal-700 font-extrabold text-sm font-mono">
-                      {formatVnd(viewBillOrder.totalAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>Thanh toán:</span>
-                    <span>Ví suất ăn cán bộ</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>Trạng thái:</span>
-                    <span className="font-semibold text-emerald-700">Đã thanh toán</span>
-                  </div>
-                </div>
-
-                <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                  <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                  <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
-              <button
-                onClick={() => setViewBillOrder(null)}
-                className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
-              >
-                Đóng
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs rounded-xl shadow-md shadow-teal-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
-              >
-                <Printer className="w-4 h-4" />
-                <span>In Hóa Đơn Nhiệt</span>
               </button>
             </div>
           </div>

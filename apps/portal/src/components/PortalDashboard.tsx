@@ -6,6 +6,10 @@ import {
   createQRToken,
   updateOrderStatus,
   updateUserWallet,
+  createUserByAdmin,
+  fileToBase64,
+  getCustomTimeGateConfig,
+  setCustomTimeGateConfig,
   getTomorrowStr,
   type UserProfile,
   type MenuItem,
@@ -14,6 +18,7 @@ import {
   type QRExceptionToken,
   type TimeGateStatus,
   type OrderStatus,
+  type UserRole,
 } from '@canteen/shared';
 import {
   LayoutDashboard,
@@ -41,6 +46,11 @@ import {
   Menu as MenuIcon,
   ChevronRight,
   Sparkles,
+  Pencil,
+  Upload,
+  Clock,
+  UserPlus,
+  Image as ImageIcon,
 } from 'lucide-react';
 
 interface Props {
@@ -112,6 +122,53 @@ export function PortalDashboard({
 
   // POS Thermal Receipt state
   const [printReceiptOrder, setPrintReceiptOrder] = useState<Order | null>(null);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
+  const [batchPrintOrders, setBatchPrintOrders] = useState<Order[] | null>(null);
+
+  // Admin Time Gate Settings
+  const initialTimeCfg = getCustomTimeGateConfig();
+  const [timeOpen, setTimeOpen] = useState(initialTimeCfg.openTime);
+  const [timeClose, setTimeClose] = useState(initialTimeCfg.closeTime);
+  const [isSavingTime, setIsSavingTime] = useState(false);
+
+  // Edit Dish state
+  const [editingDish, setEditingDish] = useState<MenuItem | null>(null);
+  const [editDishForm, setEditDishForm] = useState<{
+    id: string;
+    name: string;
+    category: 'Cơm trưa' | 'Bún / Phở' | 'Món Chay' | 'Đồ uống / Tráng miệng';
+    description: string;
+    price: number;
+    preparedStock: number;
+    currentStock: number;
+    imageUrl: string;
+    isActive: boolean;
+  } | null>(null);
+
+  // Add User state (Cán bộ & Ví suất ăn)
+  const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
+  const [newUserForm, setNewUserForm] = useState<{
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    department: string;
+    phoneNumber: string;
+    defaultRoom: string;
+    walletBalance: number;
+    monthlyAllowance: number;
+  }>({
+    name: '',
+    email: '',
+    password: 'Canteen@123456',
+    role: 'teacher',
+    department: 'Tổ Chuyên Môn',
+    phoneNumber: '',
+    defaultRoom: '',
+    walletBalance: 1000000,
+    monthlyAllowance: 1000000,
+  });
 
   // Overview metrics
   const activeOrders = useMemo(() => orders.filter((o) => o.status !== 'cancelled'), [orders]);
@@ -263,6 +320,165 @@ export function PortalDashboard({
       onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật ví' });
+    }
+  };
+
+  // Save Admin Time Gate Config
+  const handleSaveTimeGate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingTime(true);
+    try {
+      await setCustomTimeGateConfig(timeOpen, timeClose, currentUser);
+      setMsg({
+        type: 'ok',
+        text: `Đã cập nhật khung giờ nhận đơn thường: ${timeOpen} – ${timeClose} thành công!`,
+      });
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật khung giờ nhận đơn' });
+    } finally {
+      setIsSavingTime(false);
+    }
+  };
+
+  // Image Upload handler (From local computer)
+  const handleImageFileChange = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    target: 'new' | 'edit'
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      setMsg({ type: 'err', text: 'Kích thước file ảnh không được vượt quá 5MB.' });
+      return;
+    }
+
+    try {
+      const base64 = await fileToBase64(file);
+      if (target === 'new') {
+        setNewDish((prev) => ({ ...prev, imageUrl: base64 }));
+      } else if (target === 'edit' && editDishForm) {
+        setEditDishForm((prev) => (prev ? { ...prev, imageUrl: base64 } : null));
+      }
+      setMsg({ type: 'ok', text: `Đã tải lên ảnh từ máy tính (${file.name})` });
+    } catch (err: any) {
+      setMsg({ type: 'err', text: 'Không thể đọc file ảnh từ máy tính.' });
+    }
+  };
+
+  // Start Edit Dish
+  const handleStartEditDish = (item: MenuItem) => {
+    setEditingDish(item);
+    setEditDishForm({
+      id: item.id,
+      name: item.name,
+      category: item.category as any,
+      description: item.description || '',
+      price: item.price,
+      preparedStock: item.preparedStock,
+      currentStock: item.currentStock,
+      imageUrl: item.imageUrl || '',
+      isActive: item.isActive,
+    });
+  };
+
+  // Save Edit Dish
+  const handleSaveEditDish = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingDish || !editDishForm) return;
+
+    try {
+      await updateMenuItem(
+        editingDish.id,
+        {
+          name: editDishForm.name.trim(),
+          category: editDishForm.category,
+          description: editDishForm.description.trim(),
+          price: Number(editDishForm.price),
+          preparedStock: Number(editDishForm.preparedStock),
+          currentStock: Number(editDishForm.currentStock),
+          imageUrl: editDishForm.imageUrl.trim(),
+          isActive: editDishForm.isActive,
+        },
+        currentUser
+      );
+      setMsg({ type: 'ok', text: `Đã cập nhật món ăn "${editDishForm.name}" thành công!` });
+      setEditingDish(null);
+      setEditDishForm(null);
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật món ăn' });
+    }
+  };
+
+  // Create New User (Synced with Supabase)
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsCreatingUser(true);
+    try {
+      const created = await createUserByAdmin(
+        {
+          name: newUserForm.name.trim(),
+          email: newUserForm.email.trim(),
+          password: newUserForm.password.trim(),
+          role: newUserForm.role,
+          department: newUserForm.department.trim(),
+          phoneNumber: newUserForm.phoneNumber.trim(),
+          defaultRoom: newUserForm.defaultRoom.trim(),
+          walletBalance: Number(newUserForm.walletBalance),
+          monthlyAllowance: Number(newUserForm.monthlyAllowance),
+        },
+        currentUser
+      );
+      setMsg({
+        type: 'ok',
+        text: `Đã tạo thành viên "${created.name}" (${created.email}) đồng bộ trên Supabase thành công!`,
+      });
+      setIsAddUserOpen(false);
+      setNewUserForm({
+        name: '',
+        email: '',
+        password: 'Canteen@123456',
+        role: 'teacher',
+        department: 'Tổ Chuyên Môn',
+        phoneNumber: '',
+        defaultRoom: '',
+        walletBalance: 1000000,
+        monthlyAllowance: 1000000,
+      });
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err.message || 'Lỗi khi tạo thành viên mới' });
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  // Batch Print Selection Helpers
+  const toggleSelectOrder = (orderId: string) => {
+    setSelectedOrderIds((prev) =>
+      prev.includes(orderId) ? prev.filter((id) => id !== orderId) : [...prev, orderId]
+    );
+  };
+
+  const toggleSelectAllOrders = () => {
+    if (selectedOrderIds.length === filteredOrders.length) {
+      setSelectedOrderIds([]);
+    } else {
+      setSelectedOrderIds(filteredOrders.map((o) => o.id));
+    }
+  };
+
+  const selectPendingKitchenOrders = () => {
+    const kitchenOrders = orders.filter(
+      (o) => o.status === 'confirmed' || o.status === 'preparing'
+    );
+    setSelectedOrderIds(kitchenOrders.map((o) => o.id));
+    if (kitchenOrders.length > 0) {
+      setBatchPrintOrders(kitchenOrders);
+    } else {
+      setMsg({ type: 'ok', text: 'Hiện không có đơn nào đang chờ nấu hoặc đang nấu.' });
     }
   };
 
@@ -722,6 +938,88 @@ export function PortalDashboard({
                   </table>
                 </div>
               </div>
+
+              {/* Admin Time Gate Settings */}
+              {currentUser.role === 'admin' && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-indigo-600" />
+                        <h3 className="font-extrabold text-slate-900 text-sm">
+                          Cấu hình Khung giờ Nhận Đơn Thường (Admin)
+                        </h3>
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          Quyền Admin
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-500 mt-1">
+                        Cán bộ và giáo viên chỉ có thể đặt suất ăn thường trong khung giờ này. Sau giờ đóng, hệ thống sẽ yêu cầu Mã QR ngoại lệ.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
+                          timeStatus.isOpen
+                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            : 'bg-rose-50 text-rose-700 border border-rose-200'
+                        }`}
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            timeStatus.isOpen ? 'bg-emerald-500' : 'bg-rose-500'
+                          }`}
+                        />
+                        {timeStatus.isOpen ? 'Cổng Đang MỞ' : 'Cổng Đã ĐÓNG'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleSaveTimeGate} className="mt-4 flex flex-col sm:flex-row items-end gap-3">
+                    <div className="w-full sm:w-44">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Giờ mở nhận đơn:
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={timeOpen}
+                        onChange={(e) => setTimeOpen(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="w-full sm:w-44">
+                      <label className="block text-xs font-bold text-slate-700 mb-1">
+                        Giờ chốt nhận đơn:
+                      </label>
+                      <input
+                        type="time"
+                        required
+                        value={timeClose}
+                        onChange={(e) => setTimeClose(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="flex-1 text-xs text-slate-500 pb-1">
+                      <p>
+                        Hiện tại: <strong className="text-slate-800 font-mono">{timeOpen} – {timeClose}</strong> hàng ngày.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isSavingTime}
+                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shadow-xs min-h-[38px]"
+                    >
+                      <Check className="w-4 h-4" />
+                      <span>{isSavingTime ? 'Đang lưu...' : 'Lưu cấu hình giờ'}</span>
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           )}
 
@@ -760,10 +1058,10 @@ export function PortalDashboard({
 
                   <button
                     onClick={() => setIsAddDishOpen(true)}
-                    className="md:hidden px-3 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold flex items-center gap-1 min-h-[40px] flex-shrink-0 cursor-pointer"
+                    className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs"
                   >
                     <Plus className="w-4 h-4" />
-                    <span>Thêm</span>
+                    <span>Thêm món</span>
                   </button>
                 </div>
               </div>
@@ -791,6 +1089,15 @@ export function PortalDashboard({
                         <span className="absolute top-2 left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
                           {item.category}
                         </span>
+
+                        <button
+                          onClick={() => handleStartEditDish(item)}
+                          className="absolute top-2 right-2 bg-white/95 hover:bg-white backdrop-blur-xs text-slate-700 hover:text-indigo-600 text-[11px] font-bold px-2.5 py-1 rounded-lg shadow-xs border border-slate-200/80 flex items-center gap-1 transition cursor-pointer"
+                          title="Chỉnh sửa thông tin và ảnh món"
+                        >
+                          <Pencil className="w-3 h-3 text-indigo-600" />
+                          <span>Sửa món</span>
+                        </button>
                       </div>
 
                       <div className="flex justify-between items-start gap-2">
@@ -915,12 +1222,68 @@ export function PortalDashboard({
                 </div>
               </div>
 
+              {/* Batch Action Bar */}
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                  <span className="text-xs font-bold text-slate-800">
+                    In Bill Hàng Loạt Máy POS (K80 / K58):
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={selectPendingKitchenOrders}
+                    className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
+                  >
+                    <ChefHat className="w-4 h-4 text-indigo-600" />
+                    <span>Chọn & In Đơn Bếp ({orders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
+                  </button>
+
+                  {selectedOrderIds.length > 0 && (
+                    <>
+                      <button
+                        onClick={() => setSelectedOrderIds([])}
+                        className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-xl transition cursor-pointer min-h-[36px]"
+                      >
+                        Bỏ chọn
+                      </button>
+
+                      <button
+                        onClick={() =>
+                          setBatchPrintOrders(orders.filter((o) => selectedOrderIds.includes(o.id)))
+                        }
+                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
+                      >
+                        <Printer className="w-4 h-4" />
+                        <span>In {selectedOrderIds.length} Phiếu POS</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Orders Table */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[700px]">
+                  <table className="w-full text-left text-xs min-w-[750px]">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
+                        <th className="py-3 px-3 w-10 text-center">
+                          <input
+                            type="checkbox"
+                            checked={
+                              filteredOrders.length > 0 &&
+                              selectedOrderIds.length === filteredOrders.length
+                            }
+                            onChange={toggleSelectAllOrders}
+                            className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                            title="Chọn / Bỏ chọn tất cả"
+                          />
+                        </th>
                         <th className="py-3 px-4">Mã đơn</th>
                         <th className="py-3 px-4">Cán bộ / Giáo viên</th>
                         <th className="py-3 px-4">Phòng nhận</th>
@@ -934,6 +1297,14 @@ export function PortalDashboard({
                     <tbody className="divide-y divide-slate-100">
                       {filteredOrders.map((o) => (
                         <tr key={o.id} className="hover:bg-slate-50/70">
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={selectedOrderIds.includes(o.id)}
+                              onChange={() => toggleSelectOrder(o.id)}
+                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                            />
+                          </td>
                           <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
                             {o.orderCode}
                           </td>
@@ -1038,7 +1409,7 @@ export function PortalDashboard({
           {/* ================= TAB: USERS ================= */}
           {tab === 'users' && (
             <div className="space-y-4">
-              <div className="flex justify-between items-center">
+              <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                 <div className="relative min-w-[240px] flex-1 max-w-md">
                   <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
@@ -1049,6 +1420,14 @@ export function PortalDashboard({
                     className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
                   />
                 </div>
+
+                <button
+                  onClick={() => setIsAddUserOpen(true)}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs min-h-[40px]"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>Tạo thành viên mới (Đồng bộ Supabase)</span>
+                </button>
               </div>
 
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
@@ -1294,14 +1673,48 @@ export function PortalDashboard({
                 />
               </div>
 
+              {/* Image selection: Local Computer File or URL */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">URL Hình ảnh</label>
-                <input
-                  type="url"
-                  value={newDish.imageUrl}
-                  onChange={(e) => setNewDish({ ...newDish, imageUrl: e.target.value })}
-                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
-                />
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Hình ảnh món ăn (Tải từ máy tính hoặc nhập URL)
+                </label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label
+                      htmlFor="new-dish-file"
+                      className="flex-1 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition min-h-[42px]"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Chọn ảnh từ máy tính cá nhân</span>
+                    </label>
+                    <input
+                      id="new-dish-file"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleImageFileChange(e, 'new')}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={newDish.imageUrl}
+                      onChange={(e) => setNewDish({ ...newDish, imageUrl: e.target.value })}
+                      placeholder="Hoặc dán URL hình ảnh..."
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                    />
+                    {newDish.imageUrl && (
+                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-300 flex-shrink-0 bg-slate-100">
+                        <img
+                          src={newDish.imageUrl}
+                          alt="Xem trước"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -1317,6 +1730,194 @@ export function PortalDashboard({
                   className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px]"
                 >
                   Thêm món ngay
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: EDIT DISH ================= */}
+      {editingDish && editDishForm && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base">Chỉnh sửa món ăn</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{editingDish.name}</p>
+              </div>
+              <button
+                onClick={() => {
+                  setEditingDish(null);
+                  setEditDishForm(null);
+                }}
+                className="text-slate-400 hover:text-slate-600 p-1 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditDish} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Tên món ăn</label>
+                <input
+                  type="text"
+                  required
+                  value={editDishForm.name}
+                  onChange={(e) => setEditDishForm({ ...editDishForm, name: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Phân loại</label>
+                  <select
+                    value={editDishForm.category}
+                    onChange={(e: any) =>
+                      setEditDishForm({ ...editDishForm, category: e.target.value })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  >
+                    <option value="Cơm trưa">Cơm trưa</option>
+                    <option value="Bún / Phở">Bún / Phở</option>
+                    <option value="Món Chay">Món Chay</option>
+                    <option value="Đồ uống / Tráng miệng">Đồ uống / Tráng miệng</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Đơn giá (VNĐ)</label>
+                  <input
+                    type="number"
+                    step="1000"
+                    required
+                    value={editDishForm.price}
+                    onChange={(e) =>
+                      setEditDishForm({ ...editDishForm, price: Number(e.target.value) })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Suất dự kiến nấu</label>
+                  <input
+                    type="number"
+                    required
+                    value={editDishForm.preparedStock}
+                    onChange={(e) =>
+                      setEditDishForm({ ...editDishForm, preparedStock: Number(e.target.value) })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Tồn kho hiện tại</label>
+                  <input
+                    type="number"
+                    required
+                    value={editDishForm.currentStock}
+                    onChange={(e) =>
+                      setEditDishForm({ ...editDishForm, currentStock: Number(e.target.value) })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Mô tả món ăn</label>
+                <textarea
+                  rows={2}
+                  value={editDishForm.description}
+                  onChange={(e) =>
+                    setEditDishForm({ ...editDishForm, description: e.target.value })
+                  }
+                  className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                />
+              </div>
+
+              {/* Image selection: Local Computer File or URL */}
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Hình ảnh món ăn (Tải từ máy tính hoặc nhập URL)
+                </label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3">
+                    <label
+                      htmlFor="edit-dish-file"
+                      className="flex-1 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition min-h-[42px]"
+                    >
+                      <Upload className="w-4 h-4" />
+                      <span>Chọn ảnh mới từ máy tính cá nhân</span>
+                    </label>
+                    <input
+                      id="edit-dish-file"
+                      type="file"
+                      accept="image/*"
+                      onChange={(e) => handleImageFileChange(e, 'edit')}
+                      className="hidden"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={editDishForm.imageUrl}
+                      onChange={(e) =>
+                        setEditDishForm({ ...editDishForm, imageUrl: e.target.value })
+                      }
+                      placeholder="Hoặc dán URL hình ảnh..."
+                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                    />
+                    {editDishForm.imageUrl && (
+                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-300 flex-shrink-0 bg-slate-100">
+                        <img
+                          src={editDishForm.imageUrl}
+                          alt="Xem trước"
+                          className="w-full h-full object-cover"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="edit-dish-active"
+                  checked={editDishForm.isActive}
+                  onChange={(e) =>
+                    setEditDishForm({ ...editDishForm, isActive: e.target.checked })
+                  }
+                  className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500"
+                />
+                <label htmlFor="edit-dish-active" className="text-xs font-bold text-slate-700 cursor-pointer">
+                  Kích hoạt hiển thị trên Thực đơn ngày mai
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingDish(null);
+                    setEditDishForm(null);
+                  }}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px]"
+                >
+                  Lưu thay đổi món ăn
                 </button>
               </div>
             </form>
@@ -1458,6 +2059,177 @@ export function PortalDashboard({
           </div>
         </div>
       )}
+
+      {/* ================= MODAL: ADD USER (CÁN BỘ & ĐỒNG BỘ SUPABASE) ================= */}
+      {isAddUserOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="w-full max-w-lg bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  Thêm Cán Bộ / Thành Viên Mới
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Đồng bộ tức thì lên Supabase Auth & Bảng users
+                </p>
+              </div>
+              <button
+                onClick={() => setIsAddUserOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 min-h-[44px] min-w-[44px] flex items-center justify-center"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateUser} className="space-y-3.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Họ và tên <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="VD: TS. Nguyễn Văn A"
+                    value={newUserForm.name}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, name: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Email đăng nhập <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    placeholder="nguyenvana@school.edu.vn"
+                    value={newUserForm.email}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, email: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Mật khẩu ban đầu <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={newUserForm.password}
+                    onChange={(e) => setNewUserForm({ ...newUserForm, password: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400">Mặc định: Canteen@123456</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Vai trò hệ thống
+                  </label>
+                  <select
+                    value={newUserForm.role}
+                    onChange={(e: any) =>
+                      setNewUserForm({ ...newUserForm, role: e.target.value as UserRole })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  >
+                    <option value="teacher">Giáo viên / Cán bộ nhân viên</option>
+                    <option value="data_entry">Nhân viên Canteen / Nhập liệu</option>
+                    <option value="admin">Quản trị viên (Admin)</option>
+                    <option value="executive">Ban Giám Hiệu / Lãnh đạo</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Phòng ban / Khoa</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="VD: Tổ Chuyên Môn, Khoa CNTT..."
+                    value={newUserForm.department}
+                    onChange={(e) =>
+                      setNewUserForm({ ...newUserForm, department: e.target.value })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Phòng làm việc mặc định
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="VD: P.204 Nhà A"
+                    value={newUserForm.defaultRoom}
+                    onChange={(e) =>
+                      setNewUserForm({ ...newUserForm, defaultRoom: e.target.value })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Số điện thoại</label>
+                  <input
+                    type="tel"
+                    placeholder="0912345678"
+                    value={newUserForm.phoneNumber}
+                    onChange={(e) =>
+                      setNewUserForm({ ...newUserForm, phoneNumber: e.target.value })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Số dư ví ban đầu (VNĐ)
+                  </label>
+                  <input
+                    type="number"
+                    step="50000"
+                    required
+                    value={newUserForm.walletBalance}
+                    onChange={(e) =>
+                      setNewUserForm({ ...newUserForm, walletBalance: Number(e.target.value) })
+                    }
+                    className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-emerald-600 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsAddUserOpen(false)}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingUser}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 flex items-center justify-center gap-2 min-h-[44px]"
+                >
+                  <UserPlus className="w-4 h-4" />
+                  <span>{isCreatingUser ? 'Đang tạo trên Supabase...' : 'Tạo thành viên ngay'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* POS Thermal Bill Modal (K80 / K58 Monospace) */}
       {printReceiptOrder && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
@@ -1576,6 +2348,148 @@ export function PortalDashboard({
               >
                 <Printer className="w-4 h-4" />
                 <span>In Phiếu Nhiệt POS</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: BATCH POS RECEIPTS PRINT ================= */}
+      {batchPrintOrders && batchPrintOrders.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Printer className="w-5 h-5 text-indigo-400" />
+                <div>
+                  <h4 className="font-bold text-sm">In Hàng Loạt Hóa Đơn POS ({batchPrintOrders.length} đơn)</h4>
+                  <p className="text-[11px] text-slate-400">Khổ nhiệt K80 / K58 · Monospace</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBatchPrintOrders(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-6 bg-slate-100/80 overflow-y-auto max-h-[75vh] space-y-6">
+              {batchPrintOrders.map((ord, idx) => (
+                <div
+                  key={ord.id}
+                  className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px] relative break-after-page"
+                >
+                  <div className="absolute top-2 right-2 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 border border-slate-200">
+                    #{idx + 1}/{batchPrintOrders.length}
+                  </div>
+
+                  <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
+                    <h4 className="font-bold text-sm uppercase tracking-wider">CANTEEN HỌC ĐƯỜNG</h4>
+                    <p className="text-[11px] text-slate-600">PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
+                    <p className="text-[10px] text-slate-500">Khổ in nhiệt K80 / K58</p>
+                  </div>
+
+                  <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Mã đơn:</span>
+                      <span className="font-bold text-slate-900 font-mono">{ord.orderCode}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Giờ in:</span>
+                      <span className="font-medium text-slate-800">{new Date().toLocaleString('vi-VN')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Cán bộ:</span>
+                      <span className="font-bold text-slate-900">{ord.userName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Phòng ban:</span>
+                      <span>{ord.userDepartment}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Hình thức:</span>
+                      <span className="font-bold text-indigo-700">
+                        {ord.deliveryMethod === 'room_delivery' ? `Giao phòng: ${ord.roomNumber || 'P.Phòng'}` : 'Dùng tại Căn tin'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Giờ nhận suất:</span>
+                      <span className="font-bold text-amber-700">{ord.pickupTime}</span>
+                    </div>
+                  </div>
+
+                  <div className="py-2.5 border-b border-dashed border-slate-400">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1 border-b border-slate-200 pb-1">
+                      <span>Món</span>
+                      <span>SL × Giá</span>
+                      <span className="text-right">T.Tiền</span>
+                    </div>
+                    <div className="space-y-1 text-[11px]">
+                      {ord.items.map((it, i) => (
+                        <div key={i} className="flex justify-between items-center">
+                          <span className="truncate max-w-[140px] font-medium text-slate-800">{it.name}</span>
+                          <span className="text-slate-500 font-mono text-[10px]">
+                            {it.quantity}×{formatVnd(it.price).replace('₫', '')}
+                          </span>
+                          <span className="font-bold text-slate-900 font-mono text-right">
+                            {formatVnd(it.quantity * it.price)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {ord.note && (
+                    <div className="py-2 border-b border-dashed border-slate-400 text-[10px] text-slate-700">
+                      <strong>Ghi chú:</strong> {ord.note}
+                    </div>
+                  )}
+
+                  <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
+                    <div className="flex justify-between font-bold text-xs pt-1">
+                      <span>TỔNG CỘNG:</span>
+                      <span className="text-indigo-600 font-extrabold text-sm font-mono">
+                        {formatVnd(ord.totalAmount)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500">
+                      <span>Thanh toán:</span>
+                      <span>Ví suất ăn Căn tin</span>
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500">
+                      <span>Trạng thái:</span>
+                      <span className="font-semibold text-emerald-700">Đã trừ ví tự động</span>
+                    </div>
+                  </div>
+
+                  <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
+                    <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
+                    <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
+                  </div>
+
+                  {idx < batchPrintOrders.length - 1 && (
+                    <div className="mt-4 pt-2 text-center text-[10px] text-slate-400 border-t border-dashed border-slate-400">
+                      ✂ - - - - - - - - [ VẾT CẮT GIẤY IN NHIỆT POS ] - - - - - - - - ✂
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
+              <button
+                onClick={() => setBatchPrintOrders(null)}
+                className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
+              >
+                Đóng
+              </button>
+              <button
+                onClick={() => window.print()}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
+              >
+                <Printer className="w-4 h-4" />
+                <span>In Tất Cả {batchPrintOrders.length} Phiếu POS</span>
               </button>
             </div>
           </div>
