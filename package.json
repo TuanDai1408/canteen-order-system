@@ -4,17 +4,20 @@
   "version": "1.0.0",
   "description": "Hệ thống Đặt suất ăn Canteen - Monorepo (Order + Portal)",
   "scripts": {
+    "dev": "npm run dev -w order",
     "dev:order": "npm run dev -w order",
     "dev:portal": "npm run dev -w portal",
     "build:order": "npm run build -w order",
     "build:portal": "npm run build -w portal",
-    "build": "npm run build -w order && npm run build -w portal"
+    "build": "npm run build -w order && rm -rf dist && cp -r apps/order/dist dist",
+    "lint": "npm run lint -w order && npm run lint -w portal"
   },
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "engines": {
-    "node": "20.x"
+    "node": ">=20.0.0"
   }
+
 }

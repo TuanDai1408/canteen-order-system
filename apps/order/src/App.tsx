@@ -2,27 +2,42 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   getCurrentUserProfile,
   getMenu,
+  getAllMenuItems,
   getOrders,
+  getUsers,
+  getAuditLogs,
+  getQRTokens,
   getTimeGateStatus,
   subscribeRealtime,
   logout,
   type UserProfile,
   type MenuItem,
   type Order,
+  type AuditLog,
+  type QRExceptionToken,
   type TimeGateStatus,
 } from '@canteen/shared';
 import { LoginPage } from './components/LoginPage';
 import { OrderHome } from './components/OrderHome';
+import { PortalDashboard } from './components/PortalDashboard';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const [currentView, setCurrentView] = useState<'order' | 'portal'>('order');
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [timeStatus, setTimeStatus] = useState<TimeGateStatus>(() => getTimeGateStatus());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refreshData = useCallback(async (profile: UserProfile) => {
+  // Portal-specific states
+  const [portalMenu, setPortalMenu] = useState<MenuItem[]>([]);
+  const [allOrders, setAllOrders] = useState<Order[]>([]);
+  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [logs, setLogs] = useState<AuditLog[]>([]);
+  const [tokens, setTokens] = useState<QRExceptionToken[]>([]);
+
+  const refreshOrderData = useCallback(async (profile: UserProfile) => {
     try {
       const [menuData, ordersData] = await Promise.all([
         getMenu(),
@@ -37,13 +52,45 @@ export default function App() {
     }
   }, []);
 
+  const refreshPortalData = useCallback(async () => {
+    try {
+      const [m, o, u, l, t] = await Promise.all([
+        getAllMenuItems(),
+        getOrders(),
+        getUsers(),
+        getAuditLogs(50),
+        getQRTokens(),
+      ]);
+      setPortalMenu(m);
+      setAllOrders(o);
+      setAllUsers(u);
+      setLogs(l);
+      setTokens(t);
+      setTimeStatus(getTimeGateStatus());
+    } catch (e: any) {
+      console.error(e);
+    }
+  }, []);
+
+  const refreshAll = useCallback(async (profile: UserProfile) => {
+    await Promise.all([
+      refreshOrderData(profile),
+      refreshPortalData(),
+    ]);
+  }, [refreshOrderData, refreshPortalData]);
+
   useEffect(() => {
     async function init() {
       try {
         const profile = await getCurrentUserProfile();
         setUser(profile);
         if (profile) {
-          await refreshData(profile);
+          if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
+            setCurrentView('portal');
+          } else {
+            setCurrentView('order');
+          }
+          await refreshAll(profile);
         }
       } catch (e: any) {
         console.error(e);
@@ -57,7 +104,7 @@ export default function App() {
       getCurrentUserProfile().then((profile) => {
         if (profile) {
           setUser(profile);
-          refreshData(profile);
+          refreshAll(profile);
         }
       });
     });
@@ -70,13 +117,14 @@ export default function App() {
       unsub();
       clearInterval(clock);
     };
-  }, [refreshData]);
+  }, [refreshAll]);
 
   const handleLogout = async () => {
     await logout();
     setUser(null);
     setMenu([]);
     setOrders([]);
+    setCurrentView('order');
   };
 
   if (loading) {
@@ -84,7 +132,7 @@ export default function App() {
       <div className="min-h-dvh flex items-center justify-center bg-slate-50">
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-teal-600 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-slate-600 text-sm">Đang tải hệ thống...</p>
+          <p className="text-slate-600 text-sm">Đang tải hệ thống Canteen...</p>
         </div>
       </div>
     );
@@ -95,31 +143,33 @@ export default function App() {
       <LoginPage
         onSuccess={async (profile) => {
           setUser(profile);
-          await refreshData(profile);
+          if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
+            setCurrentView('portal');
+          } else {
+            setCurrentView('order');
+          }
+          await refreshAll(profile);
         }}
       />
     );
   }
 
-  // Chỉ cho phép teacher (và admin để test)
-  if (user.role !== 'teacher' && user.role !== 'admin') {
+  const isManagementRole = Boolean(user && ['admin', 'data_entry', 'executive'].includes(user.role));
+
+  if (currentView === 'portal' && isManagementRole) {
     return (
-      <div className="min-h-dvh flex items-center justify-center p-6 bg-slate-50">
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 max-w-md text-center">
-          <h1 className="text-xl font-semibold text-slate-800 mb-2">Không có quyền truy cập</h1>
-          <p className="text-slate-600 mb-6">
-            Ứng dụng đặt món chỉ dành cho Giáo viên / Cán bộ.
-            <br />
-            Vai trò hiện tại của bạn: <strong>{user.roleTitle || user.role}</strong>
-          </p>
-          <button
-            onClick={handleLogout}
-            className="px-5 py-2.5 bg-slate-800 text-white rounded-xl text-sm font-medium hover:bg-slate-700"
-          >
-            Đăng xuất
-          </button>
-        </div>
-      </div>
+      <PortalDashboard
+        currentUser={user}
+        menu={portalMenu}
+        orders={allOrders}
+        users={allUsers}
+        logs={logs}
+        tokens={tokens}
+        timeStatus={timeStatus}
+        onRefresh={refreshPortalData}
+        onLogout={handleLogout}
+        onSwitchToOrder={() => setCurrentView('order')}
+      />
     );
   }
 
@@ -130,9 +180,17 @@ export default function App() {
       orders={orders}
       timeStatus={timeStatus}
       error={error}
-      onRefresh={() => refreshData(user)}
+      onRefresh={() => refreshOrderData(user)}
       onLogout={handleLogout}
       onUserUpdate={setUser}
+      onSwitchToPortal={
+        isManagementRole
+          ? () => {
+              refreshPortalData();
+              setCurrentView('portal');
+            }
+          : undefined
+      }
     />
   );
 }

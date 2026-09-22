@@ -1,0 +1,6 @@
+{
+  "name": "Canteen Order & Management System",
+  "description": "Hệ thống Đặt suất ăn Canteen trường học và Portal Quản lý Căn tin (dành cho Giáo viên, Cán bộ và Ban Quản lý)",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

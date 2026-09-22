@@ -14,11 +14,12 @@ export type {
 } from './types';
 
 // Supabase client
-export { supabase } from './lib/supabase';
+export { supabase, isSupabaseConfigured } from './lib/supabase';
 
 // API
 export {
   login,
+  signUp,
   logout,
   getSession,
   getCurrentUserProfile,

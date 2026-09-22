@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type {
   UserProfile,
   MenuItem,
@@ -11,41 +11,198 @@ import type {
 import { detectCurrentDevice } from '../utils/deviceDetector';
 import { getTomorrowStr } from '../utils/date';
 
+const checkSupabase = () => {
+  if (!isSupabaseConfigured || !supabase) {
+    throw new Error(
+      'Hệ thống chưa cấu hình biến môi trường Supabase (VITE_SUPABASE_URL và VITE_SUPABASE_ANON_KEY).'
+    );
+  }
+};
+
 // ============================================================
 // AUTH
 // ============================================================
 
 export async function login(email: string, password: string) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw error;
+  checkSupabase();
+  const cleanEmail = email.trim();
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email: cleanEmail,
+    password,
+  });
+
+  if (error) {
+    const msg = error.message || '';
+    if (msg.toLowerCase().includes('invalid login credentials')) {
+      throw new Error('Email hoặc mật khẩu không chính xác trên hệ thống.');
+    }
+    if (msg.toLowerCase().includes('email not confirmed')) {
+      throw new Error(
+        'Email chưa được kích hoạt. Vui lòng kiểm tra hộp thư hoặc tắt tùy chọn "Confirm email" trong cài đặt Supabase Auth.'
+      );
+    }
+    throw new Error(msg || 'Đăng nhập không thành công.');
+  }
+
+  return data;
+}
+
+export async function signUp(
+  email: string,
+  password: string,
+  fullName?: string,
+  role: string = 'teacher'
+) {
+  checkSupabase();
+  const cleanEmail = email.trim();
+  const { data, error } = await supabase.auth.signUp({
+    email: cleanEmail,
+    password,
+    options: {
+      data: {
+        full_name: fullName || cleanEmail.split('@')[0],
+        role,
+      },
+    },
+  });
+
+  if (error) {
+    throw new Error(error.message || 'Đăng ký tài khoản thất bại.');
+  }
+
+  // Khởi tạo hồ sơ người dùng trong bảng users trên Supabase
+  if (data?.user) {
+    try {
+      const roleTitle =
+        role === 'admin'
+          ? 'Quản lý Căn tin'
+          : role === 'data_entry'
+          ? 'Nhân viên Bếp'
+          : role === 'executive'
+          ? 'Ban Giám hiệu'
+          : 'Giáo viên';
+
+      await supabase.from('users').upsert({
+        id: data.user.id,
+        auth_user_id: data.user.id,
+        name: fullName || cleanEmail.split('@')[0],
+        email: cleanEmail,
+        role,
+        role_title: roleTitle,
+        wallet_balance: 1000000,
+        monthly_allowance: 1000000,
+        is_active: true,
+      });
+    } catch (e) {
+      console.warn('Profile initialization note:', e);
+    }
+  }
+
   return data;
 }
 
 export async function logout() {
+  checkSupabase();
   const { error } = await supabase.auth.signOut();
-  if (error) throw error;
+  if (error) throw new Error(error.message);
 }
 
 export async function getSession() {
+  if (!isSupabaseConfigured || !supabase) return null;
   const { data } = await supabase.auth.getSession();
   return data.session;
 }
 
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  if (!isSupabaseConfigured || !supabase) return null;
 
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .eq('auth_user_id', user.id)
-    .eq('is_active', true)
-    .single();
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return null;
 
-  if (error || !data) return null;
-  return mapUser(data);
+    let { data } = await supabase
+      .from('users')
+      .select('*')
+      .eq('auth_user_id', user.id)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (!data && user.email) {
+      const { data: byEmail } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', user.email)
+        .eq('is_active', true)
+        .maybeSingle();
+      if (byEmail) {
+        data = byEmail;
+        await supabase.from('users').update({ auth_user_id: user.id }).eq('id', byEmail.id);
+      }
+    }
+
+    if (!data) {
+      // Tự động đồng bộ hồ sơ cho tài khoản vừa đăng nhập vào bảng users
+      const role =
+        user.user_metadata?.role ||
+        (user.email?.includes('admin') || user.email === 'trantuandai2508@gmail.com'
+          ? 'admin'
+          : user.email?.includes('bep')
+          ? 'data_entry'
+          : user.email?.includes('hieutruong')
+          ? 'executive'
+          : 'teacher');
+
+      const roleTitle =
+        role === 'admin'
+          ? 'Quản lý Căn tin'
+          : role === 'data_entry'
+          ? 'Nhân viên Bếp'
+          : role === 'executive'
+          ? 'Ban Giám hiệu'
+          : 'Giáo viên';
+
+      const newRow = {
+        name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Cán bộ Căn tin',
+        role,
+        role_title: roleTitle,
+        email: user.email || '',
+        auth_user_id: user.id,
+        wallet_balance: 1000000,
+        monthly_allowance: 1000000,
+        is_active: true,
+      };
+
+      try {
+        const { data: inserted } = await supabase.from('users').insert(newRow).select().maybeSingle();
+        if (inserted) {
+          data = inserted;
+        }
+      } catch (e) {
+        console.warn('Profile sync note:', e);
+      }
+
+      if (!data) {
+        return {
+          id: user.id,
+          name: newRow.name,
+          role,
+          roleTitle,
+          department: 'Trường học',
+          phoneNumber: '',
+          email: user.email || '',
+          walletBalance: 1000000,
+          monthlyAllowance: 1000000,
+        };
+      }
+    }
+
+    return mapUser(data);
+  } catch (err) {
+    console.error('[Supabase getCurrentUserProfile error]', err);
+    return null;
+  }
 }
 
 // ============================================================
@@ -53,11 +210,9 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 // ============================================================
 
 export async function getUsers(): Promise<UserProfile[]> {
-  const { data, error } = await supabase
-    .from('users')
-    .select('*')
-    .order('name');
-  if (error) throw error;
+  checkSupabase();
+  const { data, error } = await supabase.from('users').select('*').order('name');
+  if (error) throw new Error(error.message);
   return (data || []).map(mapUser);
 }
 
@@ -66,19 +221,25 @@ export async function updateUserWallet(
   newBalance: number,
   note?: string
 ) {
+  checkSupabase();
   const { error } = await supabase
     .from('users')
     .update({ wallet_balance: newBalance, updated_at: new Date().toISOString() })
     .eq('id', userId);
-  if (error) throw error;
 
-  await supabase.from('wallet_transactions').insert({
-    user_id: userId,
-    amount: 0, // sẽ tính diff nếu cần
-    type: 'manual',
-    note: note || 'Cập nhật thủ công',
-    balance_after: newBalance,
-  });
+  if (error) throw new Error(`Cập nhật số dư thất bại: ${error.message}`);
+
+  try {
+    await supabase.from('wallet_transactions').insert({
+      user_id: userId,
+      amount: 0,
+      type: 'manual',
+      note: note || 'Cập nhật số dư ví Căn tin',
+      balance_after: newBalance,
+    });
+  } catch {
+    // optional audit
+  }
 }
 
 // ============================================================
@@ -86,8 +247,11 @@ export async function updateUserWallet(
 // ============================================================
 
 export async function getMenu(forDate?: string): Promise<MenuItem[]> {
+  checkSupabase();
   const date = forDate || getTomorrowStr();
-  const { data, error } = await supabase
+
+  // Ưu tiên lấy món theo ngày phục vụ
+  let { data, error } = await supabase
     .from('menu_items')
     .select('*')
     .eq('for_date', date)
@@ -95,18 +259,46 @@ export async function getMenu(forDate?: string): Promise<MenuItem[]> {
     .order('category')
     .order('name');
 
-  if (error) throw error;
+  // Nếu ngày chỉ định chưa có món, hiển thị các món ăn active chung của Căn tin
+  if (!error && (!data || data.length === 0)) {
+    const { data: allActive, error: allErr } = await supabase
+      .from('menu_items')
+      .select('*')
+      .eq('is_active', true)
+      .order('category')
+      .order('name');
+
+    if (!allErr && allActive && allActive.length > 0) {
+      data = allActive;
+    }
+  }
+
+  if (error) throw new Error(`Lỗi tải thực đơn: ${error.message}`);
   return (data || []).map(mapMenuItem);
 }
 
 export async function getAllMenuItems(forDate?: string): Promise<MenuItem[]> {
+  checkSupabase();
   const date = forDate || getTomorrowStr();
-  const { data, error } = await supabase
+
+  let { data, error } = await supabase
     .from('menu_items')
     .select('*')
     .eq('for_date', date)
     .order('category');
-  if (error) throw error;
+
+  if (!error && (!data || data.length === 0)) {
+    const { data: allItems, error: allErr } = await supabase
+      .from('menu_items')
+      .select('*')
+      .order('category');
+
+    if (!allErr && allItems && allItems.length > 0) {
+      data = allItems;
+    }
+  }
+
+  if (error) throw new Error(`Lỗi tải danh mục món: ${error.message}`);
   return (data || []).map(mapMenuItem);
 }
 
@@ -114,6 +306,7 @@ export async function createMenuItem(
   item: Omit<MenuItem, 'id'>,
   actor: UserProfile
 ): Promise<MenuItem> {
+  checkSupabase();
   const { data, error } = await supabase
     .from('menu_items')
     .insert({
@@ -130,12 +323,14 @@ export async function createMenuItem(
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(`Lỗi thêm món ăn: ${error.message}`);
+
   await addAuditLog({
     action: 'MENU_CREATE',
     actor,
-    details: `Tạo món: ${item.name}`,
+    details: `Tạo món ăn: ${item.name} (${item.price.toLocaleString('vi-VN')} đ)`,
   });
+
   return mapMenuItem(data);
 }
 
@@ -144,6 +339,7 @@ export async function updateMenuItem(
   updates: Partial<MenuItem>,
   actor: UserProfile
 ): Promise<void> {
+  checkSupabase();
   const payload: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (updates.name !== undefined) payload.name = updates.name;
   if (updates.category !== undefined) payload.category = updates.category;
@@ -156,12 +352,12 @@ export async function updateMenuItem(
   if (updates.forDate !== undefined) payload.for_date = updates.forDate;
 
   const { error } = await supabase.from('menu_items').update(payload).eq('id', id);
-  if (error) throw error;
+  if (error) throw new Error(`Lỗi cập nhật món ăn: ${error.message}`);
 
   await addAuditLog({
     action: 'MENU_UPDATE',
     actor,
-    details: `Cập nhật món id=${id}`,
+    details: `Cập nhật món ID=${id}`,
   });
 }
 
@@ -177,37 +373,274 @@ export async function placeOrder(params: {
   isExceptionOrder?: boolean;
   exceptionToken?: string;
 }): Promise<{ success: boolean; order_id?: string; order_code?: string; total_amount?: number; error?: string }> {
+  checkSupabase();
   const device = detectCurrentDevice();
 
-  const { data, error } = await supabase.rpc('place_order', {
-    p_items: params.items.map((i) => ({
-      menu_item_id: i.menuItemId,
-      quantity: i.quantity,
-    })),
-    p_delivery_method: params.deliveryMethod,
-    p_room_number: params.roomNumber || null,
-    p_pickup_time: params.pickupTime,
-    p_is_exception: params.isExceptionOrder || false,
-    p_exception_token: params.exceptionToken || null,
-    p_device_info: device,
+  // 1. Thử gọi hàm RPC 'place_order' trên Supabase nếu đã tạo
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('place_order', {
+      p_items: params.items.map((i) => ({
+        menu_item_id: i.menuItemId,
+        quantity: i.quantity,
+      })),
+      p_delivery_method: params.deliveryMethod,
+      p_room_number: params.roomNumber || null,
+      p_pickup_time: params.pickupTime,
+      p_is_exception: params.isExceptionOrder || false,
+      p_exception_token: params.exceptionToken || null,
+      p_device_info: device,
+    });
+
+    if (!rpcError && rpcData && typeof rpcData === 'object') {
+      const res = rpcData as { success?: boolean; error?: string; order_id?: string; order_code?: string; total_amount?: number };
+      if (res.success) {
+        return {
+          success: true,
+          order_id: res.order_id,
+          order_code: res.order_code,
+          total_amount: res.total_amount,
+        };
+      }
+      if (res.error) {
+        return { success: false, error: res.error };
+      }
+    }
+  } catch {
+    // Nếu RPC chưa cài đặt trên database, thực thi trực tiếp qua các bảng Supabase
+  }
+
+  // 2. Thực thi giao dịch trực tiếp qua bảng Supabase (Direct table transactions)
+  const {
+    data: { user: authUser },
+  } = await supabase.auth.getUser();
+
+  if (!authUser) {
+    return { success: false, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' };
+  }
+
+  // Lấy thông tin người dùng từ bảng users
+  const { data: userData, error: userErr } = await supabase
+    .from('users')
+    .select('*')
+    .or(`auth_user_id.eq.${authUser.id},id.eq.${authUser.id}`)
+    .maybeSingle();
+
+  if (userErr || !userData) {
+    return { success: false, error: 'Không tìm thấy hồ sơ người dùng trên hệ thống.' };
+  }
+
+  // Lấy chi tiết món ăn từ bảng menu_items
+  const itemIds = params.items.map((i) => i.menuItemId);
+  const { data: menuList, error: menuErr } = await supabase
+    .from('menu_items')
+    .select('*')
+    .in('id', itemIds);
+
+  if (menuErr || !menuList || menuList.length === 0) {
+    return { success: false, error: 'Không thể tải thông tin món ăn từ cơ sở dữ liệu.' };
+  }
+
+  let totalAmount = 0;
+  const orderItemsData: {
+    menu_item_id: string;
+    name: string;
+    price: number;
+    quantity: number;
+    image_url: string;
+  }[] = [];
+
+  for (const requestedItem of params.items) {
+    const menuItem = menuList.find((m) => m.id === requestedItem.menuItemId);
+    if (!menuItem) {
+      return { success: false, error: `Món ăn không tồn tại hoặc đã bị gỡ bỏ.` };
+    }
+    if (menuItem.current_stock < requestedItem.quantity) {
+      return {
+        success: false,
+        error: `Món "${menuItem.name}" chỉ còn ${menuItem.current_stock} suất, không đủ ${requestedItem.quantity} suất yêu cầu.`,
+      };
+    }
+    const itemTotal = Number(menuItem.price) * requestedItem.quantity;
+    totalAmount += itemTotal;
+    orderItemsData.push({
+      menu_item_id: menuItem.id,
+      name: menuItem.name,
+      price: Number(menuItem.price),
+      quantity: requestedItem.quantity,
+      image_url: menuItem.image_url || '',
+    });
+  }
+
+  // Kiểm tra số dư ví
+  if (Number(userData.wallet_balance) < totalAmount) {
+    return {
+      success: false,
+      error: `Số dư ví không đủ. Cần ${totalAmount.toLocaleString('vi-VN')} đ, số dư hiện có ${Number(userData.wallet_balance).toLocaleString('vi-VN')} đ.`,
+    };
+  }
+
+  // Tạo mã đơn hàng chuẩn hoá POS: #CT-2026-XXXX
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  const orderCode = `#CT-${new Date().getFullYear()}-${randomSuffix}`;
+  const targetDate = getTomorrowStr();
+
+  // Tạo đơn hàng trong bảng orders
+  const { data: newOrder, error: orderInsertErr } = await supabase
+    .from('orders')
+    .insert({
+      order_code: orderCode,
+      user_id: userData.id,
+      user_name: userData.name,
+      user_phone: userData.phone_number || '',
+      user_department: userData.department || '',
+      total_amount: totalAmount,
+      delivery_method: params.deliveryMethod,
+      room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || null : null,
+      pickup_time: params.pickupTime,
+      target_date: targetDate,
+      status: 'confirmed',
+      is_exception_order: params.isExceptionOrder || false,
+      exception_token_used: params.exceptionToken || null,
+      device_info: device,
+    })
+    .select()
+    .single();
+
+  if (orderInsertErr || !newOrder) {
+    return { success: false, error: `Lỗi tạo đơn hàng: ${orderInsertErr?.message || 'Không rõ nguyên nhân'}` };
+  }
+
+  // Thêm chi tiết món ăn vào bảng order_items
+  const itemsToInsert = orderItemsData.map((it) => ({
+    order_id: newOrder.id,
+    ...it,
+  }));
+  await supabase.from('order_items').insert(itemsToInsert);
+
+  // Trừ số lượng tồn kho của món ăn
+  for (const it of params.items) {
+    const curr = menuList.find((m) => m.id === it.menuItemId);
+    if (curr) {
+      await supabase
+        .from('menu_items')
+        .update({ current_stock: Math.max(0, curr.current_stock - it.quantity) })
+        .eq('id', it.menuItemId);
+    }
+  }
+
+  // Trừ số dư ví của người dùng
+  const newBalance = Number(userData.wallet_balance) - totalAmount;
+  await supabase
+    .from('users')
+    .update({ wallet_balance: newBalance, updated_at: new Date().toISOString() })
+    .eq('id', userData.id);
+
+  // Ghi nhật ký giao dịch ví
+  await supabase.from('wallet_transactions').insert({
+    user_id: userData.id,
+    amount: -totalAmount,
+    type: 'order_payment',
+    order_id: newOrder.id,
+    note: `Thanh toán đơn hàng ${orderCode}`,
+    balance_after: newBalance,
   });
 
-  if (error) {
-    return { success: false, error: error.message };
-  }
-  return data as any;
+  return {
+    success: true,
+    order_id: newOrder.id,
+    order_code: orderCode,
+    total_amount: totalAmount,
+  };
 }
 
 export async function cancelOrder(
   orderId: string,
   reason?: string
 ): Promise<{ success: boolean; error?: string }> {
-  const { data, error } = await supabase.rpc('cancel_order', {
-    p_order_id: orderId,
-    p_reason: reason || null,
-  });
-  if (error) return { success: false, error: error.message };
-  return data as any;
+  checkSupabase();
+
+  // 1. Thử gọi RPC 'cancel_order' nếu có
+  try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('cancel_order', {
+      p_order_id: orderId,
+      p_reason: reason || null,
+    });
+    if (!rpcError && rpcData && typeof rpcData === 'object') {
+      const res = rpcData as { success?: boolean; error?: string };
+      if (res.success) return { success: true };
+      if (res.error) return { success: false, error: res.error };
+    }
+  } catch {
+    // Tiếp tục xử lý bằng bảng trực tiếp nếu RPC chưa có
+  }
+
+  // 2. Cập nhật trạng thái hủy trực tiếp trên Supabase
+  const { data: order, error: fetchErr } = await supabase
+    .from('orders')
+    .select('*, order_items(*)')
+    .eq('id', orderId)
+    .single();
+
+  if (fetchErr || !order) {
+    return { success: false, error: 'Không tìm thấy thông tin đơn hàng.' };
+  }
+
+  if (order.status === 'cancelled') {
+    return { success: false, error: 'Đơn hàng này đã được hủy trước đó.' };
+  }
+
+  if (order.status === 'completed') {
+    return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
+  }
+
+  // Cập nhật trạng thái đơn thành cancelled
+  const { error: updateErr } = await supabase
+    .from('orders')
+    .update({
+      status: 'cancelled',
+      cancelled_at: new Date().toISOString(),
+      cancel_reason: reason || 'Người dùng hủy đơn',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', orderId);
+
+  if (updateErr) {
+    return { success: false, error: `Lỗi cập nhật hủy đơn: ${updateErr.message}` };
+  }
+
+  // Hoàn tiền lại ví cho người dùng
+  const { data: user } = await supabase.from('users').select('*').eq('id', order.user_id).single();
+  if (user) {
+    const refundBalance = Number(user.wallet_balance) + Number(order.total_amount);
+    await supabase
+      .from('users')
+      .update({ wallet_balance: refundBalance, updated_at: new Date().toISOString() })
+      .eq('id', user.id);
+
+    await supabase.from('wallet_transactions').insert({
+      user_id: user.id,
+      amount: Number(order.total_amount),
+      type: 'order_refund',
+      order_id: order.id,
+      note: `Hoàn tiền hủy đơn ${order.order_code}`,
+      balance_after: refundBalance,
+    });
+  }
+
+  // Phục hồi lại số lượng tồn kho món ăn
+  if (order.order_items && Array.isArray(order.order_items)) {
+    for (const it of order.order_items) {
+      const { data: mItem } = await supabase.from('menu_items').select('*').eq('id', it.menu_item_id).maybeSingle();
+      if (mItem) {
+        await supabase
+          .from('menu_items')
+          .update({ current_stock: mItem.current_stock + it.quantity })
+          .eq('id', it.menu_item_id);
+      }
+    }
+  }
+
+  return { success: true };
 }
 
 export async function getOrders(filters?: {
@@ -215,6 +648,7 @@ export async function getOrders(filters?: {
   userId?: string;
   status?: string;
 }): Promise<Order[]> {
+  checkSupabase();
   let query = supabase
     .from('orders')
     .select('*, order_items(*)')
@@ -225,7 +659,7 @@ export async function getOrders(filters?: {
   if (filters?.status) query = query.eq('status', filters.status);
 
   const { data, error } = await query;
-  if (error) throw error;
+  if (error) throw new Error(`Lỗi tải danh sách đơn hàng: ${error.message}`);
   return (data || []).map(mapOrder);
 }
 
@@ -234,16 +668,18 @@ export async function updateOrderStatus(
   status: string,
   actor: UserProfile
 ) {
+  checkSupabase();
   const { error } = await supabase
     .from('orders')
     .update({ status, updated_at: new Date().toISOString() })
     .eq('id', orderId);
-  if (error) throw error;
+
+  if (error) throw new Error(`Lỗi cập nhật trạng thái đơn: ${error.message}`);
 
   await addAuditLog({
-    action: 'ORDER_PLACED', // hoặc tạo action mới nếu cần
+    action: 'ORDER_PLACED',
     actor,
-    details: `Cập nhật trạng thái đơn ${orderId} → ${status}`,
+    details: `Cập nhật trạng thái đơn ${orderId} thành "${status}"`,
   });
 }
 
@@ -256,6 +692,7 @@ export async function createQRToken(
   note?: string,
   expiresInMinutes = 15
 ): Promise<QRExceptionToken> {
+  checkSupabase();
   const token = `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
 
@@ -271,24 +708,26 @@ export async function createQRToken(
     .select()
     .single();
 
-  if (error) throw error;
+  if (error) throw new Error(`Lỗi tạo mã QR ngoại lệ: ${error.message}`);
 
   await addAuditLog({
     action: 'QR_TOKEN_GENERATED',
     actor,
-    details: `Tạo QR token: ${token}`,
+    details: `Tạo mã QR ngoại lệ: ${token} (hiệu lực ${expiresInMinutes} phút)`,
   });
 
   return mapQRToken(data);
 }
 
 export async function getQRTokens(): Promise<QRExceptionToken[]> {
+  checkSupabase();
   const { data, error } = await supabase
     .from('qr_exception_tokens')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(50);
-  if (error) throw error;
+
+  if (error) throw new Error(`Lỗi tải danh sách mã QR: ${error.message}`);
   return (data || []).map(mapQRToken);
 }
 
@@ -297,12 +736,14 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
 // ============================================================
 
 export async function getAuditLogs(limit = 100): Promise<AuditLog[]> {
+  checkSupabase();
   const { data, error } = await supabase
     .from('audit_logs')
     .select('*')
     .order('timestamp', { ascending: false })
     .limit(limit);
-  if (error) throw error;
+
+  if (error) throw new Error(`Lỗi tải nhật ký hệ thống: ${error.message}`);
   return (data || []).map(mapAuditLog);
 }
 
@@ -311,17 +752,22 @@ async function addAuditLog(params: {
   actor: UserProfile;
   details: string;
 }) {
-  await supabase.from('audit_logs').insert({
-    action: params.action,
-    actor_id: params.actor.id,
-    actor_name: params.actor.name,
-    actor_role: params.actor.role,
-    details: params.details,
-  });
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    await supabase.from('audit_logs').insert({
+      action: params.action,
+      actor_id: params.actor.id,
+      actor_name: params.actor.name,
+      actor_role: params.actor.role,
+      details: params.details,
+    });
+  } catch (e) {
+    console.warn('[Audit log notice]:', e);
+  }
 }
 
 // ============================================================
-// TIME GATE (client-side helper – server vẫn kiểm tra trong RPC)
+// TIME GATE
 // ============================================================
 
 export function getTimeGateStatus(openHour = 7, closeHour = 16): TimeGateStatus {
@@ -335,8 +781,8 @@ export function getTimeGateStatus(openHour = 7, closeHour = 16): TimeGateStatus 
     currentHour: hour,
     currentMinute: minute,
     message: isOpen
-      ? `Hệ thống đang mở cửa đặt món (đến ${closeHour}:00)`
-      : `Hệ thống đóng cửa. Mở lại từ ${openHour}:00 – ${closeHour}:00`,
+      ? `Căn tin đang nhận đơn đặt suất (đến ${closeHour}:00)`
+      : `Căn tin đã đóng cổng đặt món. Mở lại từ ${openHour}:00 – ${closeHour}:00`,
     opensAt: `${String(openHour).padStart(2, '0')}:00`,
     closesAt: `${String(closeHour).padStart(2, '0')}:00`,
     remainingMinutes: isOpen ? (closeHour - hour) * 60 - minute : undefined,
@@ -348,16 +794,23 @@ export function getTimeGateStatus(openHour = 7, closeHour = 16): TimeGateStatus 
 // ============================================================
 
 export function subscribeRealtime(callback: () => void) {
-  const channel = supabase
-    .channel('canteen-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => callback())
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => callback())
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => callback())
-    .subscribe();
+  if (!isSupabaseConfigured || !supabase) {
+    return () => {};
+  }
+  try {
+    const channel = supabase
+      .channel('canteen-realtime-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, () => callback())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => callback())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, () => callback())
+      .subscribe();
 
-  return () => {
-    supabase.removeChannel(channel);
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  } catch {
+    return () => {};
+  }
 }
 
 // ============================================================

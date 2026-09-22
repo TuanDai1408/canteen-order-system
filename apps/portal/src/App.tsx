@@ -1,7 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   getCurrentUserProfile,
-  getMenu,
   getAllMenuItems,
   getOrders,
   getUsers,
@@ -19,6 +18,7 @@ import {
 } from '@canteen/shared';
 import { LoginPage } from './components/LoginPage';
 import { PortalDashboard } from './components/PortalDashboard';
+import { ShieldAlert, LogOut } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -77,8 +77,11 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-slate-700 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="text-center space-y-3">
+          <div className="w-10 h-10 border-3 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto" />
+          <p className="text-xs text-slate-600 font-semibold">Đang tải Portal Quản Lý Canteen...</p>
+        </div>
       </div>
     );
   }
@@ -96,20 +99,26 @@ export default function App() {
 
   if (!['admin', 'data_entry', 'executive'].includes(user.role)) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow border p-8 max-w-md text-center">
-          <h1 className="text-xl font-semibold mb-2">Không có quyền truy cập Portal</h1>
-          <p className="text-slate-600 mb-6">
-            Portal chỉ dành cho Admin / Nhân viên nhập liệu / Ban Giám hiệu.
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 font-sans">
+        <div className="bg-white border border-slate-200 rounded-3xl shadow-xl shadow-slate-200/50 p-8 max-w-md w-full text-center space-y-4">
+          <div className="w-14 h-14 rounded-2xl bg-rose-50 border border-rose-200 text-rose-600 flex items-center justify-center mx-auto">
+            <ShieldAlert className="w-7 h-7" />
+          </div>
+          <h1 className="text-lg font-extrabold text-slate-900">Không có quyền truy cập Portal</h1>
+          <p className="text-slate-600 text-xs leading-relaxed">
+            Portal chỉ dành cho Quản lý Căn tin, Nhân viên Bếp và Ban Giám hiệu.
             <br />
-            Vai trò của bạn: <strong>{user.roleTitle || user.role}</strong>
+            Tài khoản hiện tại: <strong className="text-slate-900 font-bold">{user.name}</strong> ({user.roleTitle || user.role})
           </p>
-          <button
-            onClick={handleLogout}
-            className="px-5 py-2.5 bg-slate-800 text-white rounded-xl text-sm"
-          >
-            Đăng xuất
-          </button>
+          <div className="pt-2">
+            <button
+              onClick={handleLogout}
+              className="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition cursor-pointer min-h-[44px]"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Đăng xuất & Đăng nhập tài khoản Quản trị</span>
+            </button>
+          </div>
         </div>
       </div>
     );

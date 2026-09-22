@@ -37,7 +37,6 @@ import {
   MapPin,
   ChefHat,
   X,
-  Printer,
   Menu as MenuIcon,
   ChevronRight,
   Sparkles,
@@ -109,9 +108,6 @@ export function PortalDashboard({
   const [isCreateQROpen, setIsCreateQROpen] = useState(false);
   const [qrExpiryMins, setQrExpiryMins] = useState(30);
   const [qrNote, setQrNote] = useState('Cấp ngoại lệ đặt suất bổ sung');
-
-  // POS Thermal Receipt state
-  const [printReceiptOrder, setPrintReceiptOrder] = useState<Order | null>(null);
 
   // Overview metrics
   const activeOrders = useMemo(() => orders.filter((o) => o.status !== 'cancelled'), [orders]);
@@ -302,10 +298,6 @@ export function PortalDashboard({
               <Building2 className="w-4 h-4" />
             </div>
             <span className="font-bold text-slate-900 text-sm">Portal Quản Lý</span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Supabase Live
-            </span>
           </div>
         </div>
 
@@ -353,10 +345,7 @@ export function PortalDashboard({
               </div>
               <div>
                 <h2 className="font-extrabold text-sm tracking-tight text-slate-900">Portal Quản Lý</h2>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <p className="text-[11px] text-emerald-600 font-semibold">Supabase Live Cloud</p>
-                </div>
+                <p className="text-[11px] text-slate-500 font-medium">Căn tin Học đường</p>
               </div>
             </div>
 
@@ -687,34 +676,25 @@ export function PortalDashboard({
                             {formatVnd(o.totalAmount)}
                           </td>
                           <td className="py-2.5 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  o.status === 'confirmed'
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : o.status === 'preparing'
-                                      ? 'bg-indigo-100 text-indigo-800'
-                                      : o.status === 'completed'
-                                        ? 'bg-emerald-100 text-emerald-800'
-                                        : 'bg-slate-100 text-slate-500'
-                                }`}
-                              >
-                                {o.status === 'confirmed'
-                                  ? 'Chờ nấu'
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                o.status === 'confirmed'
+                                  ? 'bg-amber-100 text-amber-800'
                                   : o.status === 'preparing'
-                                    ? 'Đang nấu'
+                                    ? 'bg-indigo-100 text-indigo-800'
                                     : o.status === 'completed'
-                                      ? 'Xong'
-                                      : 'Hủy'}
-                              </span>
-                              <button
-                                onClick={() => setPrintReceiptOrder(o)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-slate-100 cursor-pointer"
-                                title="In Bill POS nhiệt (K80 / K58)"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-slate-100 text-slate-500'
+                              }`}
+                            >
+                              {o.status === 'confirmed'
+                                ? 'Chờ nấu'
+                                : o.status === 'preparing'
+                                  ? 'Đang nấu'
+                                  : o.status === 'completed'
+                                    ? 'Xong'
+                                    : 'Hủy'}
+                            </span>
                           </td>
                         </tr>
                       ))}
@@ -988,38 +968,28 @@ export function PortalDashboard({
                             </span>
                           </td>
                           <td className="py-3 px-4 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1.5">
+                            {o.status === 'confirmed' && (
                               <button
-                                onClick={() => setPrintReceiptOrder(o)}
-                                className="px-2.5 py-1.5 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs transition cursor-pointer min-h-[36px] flex items-center gap-1 border border-slate-200"
-                                title="In Bill POS nhiệt (K80 / K58)"
+                                onClick={async () => {
+                                  await updateOrderStatus(o.id, 'preparing', currentUser);
+                                  onRefresh();
+                                }}
+                                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px]"
                               >
-                                <Printer className="w-3.5 h-3.5 text-indigo-600" />
-                                <span className="font-mono text-[11px] font-bold">In Bill</span>
+                                Nấu món
                               </button>
-                              {o.status === 'confirmed' && (
-                                <button
-                                  onClick={async () => {
-                                    await updateOrderStatus(o.id, 'preparing', currentUser);
-                                    onRefresh();
-                                  }}
-                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px]"
-                                >
-                                  Nấu món
-                                </button>
-                              )}
-                              {o.status === 'preparing' && (
-                                <button
-                                  onClick={async () => {
-                                    await updateOrderStatus(o.id, 'completed', currentUser);
-                                    onRefresh();
-                                  }}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px]"
-                                >
-                                  Hoàn tất
-                                </button>
-                              )}
-                            </div>
+                            )}
+                            {o.status === 'preparing' && (
+                              <button
+                                onClick={async () => {
+                                  await updateOrderStatus(o.id, 'completed', currentUser);
+                                  onRefresh();
+                                }}
+                                className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px]"
+                              >
+                                Hoàn tất
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1454,129 +1424,6 @@ export function PortalDashboard({
                   Tạo Token ngay
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* POS Thermal Bill Modal (K80 / K58 Monospace) */}
-      {printReceiptOrder && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-indigo-400" />
-                <span className="font-bold text-sm">Hóa đơn nhiệt POS (K80 / K58)</span>
-              </div>
-              <button
-                onClick={() => setPrintReceiptOrder(null)}
-                className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto max-h-[75vh]">
-              {/* Printable thermal ticket with JetBrains Mono / Courier New */}
-              <div className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px]">
-                <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                  <h4 className="font-bold text-sm uppercase tracking-wider">CANTEEN HỌC ĐƯỜNG</h4>
-                  <p className="text-[11px] text-slate-600">PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
-                  <p className="text-[10px] text-slate-500">
-                    Khổ in nhiệt K80 / K58
-                  </p>
-                </div>
-
-                <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Mã đơn:</span>
-                    <span className="font-bold text-slate-900 font-mono">{printReceiptOrder.orderCode}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Giờ in:</span>
-                    <span className="font-medium text-slate-800">{new Date().toLocaleString('vi-VN')}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Cán bộ:</span>
-                    <span className="font-bold text-slate-900">{printReceiptOrder.userName}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Đơn vị:</span>
-                    <span className="font-semibold text-slate-800">{printReceiptOrder.userDepartment || 'Giáo viên'}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Hình thức:</span>
-                    <span className="font-bold text-indigo-700">
-                      {printReceiptOrder.deliveryMethod === 'room_delivery'
-                        ? `Giao phòng (${printReceiptOrder.roomNumber || 'Theo phòng'})`
-                        : 'Ăn tại Căn tin'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-slate-500">Giờ ăn:</span>
-                    <span className="font-bold text-slate-900">{printReceiptOrder.pickupTime}</span>
-                  </div>
-                </div>
-
-                {/* Monospace aligned column table */}
-                <div className="py-2.5 border-b border-dashed border-slate-400">
-                  <div className="flex justify-between font-bold text-[11px] pb-1 border-b border-slate-200 mb-1.5">
-                    <span className="w-1/2">Tên món</span>
-                    <span className="w-10 text-center">SL</span>
-                    <span className="w-16 text-right">Đơn giá</span>
-                    <span className="w-18 text-right">T.Tiền</span>
-                  </div>
-                  <div className="space-y-1.5 text-[11px]">
-                    {printReceiptOrder.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between items-start">
-                        <span className="w-1/2 pr-1 truncate font-medium">{it.name}</span>
-                        <span className="w-10 text-center font-bold">{it.quantity}</span>
-                        <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
-                        <span className="w-18 text-right font-bold text-slate-900">
-                          {formatVnd(it.price * it.quantity).replace(' ₫', '')}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
-                  <div className="flex justify-between font-bold text-xs pt-1">
-                    <span>TỔNG CỘNG:</span>
-                    <span className="text-indigo-600 font-extrabold text-sm font-mono">
-                      {formatVnd(printReceiptOrder.totalAmount)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>Thanh toán:</span>
-                    <span>Ví suất ăn Căn tin</span>
-                  </div>
-                  <div className="flex justify-between text-[10px] text-slate-500">
-                    <span>Trạng thái:</span>
-                    <span className="font-semibold text-emerald-700">Đã trừ ví tự động</span>
-                  </div>
-                </div>
-
-                <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                  <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                  <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
-              <button
-                onClick={() => setPrintReceiptOrder(null)}
-                className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
-              >
-                Đóng
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
-              >
-                <Printer className="w-4 h-4" />
-                <span>In Phiếu Nhiệt POS</span>
-              </button>
             </div>
           </div>
         </div>
