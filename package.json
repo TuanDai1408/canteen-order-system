@@ -1,0 +1,20 @@
+{
+  "name": "canteen-system",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hệ thống Đặt suất ăn Canteen - Monorepo (Order + Portal)",
+  "scripts": {
+    "dev:order": "npm run dev -w order",
+    "dev:portal": "npm run dev -w portal",
+    "build:order": "npm run build -w order",
+    "build:portal": "npm run build -w portal",
+    "build": "npm run build -w order && npm run build -w portal"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": "20.x"
+  }
+}
