@@ -4,6 +4,7 @@ import {
   placeOrder,
   cancelOrder,
   parseItemsFromNote,
+  getOrderDisplayItems,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -753,7 +754,7 @@ export function OrderHome({
                 const isCompleted = o.status === 'completed';
                 const isPreparing = o.status === 'preparing';
                 const isConfirmed = o.status === 'confirmed';
-                const orderItems = (o.items && o.items.length > 0) ? o.items : parseItemsFromNote((o as any).note);
+                const orderItems = getOrderDisplayItems(o, menu);
 
                 return (
                   <div

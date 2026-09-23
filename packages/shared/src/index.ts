@@ -57,6 +57,7 @@ export {
   subscribeRealtime,
   withQueryTimeout,
   parseItemsFromNote,
+  getOrderDisplayItems,
   isValidUuid,
   generateUUID,
 } from './services/canteenApi';

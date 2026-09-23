@@ -2350,6 +2350,69 @@ export function parseItemsFromNote(noteText?: string): { menuItemId: string; nam
   return items;
 }
 
+export function getOrderDisplayItems(
+  order: Partial<Order> & { note?: string },
+  menuList: MenuItem[] = []
+): { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string }[] {
+  let items: { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string }[] = [];
+  const fullMenu = (menuList && menuList.length > 0) ? menuList : getCachedMenu();
+
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    items = order.items.map((it) => {
+      let name = it.name;
+      const foundInMenu = fullMenu.find((m) => m.id === it.menuItemId || (it.name && m.name === it.name));
+      if (!name || name === 'Suất ăn Căn tin') {
+        if (foundInMenu) name = foundInMenu.name;
+      }
+      return {
+        menuItemId: it.menuItemId || foundInMenu?.id || '',
+        name: name || 'Suất ăn Căn tin',
+        quantity: it.quantity || 1,
+        price: it.price || foundInMenu?.price || 35000,
+        imageUrl: it.imageUrl || foundInMenu?.imageUrl || '',
+      };
+    });
+  }
+
+  const allGeneric = items.length === 0 || items.every((it) => !it.name || it.name === 'Suất ăn Căn tin');
+  if (allGeneric && (order as any).note) {
+    const fromNote = parseItemsFromNote((order as any).note);
+    if (fromNote.length > 0) {
+      items = fromNote.map((it) => {
+        let name = it.name;
+        const foundInMenu = fullMenu.find((m) => m.name === it.name || m.id === it.menuItemId);
+        if (!name || name === 'Suất ăn Căn tin') {
+          if (foundInMenu) name = foundInMenu.name;
+        }
+        return {
+          menuItemId: it.menuItemId || foundInMenu?.id || '',
+          name: name || 'Suất ăn Căn tin',
+          quantity: it.quantity || 1,
+          price: it.price || foundInMenu?.price || 35000,
+          imageUrl: it.imageUrl || foundInMenu?.imageUrl || '',
+        };
+      });
+    }
+  }
+
+  // Nếu vẫn là generic, tra cứu theo ID trong cache
+  if (items.length === 0 || items.every((it) => !it.name || it.name === 'Suất ăn Căn tin')) {
+    if (order.id || order.orderCode) {
+      const cached = getCachedOrders();
+      const matched = cached.find((c) => c.id === order.id || c.orderCode === order.orderCode);
+      if (matched && matched.items && matched.items.length > 0 && matched.items.some((it) => it.name && it.name !== 'Suất ăn Căn tin')) {
+        items = matched.items;
+      }
+    }
+  }
+
+  if (items.length === 0) {
+    items = [{ menuItemId: '', name: 'Suất ăn Căn tin', quantity: 1, price: order.totalAmount || 35000, imageUrl: '' }];
+  }
+
+  return items;
+}
+
 function mapOrder(row: any): Order {
   let mappedItems: any[] = [];
   const cachedMenu = getCachedMenu();
