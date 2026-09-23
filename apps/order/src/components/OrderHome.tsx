@@ -33,6 +33,8 @@ import {
   X,
   ShieldAlert,
   Info,
+  Loader2,
+  RefreshCw,
 } from 'lucide-react';
 
 interface Props {
@@ -72,6 +74,16 @@ export function OrderHome({
   const [showExceptionField, setShowExceptionField] = useState(false);
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 400);
+    }
+  };
 
   // Categories list extracted from menu
   const categories = useMemo(() => {
@@ -238,6 +250,15 @@ export function OrderHome({
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              title="Làm mới thực đơn và ví tiền"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-teal-400' : ''}`} />
+            </button>
+
             {onSwitchToPortal && ['admin', 'data_entry', 'executive'].includes(currentUser.role) && (
               <button
                 onClick={onSwitchToPortal}
@@ -983,7 +1004,7 @@ export function OrderHome({
               >
                 {submitting ? (
                   <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
                     <span>Đang xác nhận đơn...</span>
                   </>
                 ) : (
@@ -1021,9 +1042,16 @@ export function OrderHome({
               <button
                 onClick={() => handleCancelOrder(cancellingOrderId)}
                 disabled={submitting}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 text-white font-semibold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
               >
-                {submitting ? 'Đang hủy...' : 'Xác nhận hủy'}
+                {submitting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                    <span>Đang hoàn tiền ví...</span>
+                  </>
+                ) : (
+                  'Xác nhận hủy'
+                )}
               </button>
             </div>
           </div>

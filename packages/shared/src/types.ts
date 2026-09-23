@@ -13,6 +13,8 @@ export interface UserProfile {
   walletBalance: number;
   monthlyAllowance: number;
   lastWalletResetDate?: string;
+  isActive?: boolean;
+  createdAt?: string;
 }
 
 export interface MenuItem {
@@ -96,6 +98,7 @@ export interface AuditLog {
     | 'QR_TOKEN_USED'
     | 'WALLET_UPDATE'
     | 'USER_CREATE'
+    | 'USER_APPROVED'
     | 'USER_ROLE_CHANGED'
     | 'TIMEGATE_OVERRIDE'
     | 'WALLET_RESET_ALL';

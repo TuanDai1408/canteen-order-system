@@ -7,6 +7,7 @@ import {
   getAuditLogs,
   getQRTokens,
   getTimeGateStatus,
+  fetchTimeGateConfig,
   subscribeRealtime,
   logout,
   type UserProfile,
@@ -38,6 +39,7 @@ export default function App() {
         getUsers(),
         getAuditLogs(50),
         getQRTokens(),
+        fetchTimeGateConfig(),
       ]);
       setMenu(m);
       setOrders(o);

@@ -20,6 +20,8 @@ import {
 import { LoginPage } from './components/LoginPage';
 import { OrderHome } from './components/OrderHome';
 import { PortalDashboard } from './components/PortalDashboard';
+import { PendingApprovalView } from './components/PendingApprovalView';
+import { fetchTimeGateConfig } from '@canteen/shared';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -39,12 +41,17 @@ export default function App() {
 
   const refreshOrderData = useCallback(async (profile: UserProfile) => {
     try {
-      const [menuData, ordersData] = await Promise.all([
+      const [menuData, ordersData, updatedProfile] = await Promise.all([
         getMenu(),
         getOrders({ userId: profile.id }),
+        getCurrentUserProfile(),
+        fetchTimeGateConfig(),
       ]);
       setMenu(menuData);
       setOrders(ordersData);
+      if (updatedProfile) {
+        setUser(updatedProfile);
+      }
       setTimeStatus(getTimeGateStatus());
     } catch (e: any) {
       console.error(e);
@@ -169,6 +176,17 @@ export default function App() {
         onRefresh={refreshPortalData}
         onLogout={handleLogout}
         onSwitchToOrder={() => setCurrentView('order')}
+      />
+    );
+  }
+
+  // Nếu tài khoản cán bộ chưa được Ban Quản Trị Canteen duyệt và cấp ví
+  if (user.role === 'teacher' && user.isActive === false) {
+    return (
+      <PendingApprovalView
+        user={user}
+        onRefresh={() => refreshOrderData(user)}
+        onLogout={handleLogout}
       />
     );
   }

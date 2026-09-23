@@ -11,6 +11,7 @@ import {
   UserPlus,
   LogIn,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 
 interface Props {
@@ -36,7 +37,9 @@ export function LoginPage({ onSuccess }: Props) {
     try {
       if (mode === 'signup') {
         await signUp(email.trim(), password, fullName.trim(), 'teacher');
-        setSuccessMsg('Đăng ký tài khoản Supabase thành công! Hãy đăng nhập bằng mật khẩu vừa tạo.');
+        setSuccessMsg(
+          'Đăng ký tài khoản thành công! Hồ sơ đã được đồng bộ lên Supabase. Tài khoản mới sẽ có hiệu lực sau khi Ban Quản Trị Canteen duyệt và cấp hạn mức ví. Hãy đăng nhập để theo dõi trạng thái.'
+        );
         setMode('login');
         setLoading(false);
         return;
@@ -201,16 +204,16 @@ export function LoginPage({ onSuccess }: Props) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 sm:py-3.5 px-4 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-semibold rounded-xl shadow-lg shadow-teal-600/20 flex items-center justify-center gap-2 transition duration-200 text-sm cursor-pointer min-h-[44px]"
+              className="w-full py-3 sm:py-3.5 px-4 bg-teal-600 hover:bg-teal-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-lg shadow-teal-600/20 flex items-center justify-center gap-2 transition duration-200 text-sm cursor-pointer min-h-[44px]"
             >
               {loading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
                   <span>Đang xử lý dữ liệu Supabase...</span>
                 </>
               ) : mode === 'signup' ? (
                 <>
-                  <span>Tạo Tài Khoản Supabase</span>
+                  <span>Tạo Tài Khoản Cán Bộ & Chờ Duyệt</span>
                   <UserPlus className="w-4 h-4" />
                 </>
               ) : (

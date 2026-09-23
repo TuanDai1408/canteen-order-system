@@ -9,7 +9,7 @@ import type {
   TimeGateStatus,
 } from '../types';
 import { detectCurrentDevice } from '../utils/deviceDetector';
-import { getTomorrowStr } from '../utils/date';
+import { getTomorrowStr, formatVnd } from '../utils/date';
 
 const checkSupabase = () => {
   if (!isSupabaseConfigured || !supabase) {
@@ -62,6 +62,7 @@ export async function signUp(
       data: {
         full_name: fullName || cleanEmail.split('@')[0],
         role,
+        is_active: false,
       },
     },
   });
@@ -70,28 +71,19 @@ export async function signUp(
     throw new Error(error.message || 'Đăng ký tài khoản thất bại.');
   }
 
-  // Khởi tạo hồ sơ người dùng trong bảng users trên Supabase
+  // Khởi tạo hồ sơ người dùng trong bảng users trên Supabase với is_active = false và ví 0đ
   if (data?.user) {
     try {
-      const roleTitle =
-        role === 'admin'
-          ? 'Quản lý Căn tin'
-          : role === 'data_entry'
-          ? 'Nhân viên Bếp'
-          : role === 'executive'
-          ? 'Ban Giám hiệu'
-          : 'Giáo viên';
-
       await supabase.from('users').upsert({
         id: data.user.id,
         auth_user_id: data.user.id,
         name: fullName || cleanEmail.split('@')[0],
         email: cleanEmail,
-        role,
-        role_title: roleTitle,
-        wallet_balance: 1000000,
-        monthly_allowance: 1000000,
-        is_active: true,
+        role: 'teacher',
+        role_title: 'Giáo viên',
+        wallet_balance: 0,
+        monthly_allowance: 0,
+        is_active: false, // Chờ Admin phê duyệt và nạp ví
       });
     } catch (e) {
       console.warn('Profile initialization note:', e);
@@ -126,7 +118,6 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
       .from('users')
       .select('*')
       .eq('auth_user_id', user.id)
-      .eq('is_active', true)
       .maybeSingle();
 
     if (!data && user.email) {
@@ -134,7 +125,6 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
         .from('users')
         .select('*')
         .eq('email', user.email)
-        .eq('is_active', true)
         .maybeSingle();
       if (byEmail) {
         data = byEmail;
@@ -144,6 +134,12 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
     if (!data) {
       // Tự động đồng bộ hồ sơ cho tài khoản vừa đăng nhập vào bảng users
+      const isStaff =
+        user.email?.includes('admin') ||
+        user.email === 'trantuandai2508@gmail.com' ||
+        user.email?.includes('bep') ||
+        user.email?.includes('hieutruong');
+
       const role =
         user.user_metadata?.role ||
         (user.email?.includes('admin') || user.email === 'trantuandai2508@gmail.com'
@@ -163,15 +159,18 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
           ? 'Ban Giám hiệu'
           : 'Giáo viên';
 
+      const isActive = isStaff ? true : false;
+      const initialWallet = isStaff ? 2000000 : 0;
+
       const newRow = {
         name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Cán bộ Căn tin',
         role,
         role_title: roleTitle,
         email: user.email || '',
         auth_user_id: user.id,
-        wallet_balance: 1000000,
-        monthly_allowance: 1000000,
-        is_active: true,
+        wallet_balance: initialWallet,
+        monthly_allowance: initialWallet,
+        is_active: isActive,
       };
 
       try {
@@ -192,8 +191,9 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
           department: 'Trường học',
           phoneNumber: '',
           email: user.email || '',
-          walletBalance: 1000000,
-          monthlyAllowance: 1000000,
+          walletBalance: initialWallet,
+          monthlyAllowance: initialWallet,
+          isActive,
         };
       }
     }
@@ -293,6 +293,61 @@ export async function createUserByAdmin(
   return mapUser(data);
 }
 
+export async function approveUserAndFundWallet(
+  params: {
+    userId: string;
+    walletAmount: number;
+    note?: string;
+  },
+  actor: UserProfile
+): Promise<UserProfile> {
+  checkSupabase();
+  const amount = Number(params.walletAmount || 0);
+
+  // 1. Cập nhật trạng thái người dùng sang is_active = true và set số dư ví
+  const { data: updatedUser, error: updateErr } = await supabase
+    .from('users')
+    .update({
+      is_active: true,
+      wallet_balance: amount,
+      monthly_allowance: amount,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', params.userId)
+    .select()
+    .single();
+
+  if (updateErr || !updatedUser) {
+    throw new Error(`Không thể phê duyệt thành viên: ${updateErr?.message || 'Lỗi cơ sở dữ liệu'}`);
+  }
+
+  // 2. Ghi nhận giao dịch cấp ví ban đầu vào wallet_transactions
+  if (amount > 0) {
+    try {
+      await supabase.from('wallet_transactions').insert({
+        user_id: params.userId,
+        amount: amount,
+        type: 'allowance',
+        reference_id: `APPROVAL-${Date.now()}`,
+        balance_after: amount,
+        note: params.note || 'Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu',
+        created_by: actor.id,
+      });
+    } catch (txErr) {
+      console.warn('Lỗi ghi transaction ví khi duyệt user:', txErr);
+    }
+  }
+
+  // 3. Ghi audit log
+  await addAuditLog({
+    action: 'USER_APPROVED',
+    actor,
+    details: `Phê duyệt tài khoản "${updatedUser.name}" (${updatedUser.email}) và nạp hạn mức ví ban đầu: ${formatVnd(amount)}`,
+  });
+
+  return mapUser(updatedUser);
+}
+
 export async function updateUserWallet(
   userId: string,
   newBalance: number,
@@ -325,56 +380,39 @@ export async function updateUserWallet(
 
 export async function getMenu(forDate?: string): Promise<MenuItem[]> {
   checkSupabase();
-  const date = forDate || getTomorrowStr();
 
-  // Ưu tiên lấy món theo ngày phục vụ
-  let { data, error } = await supabase
+  let query = supabase
     .from('menu_items')
     .select('*')
-    .eq('for_date', date)
     .eq('is_active', true)
     .order('category')
     .order('name');
 
-  // Nếu ngày chỉ định chưa có món, hiển thị các món ăn active chung của Căn tin
-  if (!error && (!data || data.length === 0)) {
-    const { data: allActive, error: allErr } = await supabase
-      .from('menu_items')
-      .select('*')
-      .eq('is_active', true)
-      .order('category')
-      .order('name');
-
-    if (!allErr && allActive && allActive.length > 0) {
-      data = allActive;
-    }
+  // Chỉ lọc theo ngày nếu người dùng truyền rõ ràng tham số forDate
+  if (forDate) {
+    query = query.eq('for_date', forDate);
   }
 
+  const { data, error } = await query;
   if (error) throw new Error(`Lỗi tải thực đơn: ${error.message}`);
   return (data || []).map(mapMenuItem);
 }
 
 export async function getAllMenuItems(forDate?: string): Promise<MenuItem[]> {
   checkSupabase();
-  const date = forDate || getTomorrowStr();
 
-  let { data, error } = await supabase
+  let query = supabase
     .from('menu_items')
     .select('*')
-    .eq('for_date', date)
-    .order('category');
+    .order('category')
+    .order('name');
 
-  if (!error && (!data || data.length === 0)) {
-    const { data: allItems, error: allErr } = await supabase
-      .from('menu_items')
-      .select('*')
-      .order('category');
-
-    if (!allErr && allItems && allItems.length > 0) {
-      data = allItems;
-    }
+  // Chỉ lọc theo ngày nếu người dùng truyền rõ ràng tham số forDate
+  if (forDate) {
+    query = query.eq('for_date', forDate);
   }
 
+  const { data, error } = await query;
   if (error) throw new Error(`Lỗi tải danh mục món: ${error.message}`);
   return (data || []).map(mapMenuItem);
 }
@@ -504,6 +542,14 @@ export async function placeOrder(params: {
 
   if (userErr || !userData) {
     return { success: false, error: 'Không tìm thấy hồ sơ người dùng trên hệ thống.' };
+  }
+
+  // Kiểm tra tài khoản đã được Quản trị Canteen phê duyệt chưa
+  if (userData.is_active === false) {
+    return {
+      success: false,
+      error: 'Tài khoản của bạn đang chờ Ban Quản Trị Canteen phê duyệt và cấp hạn mức ví suất ăn. Vui lòng liên hệ Quản lý Căn tin để được kích hoạt.',
+    };
   }
 
   // Lấy chi tiết món ăn từ bảng menu_items
@@ -862,28 +908,84 @@ export function getCustomTimeGateConfig(): { openTime: string; closeTime: string
   return { openTime: '07:00', closeTime: '16:00' };
 }
 
+export async function fetchTimeGateConfig(): Promise<{ openTime: string; closeTime: string }> {
+  try {
+    if (isSupabaseConfigured && supabase) {
+      // 1. Thử đọc từ bảng 'settings' chuẩn theo schema Supabase
+      const { data, error } = await supabase
+        .from('settings')
+        .select('*')
+        .in('key', ['time_gate', 'time_gate_config'])
+        .maybeSingle();
+
+      if (!error && data?.value) {
+        let openTime = '07:00';
+        let closeTime = '16:00';
+
+        if (data.value.openTime && data.value.closeTime) {
+          openTime = data.value.openTime;
+          closeTime = data.value.closeTime;
+        } else if (data.value.open_hour !== undefined && data.value.close_hour !== undefined) {
+          openTime = `${String(data.value.open_hour).padStart(2, '0')}:00`;
+          closeTime = `${String(data.value.close_hour).padStart(2, '0')}:00`;
+        }
+
+        const cfg = { openTime, closeTime };
+        localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
+        return cfg;
+      }
+    }
+  } catch (e) {
+    console.warn('Fetch time gate config notice:', e);
+  }
+  return getCustomTimeGateConfig();
+}
+
 export async function setCustomTimeGateConfig(
   openTime: string,
   closeTime: string,
   actor?: UserProfile
 ): Promise<void> {
-  try {
-    localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify({ openTime, closeTime }));
-    if (isSupabaseConfigured && supabase) {
-      await supabase.from('system_settings').upsert({
-        key: 'time_gate_config',
-        value: { openTime, closeTime, updated_by: actor?.name || 'Admin', updated_at: new Date().toISOString() },
+  const [openHour] = openTime.split(':').map(Number);
+  const [closeHour] = closeTime.split(':').map(Number);
+  const cfg = { openTime, closeTime };
+  localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
+
+  if (isSupabaseConfigured && supabase) {
+    // 1. Lưu vào bảng 'settings'
+    try {
+      await supabase.from('settings').upsert({
+        key: 'time_gate',
+        value: {
+          openTime,
+          closeTime,
+          open_hour: isNaN(openHour) ? 7 : openHour,
+          close_hour: isNaN(closeHour) ? 16 : closeHour,
+          timezone: 'Asia/Ho_Chi_Minh',
+          updated_by: actor?.name || 'Admin',
+          updated_at: new Date().toISOString(),
+        },
+        updated_at: new Date().toISOString(),
       });
+    } catch {
+      // Fallback nếu dùng bảng system_settings
+      try {
+        await supabase.from('system_settings').upsert({
+          key: 'time_gate_config',
+          value: { openTime, closeTime, updated_by: actor?.name || 'Admin', updated_at: new Date().toISOString() },
+        });
+      } catch (err) {
+        console.warn('Set time gate config notice:', err);
+      }
     }
-    if (actor) {
-      await addAuditLog({
-        action: 'TIMEGATE_OVERRIDE',
-        actor,
-        details: `Cập nhật khung giờ nhận đơn thường: ${openTime} - ${closeTime}`,
-      });
-    }
-  } catch (e) {
-    console.warn('Set time gate config notice:', e);
+  }
+
+  if (actor) {
+    await addAuditLog({
+      action: 'TIMEGATE_OVERRIDE',
+      actor,
+      details: `Cập nhật khung giờ nhận đơn thường: ${openTime} - ${closeTime}`,
+    });
   }
 }
 
@@ -975,8 +1077,10 @@ function mapUser(row: any): UserProfile {
     avatarUrl: row.avatar_url,
     defaultRoom: row.default_room,
     walletBalance: Number(row.wallet_balance ?? 0),
-    monthlyAllowance: Number(row.monthly_allowance ?? 1000000),
+    monthlyAllowance: Number(row.monthly_allowance ?? 0),
     lastWalletResetDate: row.last_wallet_reset_date,
+    isActive: row.is_active !== undefined ? Boolean(row.is_active) : true,
+    createdAt: row.created_at,
   };
 }
 

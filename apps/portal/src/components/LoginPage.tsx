@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { login, signUp, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
+import { login, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
 import {
   Building2,
   Mail,
@@ -8,9 +8,7 @@ import {
   ShieldCheck,
   Eye,
   EyeOff,
-  UserPlus,
-  LogIn,
-  CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 
 interface Props {
@@ -18,35 +16,26 @@ interface Props {
 }
 
 export function LoginPage({ onSuccess }: Props) {
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
-  const [fullName, setFullName] = useState('');
-  const [role, setRole] = useState<'admin' | 'data_entry' | 'executive'>('admin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setSuccessMsg(null);
     setLoading(true);
 
     try {
-      if (mode === 'signup') {
-        await signUp(email.trim(), password, fullName.trim(), role);
-        setSuccessMsg('Đăng ký tài khoản Supabase thành công! Hãy đăng nhập bằng mật khẩu vừa tạo.');
-        setMode('login');
-        setLoading(false);
-        return;
-      }
-
       await login(email.trim(), password);
       const profile = await getCurrentUserProfile();
       if (!profile) {
         setError('Tài khoản chưa được kích hoạt profile quản trị. Vui lòng kiểm tra lại.');
+        return;
+      }
+      if (profile.role === 'teacher') {
+        setError('Tài khoản Giáo viên vui lòng đăng nhập tại Ứng dụng Đặt món, không thể truy cập Portal quản trị.');
         return;
       }
       onSuccess(profile);
@@ -83,76 +72,12 @@ export function LoginPage({ onSuccess }: Props) {
 
         {/* Card with clean white background */}
         <div className="bg-white rounded-3xl border border-slate-200/80 shadow-xl shadow-slate-200/50 p-6 sm:p-8">
-          {/* Mode switch */}
-          <div className="flex rounded-xl bg-slate-100 p-1 mb-5">
-            <button
-              type="button"
-              onClick={() => {
-                setMode('login');
-                setError(null);
-                setSuccessMsg(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                mode === 'login'
-                  ? 'bg-white text-indigo-800 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <LogIn className="w-3.5 h-3.5" />
-              <span>Đăng nhập</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('signup');
-                setError(null);
-                setSuccessMsg(null);
-              }}
-              className={`flex-1 py-2 text-xs font-bold rounded-lg transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                mode === 'signup'
-                  ? 'bg-white text-indigo-800 shadow-sm'
-                  : 'text-slate-500 hover:text-slate-800'
-              }`}
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Đăng ký mới</span>
-            </button>
+          <div className="mb-5 pb-4 border-b border-slate-100 text-center">
+            <h2 className="text-base font-bold text-slate-800">Đăng Nhập Quản Trị Hệ Thống</h2>
+            <p className="text-xs text-slate-400 mt-0.5">Dành cho Ban Quản Lý, Bếp Trưởng và Ban Giám Hiệu</p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === 'signup' && (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Họ và tên cán bộ quản trị
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Ví dụ: Thầy Trần Quản Lý"
-                    className="w-full px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Vai trò quản trị
-                  </label>
-                  <select
-                    value={role}
-                    onChange={(e) => setRole(e.target.value as any)}
-                    className="w-full px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition cursor-pointer"
-                  >
-                    <option value="admin">Quản lý Căn tin (Admin cao cấp)</option>
-                    <option value="data_entry">Nhân viên Bếp (Vận hành & Xuất suất ăn)</option>
-                    <option value="executive">Ban Giám hiệu (Giám sát & Báo cáo)</option>
-                  </select>
-                </div>
-              </>
-            )}
-
             <div>
               <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
                 Email Quản trị / Nhân viên Bếp
@@ -166,7 +91,7 @@ export function LoginPage({ onSuccess }: Props) {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="admin@canteen.edu.vn"
+                  placeholder="admin@truonghoc.edu.vn"
                   className="w-full pl-10 pr-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition"
                   autoComplete="email"
                 />
@@ -190,7 +115,7 @@ export function LoginPage({ onSuccess }: Props) {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                   className="w-full pl-10 pr-10 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white transition"
-                  autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
@@ -202,13 +127,6 @@ export function LoginPage({ onSuccess }: Props) {
               </div>
             </div>
 
-            {successMsg && (
-              <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start gap-2.5">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
-                <span>{successMsg}</span>
-              </div>
-            )}
-
             {error && (
               <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2.5">
                 <span className="text-base leading-none">⚠️</span>
@@ -219,17 +137,12 @@ export function LoginPage({ onSuccess }: Props) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 sm:py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition duration-200 text-sm cursor-pointer min-h-[44px]"
+              className="w-full py-3 sm:py-3.5 px-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white font-semibold rounded-xl shadow-lg shadow-indigo-600/20 flex items-center justify-center gap-2 transition duration-200 text-sm cursor-pointer min-h-[44px]"
             >
               {loading ? (
                 <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  <span>Đang xử lý dữ liệu Supabase...</span>
-                </>
-              ) : mode === 'signup' ? (
-                <>
-                  <span>Tạo Tài Khoản Quản Trị Supabase</span>
-                  <UserPlus className="w-4 h-4" />
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                  <span>Đang xác thực bảo mật...</span>
                 </>
               ) : (
                 <>
@@ -242,7 +155,7 @@ export function LoginPage({ onSuccess }: Props) {
 
           <div className="mt-6 pt-5 border-t border-slate-100 flex items-center justify-center gap-1.5 text-slate-400 text-xs">
             <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
-            <span>Phân quyền RBAC nội bộ Supabase</span>
+            <span>Phân quyền RBAC bảo mật - Đăng ký mới chỉ mở tại Ứng dụng Cán bộ</span>
           </div>
         </div>
 
