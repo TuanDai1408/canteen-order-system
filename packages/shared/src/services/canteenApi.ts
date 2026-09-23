@@ -978,11 +978,11 @@ export async function placeOrder(params: {
 
   const orderUuid = generateUUID();
 
-  // 6. Chèn đơn hàng vào bảng orders trên Supabase
+  // 6. Chèn đơn hàng vào bảng orders trên Supabase (Adaptive Schema Insertion)
   let newOrder: any = null;
   let orderInsertError: string | null = null;
 
-  const fullOrderPayload: any = {
+  let currentPayload: Record<string, any> = {
     id: orderUuid,
     order_code: orderCode,
     user_id: userData.id,
@@ -991,8 +991,8 @@ export async function placeOrder(params: {
     user_phone: userData.phone_number || '',
     user_department: userData.department || '',
     order_date: now.toISOString().split('T')[0],
-    meal_date: targetDate,
     target_date: targetDate,
+    meal_date: targetDate,
     delivery_method: params.deliveryMethod,
     room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || '' : '',
     pickup_time: params.pickupTime,
@@ -1007,47 +1007,66 @@ export async function placeOrder(params: {
       : itemsSummaryText,
   };
 
-  try {
-    const res1 = await withQueryTimeout(
-      supabase.from('orders').insert(fullOrderPayload).select().maybeSingle(),
-      15000,
-      'Timeout creating order on Supabase'
-    );
-    if (!res1.error && res1.data) {
-      newOrder = res1.data;
-    } else {
-      orderInsertError = res1.error?.message || 'Lỗi không xác định khi thêm đơn vào Supabase';
-      console.warn('[placeOrder insert attempt 1 note]:', orderInsertError);
+  // Vòng lặp thích ứng schema: Tự động loại bỏ bất kỳ cột nào mà bảng orders trên DB chưa hỗ trợ
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const res = await withQueryTimeout(
+        supabase.from('orders').insert(currentPayload).select().maybeSingle(),
+        15000,
+        'Timeout creating order on Supabase'
+      );
 
-      // Thử lại với schema tiêu chuẩn (loại bỏ các cột tuỳ chọn mở rộng nếu DB chưa cập nhật)
-      const standardPayload = {
-        id: orderUuid,
-        order_code: orderCode,
-        user_id: userData.id,
-        user_name: userData.name || authUser.email?.split('@')[0] || 'Cán bộ',
-        user_email: userData.email || authUser.email || '',
-        order_date: now.toISOString().split('T')[0],
-        meal_date: targetDate,
-        delivery_method: params.deliveryMethod,
-        room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || '' : '',
-        pickup_time: params.pickupTime,
-        total_amount: totalAmount,
-        status: 'confirmed',
-        used_qr_token: params.exceptionToken || null,
-        note: itemsSummaryText,
-      };
-      const res2 = await supabase.from('orders').insert(standardPayload).select().maybeSingle();
-      if (!res2.error && res2.data) {
-        newOrder = res2.data;
+      if (!res.error && res.data) {
+        newOrder = res.data;
         orderInsertError = null;
-      } else {
-        orderInsertError = res2.error?.message || orderInsertError;
-        console.error('[placeOrder insert attempt 2 error]:', orderInsertError);
+        break;
       }
+
+      if (res.error) {
+        orderInsertError = res.error.message;
+        const errMsg = res.error.message || '';
+
+        // Trích xuất tên cột bị thiếu từ lỗi PostgREST hoặc PostgreSQL
+        const missingColMatch =
+          errMsg.match(/Could not find the '([^']+)' column/) ||
+          errMsg.match(/column "([^"]+)" of relation/i) ||
+          errMsg.match(/Could not find the column '([^']+)'/i) ||
+          errMsg.match(/column '([^']+)' does not exist/i);
+
+        if (missingColMatch && missingColMatch[1]) {
+          const colToRemove = missingColMatch[1];
+          console.warn(
+            `[placeOrder schema adaptive]: Bảng 'orders' trên DB không có cột '${colToRemove}', tự động loại bỏ và thử lại...`
+          );
+          delete currentPayload[colToRemove];
+          continue;
+        }
+
+        // Fallback 1: Loại bỏ meal_date và các cột metadata mở rộng
+        if (attempt === 0) {
+          delete currentPayload.meal_date;
+          delete currentPayload.device_info;
+          delete currentPayload.is_exception_order;
+          delete currentPayload.exception_token_used;
+          delete currentPayload.user_department;
+          delete currentPayload.user_phone;
+          continue;
+        }
+
+        // Fallback 2: Loại bỏ target_date nếu chỉ có order_date
+        if (attempt === 1) {
+          delete currentPayload.target_date;
+          delete currentPayload.used_qr_token;
+          delete currentPayload.room_number;
+          continue;
+        }
+
+        break;
+      }
+    } catch (queryEx: any) {
+      orderInsertError = queryEx.message || 'Lỗi mạng kết nối Supabase';
+      break;
     }
-  } catch (e: any) {
-    orderInsertError = e.message || 'Lỗi kết nối máy chủ Supabase';
-    console.error('[placeOrder Supabase insert exception]:', e);
   }
 
   // Nếu insert vào Supabase thất bại, báo lỗi cụ thể để xử lý thay vì im lặng
@@ -1060,9 +1079,9 @@ export async function placeOrder(params: {
 
   const generatedId = newOrder ? newOrder.id : orderUuid;
 
-  // 7. Thêm chi tiết món ăn vào bảng order_items trên Supabase
+  // 7. Thêm chi tiết món ăn vào bảng order_items trên Supabase (Adaptive Schema)
   try {
-    const itemsToInsert = orderItemsData.map((it) => ({
+    let itemsPayload: any[] = orderItemsData.map((it) => ({
       id: generateUUID(),
       order_id: generatedId,
       menu_item_id: it.real_db_item_id,
@@ -1073,19 +1092,39 @@ export async function placeOrder(params: {
       image_url: it.image_url || '',
     }));
 
-    const { error: itemErr } = await supabase.from('order_items').insert(itemsToInsert);
-    if (itemErr) {
-      console.warn('[placeOrder order_items insert retry note]:', itemErr.message);
-      // Fallback không có cột image_url
-      const standardItems = orderItemsData.map((it) => ({
-        order_id: generatedId,
-        menu_item_id: it.real_db_item_id,
-        name: it.name,
-        price: it.price,
-        quantity: it.quantity,
-        subtotal: it.price * it.quantity,
-      }));
-      await supabase.from('order_items').insert(standardItems);
+    for (let itAttempt = 0; itAttempt < 5; itAttempt++) {
+      const { error: itemErr } = await supabase.from('order_items').insert(itemsPayload);
+      if (!itemErr) break;
+
+      const itemErrMsg = itemErr.message || '';
+      const missingItemCol =
+        itemErrMsg.match(/Could not find the '([^']+)' column/) ||
+        itemErrMsg.match(/column "([^"]+)" of relation/i);
+
+      if (missingItemCol && missingItemCol[1]) {
+        const col = missingItemCol[1];
+        console.warn(`[order_items adaptive]: Bảng 'order_items' không có cột '${col}', tự động loại bỏ...`);
+        itemsPayload = itemsPayload.map((it) => {
+          const clone = { ...it };
+          delete clone[col];
+          return clone;
+        });
+        continue;
+      }
+
+      if (itAttempt === 0) {
+        // Fallback standard không có image_url & id
+        itemsPayload = orderItemsData.map((it) => ({
+          order_id: generatedId,
+          menu_item_id: it.real_db_item_id,
+          name: it.name,
+          price: it.price,
+          quantity: it.quantity,
+          subtotal: it.price * it.quantity,
+        }));
+        continue;
+      }
+      break;
     }
   } catch (e) {
     console.warn('[placeOrder order_items exception]:', e);
@@ -1304,7 +1343,7 @@ export async function cancelOrder(
       return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
     }
 
-    // Cập nhật trạng thái đơn thành cancelled
+    // Cập nhật trạng thái đơn thành cancelled (Adaptive fallback)
     const { error: updateErr } = await supabase
       .from('orders')
       .update({
@@ -1316,7 +1355,11 @@ export async function cancelOrder(
       .eq('id', order.id);
 
     if (updateErr) {
-      console.warn('[Update order to cancelled notice]:', updateErr.message);
+      console.warn('[Update order to cancelled notice - retrying standard]:', updateErr.message);
+      await supabase
+        .from('orders')
+        .update({ status: 'cancelled' })
+        .eq('id', order.id);
     }
 
     let refundBalance: number | undefined;

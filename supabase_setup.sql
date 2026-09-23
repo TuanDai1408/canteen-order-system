@@ -71,6 +71,21 @@ CREATE TABLE IF NOT EXISTS orders (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Đảm bảo các cột mở rộng luôn có mặt trên bảng orders nếu bảng đã tồn tại từ trước
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS meal_date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS target_date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_date DATE DEFAULT CURRENT_DATE;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_email TEXT DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_phone TEXT DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS user_department TEXT DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_exception_order BOOLEAN DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS exception_token_used TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS used_qr_token TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS device_info JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancellation_deadline TEXT DEFAULT '16:00';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
+
 -- 5. Bảng chi tiết món trong đơn (order_items)
 CREATE TABLE IF NOT EXISTS order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
