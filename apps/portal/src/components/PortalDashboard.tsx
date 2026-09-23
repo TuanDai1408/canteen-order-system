@@ -3,6 +3,7 @@ import {
   formatVnd,
   updateMenuItem,
   createMenuItem,
+  seedMenuToSupabase,
   createQRToken,
   updateOrderStatus,
   updateUserWallet,
@@ -15,7 +16,6 @@ import {
   type UserProfile,
   type MenuItem,
   type Order,
-  type AuditLog,
   type QRExceptionToken,
   type TimeGateStatus,
   type OrderStatus,
@@ -27,7 +27,6 @@ import {
   Receipt,
   Users,
   QrCode,
-  History,
   TrendingUp,
   Building2,
   Plus,
@@ -62,7 +61,6 @@ interface Props {
   menu: MenuItem[];
   orders: Order[];
   users: UserProfile[];
-  logs: AuditLog[];
   tokens: QRExceptionToken[];
   timeStatus: TimeGateStatus;
   onRefresh: () => void;
@@ -70,14 +68,13 @@ interface Props {
   onSwitchToOrder?: () => void;
 }
 
-type Tab = 'overview' | 'menu' | 'orders' | 'users' | 'qr' | 'logs';
+type Tab = 'overview' | 'menu' | 'orders' | 'users' | 'qr';
 
 export function PortalDashboard({
   currentUser,
   menu,
   orders,
   users,
-  logs,
   tokens,
   timeStatus,
   onRefresh,
@@ -88,6 +85,7 @@ export function PortalDashboard({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [msg, setMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [seeding, setSeeding] = useState(false);
 
   // Search & Filter states
   const [menuSearch, setMenuSearch] = useState('');
@@ -561,7 +559,6 @@ export function PortalDashboard({
       isPendingBadge: pendingUsersCount > 0,
     },
     { id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode },
-    { id: 'logs' as Tab, label: 'Nhật ký hệ thống', icon: History },
   ];
 
   const handleSelectTab = (selectedTab: Tab) => {
@@ -1137,6 +1134,39 @@ export function PortalDashboard({
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                   </div>
+
+                  <button
+                    onClick={async () => {
+                      setSeeding(true);
+                      try {
+                        const res = await seedMenuToSupabase();
+                        if (res.success) {
+                          setMsg({
+                            type: 'ok',
+                            text: `Đã nạp ${res.count} món ăn vào bảng menu_items trên Supabase Cloud thành công!`,
+                          });
+                          onRefresh();
+                        } else {
+                          setMsg({
+                            type: 'err',
+                            text: `Lỗi đồng bộ Supabase: ${res.error || 'Vui lòng kiểm tra quyền RLS'}`,
+                          });
+                        }
+                      } finally {
+                        setSeeding(false);
+                      }
+                    }}
+                    disabled={seeding}
+                    className="px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs disabled:opacity-60"
+                    title="Nạp toàn bộ thực đơn chuẩn vào Supabase database"
+                  >
+                    {seeding ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    <span>{seeding ? 'Đang nạp...' : 'Nạp vào Supabase'}</span>
+                  </button>
 
                   <button
                     onClick={() => setIsAddDishOpen(true)}
@@ -1765,34 +1795,6 @@ export function PortalDashboard({
                     <div className="p-8 text-center text-slate-400 text-xs">Chưa có mã QR ngoại lệ nào.</div>
                   )}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* ================= TAB: AUDIT LOGS ================= */}
-          {tab === 'logs' && (
-            <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl divide-y divide-slate-100 shadow-xs">
-                {logs.map((l) => (
-                  <div key={l.id} className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-[10px] px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 font-bold border border-indigo-200/60">
-                          {l.action}
-                        </span>
-                        <span className="text-xs font-bold text-slate-900">{l.actorName}</span>
-                        <span className="text-[11px] text-slate-400">({l.actorRole})</span>
-                      </div>
-                      <p className="text-xs text-slate-600">{l.details}</p>
-                    </div>
-                    <span className="text-[11px] text-slate-400 whitespace-nowrap self-end sm:self-auto">
-                      {new Date(l.timestamp).toLocaleString('vi-VN')}
-                    </span>
-                  </div>
-                ))}
-                {logs.length === 0 && (
-                  <div className="p-8 text-center text-slate-400 text-xs">Chưa có bản ghi nhật ký.</div>
-                )}
               </div>
             </div>
           )}

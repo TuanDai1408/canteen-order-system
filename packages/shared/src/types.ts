@@ -85,31 +85,6 @@ export interface QRExceptionToken {
   note?: string;
 }
 
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  action:
-    | 'STOCK_UPDATE'
-    | 'MENU_CREATE'
-    | 'MENU_UPDATE'
-    | 'ORDER_PLACED'
-    | 'ORDER_CANCELLED'
-    | 'QR_TOKEN_GENERATED'
-    | 'QR_TOKEN_USED'
-    | 'WALLET_UPDATE'
-    | 'USER_CREATE'
-    | 'USER_APPROVED'
-    | 'USER_ROLE_CHANGED'
-    | 'TIMEGATE_OVERRIDE'
-    | 'WALLET_RESET_ALL';
-  actorId: string;
-  actorName: string;
-  actorRole: UserRole;
-  details: string;
-  ipAddress?: string;
-  metadata?: Record<string, unknown>;
-}
-
 export interface TimeGateStatus {
   isOpen: boolean;
   currentHour: number;

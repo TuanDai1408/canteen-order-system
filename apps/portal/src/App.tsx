@@ -1,19 +1,19 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getCurrentUserProfile,
   getAllMenuItems,
   getOrders,
   getUsers,
-  getAuditLogs,
   getQRTokens,
   getTimeGateStatus,
   fetchTimeGateConfig,
   subscribeRealtime,
   logout,
+  getCachedMenu,
+  getCachedOrders,
   type UserProfile,
   type MenuItem,
   type Order,
-  type AuditLog,
   type QRExceptionToken,
   type TimeGateStatus,
 } from '@canteen/shared';
@@ -23,53 +23,61 @@ import { ShieldAlert, LogOut } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
-  const [menu, setMenu] = useState<MenuItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [menu, setMenu] = useState<MenuItem[]>(() => getCachedMenu());
+  const [orders, setOrders] = useState<Order[]>(() => getCachedOrders());
   const [users, setUsers] = useState<UserProfile[]>([]);
-  const [logs, setLogs] = useState<AuditLog[]>([]);
   const [tokens, setTokens] = useState<QRExceptionToken[]>([]);
   const [timeStatus, setTimeStatus] = useState<TimeGateStatus>(() => getTimeGateStatus());
   const [loading, setLoading] = useState(true);
 
+  const isMountedRef = useRef(true);
+
   const refresh = useCallback(async () => {
     try {
-      const [m, o, u, l, t] = await Promise.all([
+      const [m, o, u, t] = await Promise.all([
         getAllMenuItems(),
         getOrders(),
         getUsers(),
-        getAuditLogs(50),
         getQRTokens(),
         fetchTimeGateConfig(),
       ]);
+      if (!isMountedRef.current) return;
       setMenu(m);
       setOrders(o);
       setUsers(u);
-      setLogs(l);
       setTokens(t);
       setTimeStatus(getTimeGateStatus());
     } catch (e) {
-      console.error(e);
+      console.warn('Portal refresh note:', e);
     }
   }, []);
 
   useEffect(() => {
+    isMountedRef.current = true;
     async function init() {
-      const profile = await getCurrentUserProfile();
-      setUser(profile);
-      if (profile) await refresh();
-      setLoading(false);
+      try {
+        const profile = await getCurrentUserProfile();
+        if (!isMountedRef.current) return;
+        setUser(profile);
+        if (profile) await refresh();
+      } catch (err) {
+        console.error('Portal init err:', err);
+      } finally {
+        if (isMountedRef.current) setLoading(false);
+      }
     }
     init();
 
     const unsub = subscribeRealtime(() => {
-      getCurrentUserProfile().then((p) => {
-        if (p) {
-          setUser(p);
-          refresh();
-        }
-      });
+      if (isMountedRef.current) {
+        refresh();
+      }
     });
-    return unsub;
+
+    return () => {
+      isMountedRef.current = false;
+      unsub();
+    };
   }, [refresh]);
 
   const handleLogout = async () => {
@@ -132,7 +140,6 @@ export default function App() {
       menu={menu}
       orders={orders}
       users={users}
-      logs={logs}
       tokens={tokens}
       timeStatus={timeStatus}
       onRefresh={refresh}

@@ -1,19 +1,20 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import {
   getCurrentUserProfile,
   getMenu,
   getAllMenuItems,
   getOrders,
   getUsers,
-  getAuditLogs,
   getQRTokens,
   getTimeGateStatus,
   subscribeRealtime,
   logout,
+  getCachedMenu,
+  getCachedOrders,
+  fetchTimeGateConfig,
   type UserProfile,
   type MenuItem,
   type Order,
-  type AuditLog,
   type QRExceptionToken,
   type TimeGateStatus,
 } from '@canteen/shared';
@@ -21,13 +22,12 @@ import { LoginPage } from './components/LoginPage';
 import { OrderHome } from './components/OrderHome';
 import { PortalDashboard } from './components/PortalDashboard';
 import { PendingApprovalView } from './components/PendingApprovalView';
-import { fetchTimeGateConfig } from '@canteen/shared';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [currentView, setCurrentView] = useState<'order' | 'portal'>('order');
-  const [menu, setMenu] = useState<MenuItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [menu, setMenu] = useState<MenuItem[]>(() => getCachedMenu());
+  const [orders, setOrders] = useState<Order[]>(() => getCachedOrders());
   const [timeStatus, setTimeStatus] = useState<TimeGateStatus>(() => getTimeGateStatus());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,8 +36,12 @@ export default function App() {
   const [portalMenu, setPortalMenu] = useState<MenuItem[]>([]);
   const [allOrders, setAllOrders] = useState<Order[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
-  const [logs, setLogs] = useState<AuditLog[]>([]);
   const [tokens, setTokens] = useState<QRExceptionToken[]>([]);
+
+  const userRef = useRef<UserProfile | null>(user);
+  userRef.current = user;
+  const currentViewRef = useRef<'order' | 'portal'>(currentView);
+  currentViewRef.current = currentView;
 
   const refreshOrderData = useCallback(async (profile: UserProfile) => {
     try {
@@ -53,67 +57,65 @@ export default function App() {
         setUser(updatedProfile);
       }
       setTimeStatus(getTimeGateStatus());
+      setError(null);
     } catch (e: any) {
-      console.error(e);
-      setError(e.message || 'Không thể tải dữ liệu');
+      console.warn('[refreshOrderData notice]:', e);
+      // Giữ nguyên thực đơn và đơn hàng đã nạp, không ngắt quãng người dùng
     }
   }, []);
 
   const refreshPortalData = useCallback(async () => {
     try {
-      const [m, o, u, l, t] = await Promise.all([
+      const [m, o, u, t] = await Promise.all([
         getAllMenuItems(),
         getOrders(),
         getUsers(),
-        getAuditLogs(50),
         getQRTokens(),
       ]);
       setPortalMenu(m);
       setAllOrders(o);
       setAllUsers(u);
-      setLogs(l);
       setTokens(t);
       setTimeStatus(getTimeGateStatus());
     } catch (e: any) {
-      console.error(e);
+      console.warn('[refreshPortalData notice]:', e);
     }
   }, []);
 
-  const refreshAll = useCallback(async (profile: UserProfile) => {
-    await Promise.all([
-      refreshOrderData(profile),
-      refreshPortalData(),
-    ]);
-  }, [refreshOrderData, refreshPortalData]);
-
   useEffect(() => {
+    let mounted = true;
     async function init() {
       try {
         const profile = await getCurrentUserProfile();
+        if (!mounted) return;
         setUser(profile);
         if (profile) {
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
+            refreshPortalData();
           } else {
             setCurrentView('order');
+            refreshOrderData(profile);
           }
-          await refreshAll(profile);
         }
       } catch (e: any) {
-        console.error(e);
+        console.error('Init error:', e);
       } finally {
-        setLoading(false);
+        if (mounted) setLoading(false);
       }
     }
     init();
 
     const unsub = subscribeRealtime(() => {
-      getCurrentUserProfile().then((profile) => {
-        if (profile) {
-          setUser(profile);
-          refreshAll(profile);
+      if (!mounted) return;
+      const currentUser = userRef.current;
+      if (currentUser) {
+        if (currentViewRef.current === 'portal') {
+          refreshPortalData();
+        } else {
+          refreshOrderData(currentUser);
         }
-      });
+      }
     });
 
     const clock = setInterval(() => {
@@ -121,15 +123,15 @@ export default function App() {
     }, 30_000);
 
     return () => {
+      mounted = false;
       unsub();
       clearInterval(clock);
     };
-  }, [refreshAll]);
+  }, [refreshOrderData, refreshPortalData]);
 
   const handleLogout = async () => {
     await logout();
     setUser(null);
-    setMenu([]);
     setOrders([]);
     setCurrentView('order');
   };
@@ -152,10 +154,11 @@ export default function App() {
           setUser(profile);
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
+            refreshPortalData();
           } else {
             setCurrentView('order');
+            refreshOrderData(profile);
           }
-          await refreshAll(profile);
         }}
       />
     );
@@ -170,7 +173,6 @@ export default function App() {
         menu={portalMenu}
         orders={allOrders}
         users={allUsers}
-        logs={logs}
         tokens={tokens}
         timeStatus={timeStatus}
         onRefresh={refreshPortalData}
