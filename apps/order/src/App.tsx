@@ -152,8 +152,10 @@ export default function App() {
     }
     init();
 
-    const unsub = subscribeRealtime(() => {
+    const unsub = subscribeRealtime(async () => {
       if (!mounted) return;
+      await fetchTimeGateConfig().catch(() => {});
+      setTimeStatus(getTimeGateStatus());
       const currentUser = userRef.current;
       if (currentUser) {
         if (currentViewRef.current === 'portal') {
@@ -176,19 +178,36 @@ export default function App() {
       setTimeStatus(getTimeGateStatus());
     };
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'canteen_time_gate_config' || !e.key) {
+        setTimeStatus(getTimeGateStatus());
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+    window.addEventListener('storage', handleStorage);
 
-    const clock = setInterval(() => {
+    // Chu kỳ cập nhật trạng thái thời gian mỗi 5s và đồng bộ config
+    const clock = setInterval(async () => {
+      if (!mounted) return;
       setTimeStatus(getTimeGateStatus());
-    }, 15_000);
+    }, 5_000);
+
+    const configSyncInterval = setInterval(async () => {
+      if (!mounted) return;
+      await fetchTimeGateConfig().catch(() => {});
+      setTimeStatus(getTimeGateStatus());
+    }, 10_000);
 
     return () => {
       mounted = false;
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+      window.removeEventListener('storage', handleStorage);
       clearInterval(clock);
+      clearInterval(configSyncInterval);
     };
   }, [refreshOrderData, refreshPortalData]);
 

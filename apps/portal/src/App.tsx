@@ -134,14 +134,31 @@ export default function App() {
       }
     };
 
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'canteen_time_gate_config' || !e.key) {
+        if (isMountedRef.current) {
+          setTimeStatus(getTimeGateStatus());
+        }
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+    window.addEventListener('storage', handleStorage);
+
+    const clock = setInterval(() => {
+      if (isMountedRef.current) {
+        setTimeStatus(getTimeGateStatus());
+      }
+    }, 5_000);
 
     return () => {
       isMountedRef.current = false;
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+      window.removeEventListener('storage', handleStorage);
+      clearInterval(clock);
     };
   }, [refresh]);
 

@@ -2053,6 +2053,12 @@ export async function seedMenuToSupabase(): Promise<{ success: boolean; count: n
 
 const TIME_GATE_STORAGE_KEY = 'canteen_time_gate_config';
 
+// BroadcastChannel for cross-tab and cross-iframe zero-latency communication
+const broadcastSyncChannel: BroadcastChannel | null =
+  typeof window !== 'undefined' && 'BroadcastChannel' in window
+    ? new BroadcastChannel('canteen_system_sync_bus')
+    : null;
+
 export interface TimeGateConfig {
   openTime: string;
   closeTime: string;
@@ -2145,6 +2151,19 @@ export async function setCustomTimeGateConfig(
   };
   localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
 
+  // 1. Gửi tín hiệu tức thì qua BroadcastChannel cho tất cả các tab khác (Order App, Portal)
+  if (broadcastSyncChannel) {
+    try {
+      broadcastSyncChannel.postMessage({ type: 'time_gate_updated', cfg });
+    } catch {}
+  }
+
+  // 2. Phát sự kiện nội bộ cho window hiện tại
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
+    window.dispatchEvent(new Event('storage'));
+  }
+
   if (isSupabaseConfigured && supabase) {
     const payload = {
       openTime,
@@ -2179,12 +2198,6 @@ export async function setCustomTimeGateConfig(
     } catch (e) {
       console.warn('Sync time gate to supabase warning:', e);
     }
-  }
-
-  // Phát tín hiệu cập nhật thời gian mở cổng cho toàn bộ ứng dụng
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
-    window.dispatchEvent(new Event('storage'));
   }
 }
 
@@ -2292,41 +2305,61 @@ export function fileToBase64(file: File): Promise<string> {
 // ============================================================
 
 export function subscribeRealtime(callback: () => void) {
-  // Lắng nghe sự kiện tạo đơn nội bộ giữa các tabs / components
+  // Lắng nghe sự kiện tạo đơn và cập nhật cấu hình nội bộ giữa các tabs / components
   const localHandler = () => {
     callback();
   };
+
+  const broadcastHandler = (ev: MessageEvent) => {
+    if (ev.data?.type === 'time_gate_updated' || ev.data?.type === 'order_created' || ev.data?.type === 'wallet_updated') {
+      callback();
+    }
+  };
+
   if (typeof window !== 'undefined') {
     window.addEventListener('canteen_order_created', localHandler);
+    window.addEventListener('canteen_time_gate_updated', localHandler);
     window.addEventListener('storage', localHandler);
+  }
+
+  if (broadcastSyncChannel) {
+    broadcastSyncChannel.addEventListener('message', broadcastHandler);
   }
 
   if (!isSupabaseConfigured || !supabase) {
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
+      }
+      if (broadcastSyncChannel) {
+        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
       }
     };
   }
   try {
     let debounceTimer: any = null;
-    const debouncedCallback = () => {
+    const debouncedCallback = (payload?: any) => {
+      // Nếu là bảng settings hoặc system_settings, chủ động tải lại config ngay
+      if (payload?.table === 'settings' || payload?.table === 'system_settings') {
+        fetchTimeGateConfig().catch(() => {});
+      }
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         callback();
-      }, 400);
+      }, 300);
     };
 
     const channel = supabase
       .channel('canteen-realtime-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, debouncedCallback)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, debouncedCallback)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => debouncedCallback(p))
       .subscribe();
 
     return () => {
@@ -2334,14 +2367,22 @@ export function subscribeRealtime(callback: () => void) {
       supabase.removeChannel(channel);
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
+      }
+      if (broadcastSyncChannel) {
+        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
       }
     };
   } catch {
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
+      }
+      if (broadcastSyncChannel) {
+        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
       }
     };
   }
