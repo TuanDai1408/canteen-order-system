@@ -56,10 +56,26 @@ export default function App() {
     isMountedRef.current = true;
     async function init() {
       try {
-        const profile = await getCurrentUserProfile();
+        const [profile, m] = await Promise.all([
+          getCurrentUserProfile(),
+          getAllMenuItems(),
+        ]);
         if (!isMountedRef.current) return;
+        setMenu(m);
         setUser(profile);
-        if (profile) await refresh();
+        if (profile) {
+          const [o, u, t] = await Promise.all([
+            getOrders(),
+            getUsers(),
+            getQRTokens(),
+            fetchTimeGateConfig(),
+          ]);
+          if (!isMountedRef.current) return;
+          setOrders(o);
+          setUsers(u);
+          setTokens(t);
+          setTimeStatus(getTimeGateStatus());
+        }
       } catch (err) {
         console.error('Portal init err:', err);
       } finally {

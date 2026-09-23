@@ -45,22 +45,16 @@ export default function App() {
 
   const refreshOrderData = useCallback(async (profile: UserProfile) => {
     try {
-      const [menuData, ordersData, updatedProfile] = await Promise.all([
+      const [menuData, ordersData] = await Promise.all([
         getMenu(),
         getOrders({ userId: profile.id }),
-        getCurrentUserProfile(),
-        fetchTimeGateConfig(),
       ]);
       setMenu(menuData);
       setOrders(ordersData);
-      if (updatedProfile) {
-        setUser(updatedProfile);
-      }
       setTimeStatus(getTimeGateStatus());
       setError(null);
     } catch (e: any) {
       console.warn('[refreshOrderData notice]:', e);
-      // Giữ nguyên thực đơn và đơn hàng đã nạp, không ngắt quãng người dùng
     }
   }, []);
 
@@ -86,8 +80,13 @@ export default function App() {
     let mounted = true;
     async function init() {
       try {
-        const profile = await getCurrentUserProfile();
+        // Tải đồng thời hồ sơ người dùng và thực đơn Supabase để tối ưu tốc độ phản hồi
+        const [profile, menuData] = await Promise.all([
+          getCurrentUserProfile(),
+          getMenu(),
+        ]);
         if (!mounted) return;
+        setMenu(menuData);
         setUser(profile);
         if (profile) {
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
@@ -95,7 +94,14 @@ export default function App() {
             refreshPortalData();
           } else {
             setCurrentView('order');
-            refreshOrderData(profile);
+            const [ordersData] = await Promise.all([
+              getOrders({ userId: profile.id }),
+              fetchTimeGateConfig(),
+            ]);
+            if (mounted) {
+              setOrders(ordersData);
+              setTimeStatus(getTimeGateStatus());
+            }
           }
         }
       } catch (e: any) {

@@ -536,17 +536,17 @@ export function getCachedMenu(): MenuItem[] {
     const raw = localStorage.getItem(MENU_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed)) {
         return parsed;
       }
     }
   } catch {}
-  return DEFAULT_MENU_ITEMS;
+  return [];
 }
 
 export function setCachedMenu(items: MenuItem[]) {
   try {
-    if (Array.isArray(items) && items.length > 0) {
+    if (Array.isArray(items)) {
       localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(items));
     }
   } catch {}
@@ -558,27 +558,30 @@ export async function getMenu(forDate?: string): Promise<MenuItem[]> {
   try {
     let query = supabase
       .from('menu_items')
-      .select('*')
-      .eq('is_active', true)
-      .order('category')
-      .order('name');
+      .select('id, name, category, description, price, image_url, prepared_stock, current_stock, is_active, for_date')
+      .eq('is_active', true);
 
     if (forDate) {
-      query = query.eq('for_date', forDate);
+      query = query.or(`for_date.eq.${forDate},for_date.is.null,for_date.eq.''`);
     }
 
-    // Giới hạn timeout 4 giây để không bao giờ bị nghẽn mạng làm treo giao diện
-    const { data, error } = await withQueryTimeout(query, 4000, 'Supabase getMenu timeout');
-    if (!error && data && data.length > 0) {
-      const mapped = data.map(mapMenuItem);
+    const { data, error } = await withQueryTimeout(query, 6000, 'Supabase getMenu timeout');
+    if (error) {
+      console.warn('[Supabase getMenu query error]:', error.message);
+      return getCachedMenu();
+    }
+
+    if (data) {
+      const mapped = data.map(mapMenuItem).sort((a, b) => {
+        if (a.category !== b.category) return a.category.localeCompare(b.category);
+        return a.name.localeCompare(b.name);
+      });
       setCachedMenu(mapped);
       return mapped;
     }
-    // Nếu cơ sở dữ liệu chưa có món ăn hoặc trả về rỗng, dùng thực đơn mặc định chuẩn
-    return getCachedMenu();
+    return [];
   } catch (err: any) {
     console.warn('[getMenu fallback notice - timeout or network]:', err?.message || err);
-    // Trả về thực đơn lưu cache an toàn, hoàn toàn không ném lỗi làm sập màn hình đặt món
     return getCachedMenu();
   }
 }
@@ -589,21 +592,27 @@ export async function getAllMenuItems(forDate?: string): Promise<MenuItem[]> {
   try {
     let query = supabase
       .from('menu_items')
-      .select('*')
-      .order('category')
-      .order('name');
+      .select('id, name, category, description, price, image_url, prepared_stock, current_stock, is_active, for_date');
 
     if (forDate) {
-      query = query.eq('for_date', forDate);
+      query = query.or(`for_date.eq.${forDate},for_date.is.null,for_date.eq.''`);
     }
 
-    const { data, error } = await withQueryTimeout(query, 4000, 'Supabase getAllMenuItems timeout');
-    if (!error && data && data.length > 0) {
-      const mapped = data.map(mapMenuItem);
+    const { data, error } = await withQueryTimeout(query, 6000, 'Supabase getAllMenuItems timeout');
+    if (error) {
+      console.warn('[Supabase getAllMenuItems notice]:', error.message);
+      return getCachedMenu();
+    }
+
+    if (data) {
+      const mapped = data.map(mapMenuItem).sort((a, b) => {
+        if (a.category !== b.category) return a.category.localeCompare(b.category);
+        return a.name.localeCompare(b.name);
+      });
       setCachedMenu(mapped);
       return mapped;
     }
-    return getCachedMenu();
+    return [];
   } catch (err: any) {
     console.warn('[getAllMenuItems fallback notice]:', err?.message || err);
     return getCachedMenu();

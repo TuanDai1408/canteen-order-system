@@ -483,9 +483,13 @@ export function OrderHome({
                 <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400">
                   <UtensilsCrossed className="w-8 h-8" />
                 </div>
-                <h3 className="text-base font-bold text-slate-700">Không tìm thấy món ăn phù hợp</h3>
+                <h3 className="text-base font-bold text-slate-700">
+                  {menu.length === 0 ? 'Chưa có món ăn trong thực đơn Căn tin' : 'Không tìm thấy món ăn phù hợp'}
+                </h3>
                 <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
-                  Vui lòng thử chọn danh mục khác hoặc xóa bộ lọc tìm kiếm.
+                  {menu.length === 0
+                    ? 'Dữ liệu thực đơn được kết nối trực tiếp từ Supabase Cloud. Quản trị viên vui lòng thêm món tại Portal Quản Lý để mở bán.'
+                    : 'Vui lòng thử chọn danh mục khác hoặc xóa bộ lọc tìm kiếm.'}
                 </p>
               </div>
             ) : (

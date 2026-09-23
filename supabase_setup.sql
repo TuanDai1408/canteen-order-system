@@ -85,6 +85,12 @@ CREATE TABLE IF NOT EXISTS qr_exception_tokens (
 );
 
 -- 7. Bảng cài đặt hệ thống & khung giờ đặt món
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS system_settings (
     key TEXT PRIMARY KEY,
     value JSONB NOT NULL,
@@ -143,6 +149,9 @@ CREATE POLICY "All write order_items" ON order_items FOR ALL USING (true) WITH C
 DROP POLICY IF EXISTS "All qr_tokens" ON qr_exception_tokens;
 CREATE POLICY "All qr_tokens" ON qr_exception_tokens FOR ALL USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "All settings" ON settings;
+CREATE POLICY "All settings" ON settings FOR ALL USING (true) WITH CHECK (true);
+
 DROP POLICY IF EXISTS "All system_settings" ON system_settings;
 CREATE POLICY "All system_settings" ON system_settings FOR ALL USING (true) WITH CHECK (true);
 
@@ -173,6 +182,11 @@ VALUES
 -- ========================================================
 -- SEED DATA THẬT: CÀI ĐẶT KHUNG GIỜ NHẬN ĐƠN
 -- ========================================================
+INSERT INTO settings (key, value)
+VALUES
+('time_gate_config', '{"openTime": "06:00", "closeTime": "22:00", "note": "Khung giờ đặt món mở rộng phục vụ thử nghiệm"}')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
 INSERT INTO system_settings (key, value)
 VALUES
 ('time_gate_config', '{"openTime": "06:00", "closeTime": "22:00", "note": "Khung giờ đặt món mở rộng phục vụ thử nghiệm"}')

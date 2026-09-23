@@ -775,92 +775,108 @@ export function PortalDashboard({
               </div>
 
               {/* Menu Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-                {filteredMenu.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col justify-between"
-                  >
-                    <div>
-                      <div className="h-40 rounded-xl overflow-hidden bg-slate-100 relative mb-3">
-                        {item.imageUrl ? (
-                          <img
-                            src={item.imageUrl}
-                            alt={item.name}
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-slate-400">
-                            <UtensilsCrossed className="w-8 h-8" />
-                          </div>
-                        )}
-                        <span className="absolute top-2 left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
-                          {item.category}
-                        </span>
-                      </div>
-
-                      <div className="flex justify-between items-start gap-2">
-                        <h4 className="font-extrabold text-slate-900 text-sm leading-snug">{item.name}</h4>
-                        <span className="text-indigo-600 font-extrabold text-sm whitespace-nowrap">
-                          {formatVnd(item.price)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.description}</p>
-                    </div>
-
-                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                      <div>
-                        <p className="text-[11px] text-slate-400 font-medium">Tồn kho:</p>
-                        <p className="text-xs font-bold text-slate-900">
-                          <span
-                            className={
-                              item.currentStock === 0
-                                ? 'text-rose-600'
-                                : item.currentStock < 10
-                                  ? 'text-amber-600'
-                                  : 'text-emerald-600'
-                            }
-                          >
-                            {item.currentStock}
-                          </span>{' '}
-                          / {item.preparedStock}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-1.5">
-                        <button
-                          onClick={() => handleToggleStock(item, -5)}
-                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-mono font-bold cursor-pointer min-h-[36px]"
-                          title="Trừ 5 suất"
-                        >
-                          -5
-                        </button>
-                        <button
-                          onClick={() => handleToggleStock(item, -1)}
-                          className="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[36px]"
-                          title="Trừ 1 suất"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleStock(item, 1)}
-                          className="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[36px]"
-                          title="Thêm 1 suất"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleToggleStock(item, 5)}
-                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-mono font-bold cursor-pointer min-h-[36px]"
-                          title="Thêm 5 suất"
-                        >
-                          +5
-                        </button>
-                      </div>
-                    </div>
+              {filteredMenu.length === 0 ? (
+                <div className="bg-white border border-slate-200 rounded-2xl p-12 text-center shadow-xs">
+                  <div className="w-14 h-14 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400">
+                    <UtensilsCrossed className="w-7 h-7" />
                   </div>
-                ))}
-              </div>
+                  <h3 className="text-sm font-bold text-slate-700">
+                    {menu.length === 0 ? 'Thực đơn trên Supabase đang trống' : 'Không tìm thấy món ăn phù hợp'}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                    {menu.length === 0
+                      ? 'Cơ sở dữ liệu Supabase chưa có món nào. Bạn có thể bấm "Thêm" hoặc "Nạp Supabase" để tạo món ăn thật.'
+                      : 'Không có món ăn phù hợp với bộ lọc tìm kiếm hiện tại.'}
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+                  {filteredMenu.map((item) => (
+                    <div
+                      key={item.id}
+                      className="bg-white border border-slate-200 rounded-2xl p-4 shadow-xs flex flex-col justify-between"
+                    >
+                      <div>
+                        <div className="h-40 rounded-xl overflow-hidden bg-slate-100 relative mb-3">
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center text-slate-400">
+                              <UtensilsCrossed className="w-8 h-8" />
+                            </div>
+                          )}
+                          <span className="absolute top-2 left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[11px] font-bold px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
+                            {item.category}
+                          </span>
+                        </div>
+
+                        <div className="flex justify-between items-start gap-2">
+                          <h4 className="font-extrabold text-slate-900 text-sm leading-snug">{item.name}</h4>
+                          <span className="text-indigo-600 font-extrabold text-sm whitespace-nowrap">
+                            {formatVnd(item.price)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-1 line-clamp-2">{item.description}</p>
+                      </div>
+
+                      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                        <div>
+                          <p className="text-[11px] text-slate-400 font-medium">Tồn kho:</p>
+                          <p className="text-xs font-bold text-slate-900">
+                            <span
+                              className={
+                                item.currentStock === 0
+                                  ? 'text-rose-600'
+                                  : item.currentStock < 10
+                                    ? 'text-amber-600'
+                                    : 'text-emerald-600'
+                              }
+                            >
+                              {item.currentStock}
+                            </span>{' '}
+                            / {item.preparedStock}
+                          </p>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => handleToggleStock(item, -5)}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-mono font-bold cursor-pointer min-h-[36px]"
+                            title="Trừ 5 suất"
+                          >
+                            -5
+                          </button>
+                          <button
+                            onClick={() => handleToggleStock(item, -1)}
+                            className="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[36px]"
+                            title="Trừ 1 suất"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleToggleStock(item, 1)}
+                            className="w-8 h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[36px]"
+                            title="Thêm 1 suất"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleToggleStock(item, 5)}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-mono font-bold cursor-pointer min-h-[36px]"
+                            title="Thêm 5 suất"
+                          >
+                            +5
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
 
