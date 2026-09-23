@@ -23,7 +23,7 @@ const checkSupabase = () => {
  */
 export async function withQueryTimeout<T>(
   promise: PromiseLike<T>,
-  timeoutMs = 4500,
+  timeoutMs = 15000,
   fallbackMessage = 'Truy vấn quá thời gian phản hồi (timeout)'
 ): Promise<T> {
   let timer: any;
@@ -141,6 +141,48 @@ export function setCachedUserProfile(profile: UserProfile | null) {
   } catch {}
 }
 
+const USERS_STORAGE_KEY = 'canteen_users_list_cache';
+
+export function getCachedUsers(): UserProfile[] {
+  try {
+    const saved = localStorage.getItem(USERS_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+export function setCachedUsers(users: UserProfile[]) {
+  try {
+    if (Array.isArray(users) && users.length > 0) {
+      localStorage.setItem(USERS_STORAGE_KEY, JSON.stringify(users));
+    }
+  } catch {}
+}
+
+const QR_TOKENS_STORAGE_KEY = 'canteen_qr_tokens_cache';
+
+export function getCachedQRTokens(): QRExceptionToken[] {
+  try {
+    const saved = localStorage.getItem(QR_TOKENS_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+export function setCachedQRTokens(tokens: QRExceptionToken[]) {
+  try {
+    if (Array.isArray(tokens) && tokens.length > 0) {
+      localStorage.setItem(QR_TOKENS_STORAGE_KEY, JSON.stringify(tokens));
+    }
+  } catch {}
+}
+
 export async function getCurrentUserProfile(): Promise<UserProfile | null> {
   if (!isSupabaseConfigured || !supabase) return null;
 
@@ -156,7 +198,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
         .select('*')
         .eq('auth_user_id', user.id)
         .maybeSingle(),
-      3500,
+      12000,
       'Timeout fetch auth_user_id'
     ).catch(() => ({ data: null, error: null }));
 
@@ -167,7 +209,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
           .select('*')
           .eq('email', user.email)
           .maybeSingle(),
-        3500,
+        12000,
         'Timeout fetch byEmail'
       ).catch(() => ({ data: null, error: null }));
 
@@ -234,6 +276,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
       if (!data) {
         const fallbackProfile: UserProfile = {
           id: user.id,
+          authUserId: user.id,
           name: newRow.name,
           role,
           roleTitle,
@@ -250,6 +293,9 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
     }
 
     const mapped = mapUser(data);
+    if (!mapped.authUserId && user.id) {
+      mapped.authUserId = user.id;
+    }
     setCachedUserProfile(mapped);
     return mapped;
   } catch (err) {
@@ -264,9 +310,25 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
 export async function getUsers(): Promise<UserProfile[]> {
   checkSupabase();
-  const { data, error } = await supabase.from('users').select('*').order('name');
-  if (error) throw new Error(error.message);
-  return (data || []).map(mapUser);
+  try {
+    const { data, error } = await withQueryTimeout(
+      supabase.from('users').select('*').order('name'),
+      12000,
+      'Timeout fetch users'
+    );
+    if (!error && data) {
+      const list = data.map(mapUser);
+      setCachedUsers(list);
+      return list;
+    }
+    if (error) {
+      console.warn('[getUsers notice]:', error.message);
+    }
+    return getCachedUsers();
+  } catch (err) {
+    console.warn('[getUsers error]:', err);
+    return getCachedUsers();
+  }
 }
 
 export async function createUserByAdmin(
@@ -536,17 +598,17 @@ export function getCachedMenu(): MenuItem[] {
     const raw = localStorage.getItem(MENU_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
+      if (Array.isArray(parsed) && parsed.length > 0) {
         return parsed;
       }
     }
   } catch {}
-  return [];
+  return [...DEFAULT_MENU_ITEMS];
 }
 
 export function setCachedMenu(items: MenuItem[]) {
   try {
-    if (Array.isArray(items)) {
+    if (Array.isArray(items) && items.length > 0) {
       localStorage.setItem(MENU_STORAGE_KEY, JSON.stringify(items));
     }
   } catch {}
@@ -565,13 +627,13 @@ export async function getMenu(forDate?: string): Promise<MenuItem[]> {
       query = query.or(`for_date.eq.${forDate},for_date.is.null,for_date.eq.''`);
     }
 
-    const { data, error } = await withQueryTimeout(query, 6000, 'Supabase getMenu timeout');
+    const { data, error } = await withQueryTimeout(query, 15000, 'Supabase getMenu timeout');
     if (error) {
       console.warn('[Supabase getMenu query error]:', error.message);
       return getCachedMenu();
     }
 
-    if (data) {
+    if (data && data.length > 0) {
       const mapped = data.map(mapMenuItem).sort((a, b) => {
         if (a.category !== b.category) return a.category.localeCompare(b.category);
         return a.name.localeCompare(b.name);
@@ -579,7 +641,7 @@ export async function getMenu(forDate?: string): Promise<MenuItem[]> {
       setCachedMenu(mapped);
       return mapped;
     }
-    return [];
+    return getCachedMenu();
   } catch (err: any) {
     console.warn('[getMenu fallback notice - timeout or network]:', err?.message || err);
     return getCachedMenu();
@@ -598,13 +660,13 @@ export async function getAllMenuItems(forDate?: string): Promise<MenuItem[]> {
       query = query.or(`for_date.eq.${forDate},for_date.is.null,for_date.eq.''`);
     }
 
-    const { data, error } = await withQueryTimeout(query, 6000, 'Supabase getAllMenuItems timeout');
+    const { data, error } = await withQueryTimeout(query, 15000, 'Supabase getAllMenuItems timeout');
     if (error) {
       console.warn('[Supabase getAllMenuItems notice]:', error.message);
       return getCachedMenu();
     }
 
-    if (data) {
+    if (data && data.length > 0) {
       const mapped = data.map(mapMenuItem).sort((a, b) => {
         if (a.category !== b.category) return a.category.localeCompare(b.category);
         return a.name.localeCompare(b.name);
@@ -612,7 +674,7 @@ export async function getAllMenuItems(forDate?: string): Promise<MenuItem[]> {
       setCachedMenu(mapped);
       return mapped;
     }
-    return [];
+    return getCachedMenu();
   } catch (err: any) {
     console.warn('[getAllMenuItems fallback notice]:', err?.message || err);
     return getCachedMenu();
@@ -677,7 +739,13 @@ export async function updateMenuItem(
 // ============================================================
 
 export async function placeOrder(params: {
-  items: { menuItemId: string; quantity: number }[];
+  items: {
+    menuItemId: string;
+    quantity: number;
+    name?: string;
+    price?: number;
+    imageUrl?: string;
+  }[];
   deliveryMethod: DeliveryMethod;
   roomNumber?: string;
   pickupTime: string;
@@ -757,7 +825,7 @@ export async function placeOrder(params: {
         .from('menu_items')
         .select('*')
         .in('id', itemIds),
-      3500,
+      12000,
       'Timeout fetch menu items'
     );
     if (fetchedMenu && fetchedMenu.length > 0) {
@@ -793,23 +861,25 @@ export async function placeOrder(params: {
 
   for (const requestedItem of params.items) {
     const menuItem = menuList.find((m) => m.id === requestedItem.menuItemId);
-    if (!menuItem) {
-      return { success: false, error: `Món ăn không tồn tại hoặc đã bị gỡ bỏ.` };
-    }
-    if (menuItem.current_stock < requestedItem.quantity) {
+    const itemName = menuItem?.name || requestedItem.name || 'Suất ăn Căn tin';
+    const itemPrice = Number(menuItem?.price ?? requestedItem.price ?? 35000);
+    const itemImg = menuItem?.image_url || menuItem?.imageUrl || requestedItem.imageUrl || '';
+    const itemStock = menuItem ? Number(menuItem.current_stock ?? menuItem.currentStock ?? 999) : 999;
+
+    if (itemStock < requestedItem.quantity) {
       return {
         success: false,
-        error: `Món "${menuItem.name}" chỉ còn ${menuItem.current_stock} suất, không đủ ${requestedItem.quantity} suất yêu cầu.`,
+        error: `Món "${itemName}" chỉ còn ${itemStock} suất, không đủ ${requestedItem.quantity} suất yêu cầu.`,
       };
     }
-    const itemTotal = Number(menuItem.price) * requestedItem.quantity;
+    const itemTotal = itemPrice * requestedItem.quantity;
     totalAmount += itemTotal;
     orderItemsData.push({
-      menu_item_id: menuItem.id,
-      name: menuItem.name,
-      price: Number(menuItem.price),
+      menu_item_id: requestedItem.menuItemId,
+      name: itemName,
+      price: itemPrice,
       quantity: requestedItem.quantity,
-      image_url: menuItem.image_url || '',
+      image_url: itemImg,
     });
   }
 
@@ -821,9 +891,19 @@ export async function placeOrder(params: {
     };
   }
 
-  // Tạo mã đơn hàng chuẩn hoá POS: #CT-2026-XXXX
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  const orderCode = `#CT-${new Date().getFullYear()}-${randomSuffix}`;
+  // Tạo mã đơn hàng chuẩn hoá POS: CT-YYYYMMDD-XXX (Ví dụ: CT-20260923-012)
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const datePrefix = `CT-${yyyy}${mm}${dd}-`;
+
+  const allCached = getCachedOrders();
+  const todayCount = allCached.filter(
+    (o) => o.orderCode && o.orderCode.startsWith(datePrefix)
+  ).length;
+  const seqStr = String(todayCount + 1).padStart(3, '0');
+  const orderCode = `${datePrefix}${seqStr}`;
   const targetDate = getTomorrowStr();
 
   // Tạo đơn hàng trong bảng orders
@@ -850,7 +930,7 @@ export async function placeOrder(params: {
         })
         .select()
         .single(),
-      4500,
+      15000,
       'Timeout creating order on Supabase'
     );
     if (!orderInsertErr && insertedOrder) {
@@ -862,23 +942,37 @@ export async function placeOrder(params: {
 
   const generatedId = newOrder ? newOrder.id : `ord-${Date.now()}`;
 
+  // Kiểm tra UUID hợp lệ để không bị lỗi 22P02 khi insert vào Supabase
+  const isValidUuid = (str?: string) =>
+    !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
   // Thêm chi tiết món ăn vào bảng order_items nếu đã tạo được order trên Supabase
   if (newOrder) {
     try {
       const itemsToInsert = orderItemsData.map((it) => ({
         order_id: newOrder.id,
-        ...it,
+        menu_item_id: isValidUuid(it.menu_item_id) ? it.menu_item_id : null,
+        name: it.name,
+        price: it.price,
+        quantity: it.quantity,
+        image_url: it.image_url || '',
       }));
-      await supabase.from('order_items').insert(itemsToInsert);
+      const { error: itemErr } = await supabase.from('order_items').insert(itemsToInsert);
+      if (itemErr) {
+        console.error('[Supabase order_items insert error]:', itemErr.message);
+      }
 
       // Trừ số lượng tồn kho của món ăn trên Supabase
       for (const it of params.items) {
-        const curr = menuList.find((m) => m.id === it.menuItemId);
-        if (curr) {
-          await supabase
-            .from('menu_items')
-            .update({ current_stock: Math.max(0, curr.current_stock - it.quantity) })
-            .eq('id', it.menuItemId);
+        if (isValidUuid(it.menuItemId)) {
+          const curr = menuList.find((m) => m.id === it.menuItemId);
+          if (curr) {
+            const currentStockVal = Number(curr.current_stock ?? curr.currentStock ?? 0);
+            await supabase
+              .from('menu_items')
+              .update({ current_stock: Math.max(0, currentStockVal - it.quantity) })
+              .eq('id', it.menuItemId);
+          }
         }
       }
     } catch (e) {
@@ -947,9 +1041,21 @@ export async function placeOrder(params: {
   };
 
   const userOrders = getCachedOrders(userData.id);
-  setCachedOrders([localOrder, ...userOrders], userData.id);
+  setCachedOrders(
+    [localOrder, ...userOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)],
+    userData.id
+  );
+  if (authUser.id && authUser.id !== userData.id) {
+    const authOrders = getCachedOrders(authUser.id);
+    setCachedOrders(
+      [localOrder, ...authOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)],
+      authUser.id
+    );
+  }
   const allOrders = getCachedOrders();
-  setCachedOrders([localOrder, ...allOrders]);
+  setCachedOrders(
+    [localOrder, ...allOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)]
+  );
 
   return {
     success: true,
@@ -1055,7 +1161,20 @@ export function getCachedOrders(userId?: string): Order[] {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+    // Nếu cache theo userId trống, kiểm tra cache 'all' xem có đơn của user này không
+    if (userId) {
+      const allRaw = localStorage.getItem('canteen_orders_cache_all');
+      if (allRaw) {
+        const allParsed = JSON.parse(allRaw);
+        if (Array.isArray(allParsed)) {
+          const matching = allParsed.filter(
+            (o: Order) => o.userId === userId
+          );
+          if (matching.length > 0) return matching;
+        }
+      }
     }
   } catch {}
   return [];
@@ -1065,7 +1184,7 @@ export function setCachedOrders(orders: Order[], userId?: string) {
   try {
     const key = `canteen_orders_cache_${userId || 'all'}`;
     if (Array.isArray(orders)) {
-      localStorage.setItem(key, JSON.stringify(orders.slice(0, 50)));
+      localStorage.setItem(key, JSON.stringify(orders.slice(0, 100)));
     }
   } catch {}
 }
@@ -1073,6 +1192,8 @@ export function setCachedOrders(orders: Order[], userId?: string) {
 export async function getOrders(filters?: {
   targetDate?: string;
   userId?: string;
+  authUserId?: string;
+  userEmail?: string;
   status?: string;
 }): Promise<Order[]> {
   checkSupabase();
@@ -1084,30 +1205,103 @@ export async function getOrders(filters?: {
       .order('created_at', { ascending: false });
 
     if (filters?.targetDate) query = query.eq('target_date', filters.targetDate);
-    if (filters?.userId) query = query.eq('user_id', filters.userId);
     if (filters?.status) query = query.eq('status', filters.status);
 
-    // Giới hạn số lượng bản ghi để không bị quá tải bộ nhớ và timeout kết nối
-    if (filters?.userId) {
-      query = query.limit(30);
-    } else {
-      query = query.limit(100);
+    if (filters?.userId && filters?.authUserId && filters.userId !== filters.authUserId) {
+      query = query.or(`user_id.eq.${filters.userId},user_id.eq.${filters.authUserId}`);
+    } else if (filters?.userId) {
+      query = query.eq('user_id', filters.userId);
+    } else if (filters?.authUserId) {
+      query = query.eq('user_id', filters.authUserId);
     }
 
-    const { data, error } = await withQueryTimeout(query, 4000, 'Supabase getOrders timeout');
-    if (!error && data) {
+    if (filters?.userId || filters?.authUserId) {
+      query = query.limit(50);
+    } else {
+      query = query.limit(200);
+    }
+
+    let data: any[] | null = null;
+    let queryError: any = null;
+
+    try {
+      const res = await withQueryTimeout(query, 15000, 'Supabase getOrders timeout');
+      data = res.data;
+      queryError = res.error;
+    } catch (err: any) {
+      queryError = err;
+    }
+
+    // Nếu query join *, order_items(*) thất bại, fallback query trực tiếp bảng orders
+    if (queryError && !data) {
+      try {
+        let fallbackQuery = supabase
+          .from('orders')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (filters?.targetDate) fallbackQuery = fallbackQuery.eq('target_date', filters.targetDate);
+        if (filters?.status) fallbackQuery = fallbackQuery.eq('status', filters.status);
+        if (filters?.userId && filters?.authUserId && filters.userId !== filters.authUserId) {
+          fallbackQuery = fallbackQuery.or(`user_id.eq.${filters.userId},user_id.eq.${filters.authUserId}`);
+        } else if (filters?.userId) {
+          fallbackQuery = fallbackQuery.eq('user_id', filters.userId);
+        } else if (filters?.authUserId) {
+          fallbackQuery = fallbackQuery.eq('user_id', filters.authUserId);
+        }
+        fallbackQuery = fallbackQuery.limit(filters?.userId || filters?.authUserId ? 50 : 200);
+
+        const fbRes = await withQueryTimeout(fallbackQuery, 10000, 'Fallback getOrders timeout');
+        if (fbRes.data) {
+          data = fbRes.data;
+          queryError = null;
+          if (data.length > 0) {
+            const orderIds = data.map((o) => o.id).filter(Boolean);
+            try {
+              const { data: itemsData } = await supabase
+                .from('order_items')
+                .select('*')
+                .in('order_id', orderIds);
+              if (itemsData && itemsData.length > 0) {
+                data = data.map((ord) => ({
+                  ...ord,
+                  order_items: itemsData.filter((it) => it.order_id === ord.id),
+                }));
+              }
+            } catch {}
+          }
+        }
+      } catch (fbErr) {
+        console.warn('[Fallback direct orders query notice]:', fbErr);
+      }
+    }
+
+    if (!queryError && data) {
       const orders = data.map(mapOrder);
-      // Kết hợp với đơn hàng vừa tạo trong cache nếu chưa kịp sync
       const cached = getCachedOrders(filters?.userId);
-      const combined = [...orders];
+      const combined = orders.map((ord) => {
+        const found = cached.find((c) => c.id === ord.id || c.orderCode === ord.orderCode);
+        if (found && (!ord.items || ord.items.length === 0) && found.items && found.items.length > 0) {
+          return { ...ord, items: found.items };
+        }
+        return ord;
+      });
+      // Giữ đơn mới trong cache nếu chưa kịp sync lên DB (tạo trong 24 giờ)
       for (const c of cached) {
         if (!combined.some((o) => o.id === c.id || o.orderCode === c.orderCode)) {
-          combined.push(c);
+          const age = Date.now() - new Date(c.createdAt).getTime();
+          if (isNaN(age) || age < 24 * 60 * 60 * 1000) {
+            combined.push(c);
+          }
         }
       }
       setCachedOrders(combined, filters?.userId);
+      if (!filters?.userId) {
+        setCachedOrders(combined);
+      }
       return combined;
     }
+
     return getCachedOrders(filters?.userId);
   } catch (err: any) {
     console.warn('[getOrders fallback notice - timeout or network]:', err?.message || err);
@@ -1145,11 +1339,13 @@ export async function updateOrderStatus(
 export async function createQRToken(
   actor: UserProfile,
   note?: string,
-  expiresInMinutes = 15
+  expiresInMinutes = 15,
+  quantity = 1
 ): Promise<QRExceptionToken> {
   checkSupabase();
   const token = `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
+  const formattedNote = note ? `[Số lượng: ${quantity} suất] ${note}` : `[Số lượng: ${quantity} suất]`;
 
   const { data, error } = await supabase
     .from('qr_exception_tokens')
@@ -1158,26 +1354,45 @@ export async function createQRToken(
       expires_at: expiresAt,
       created_by: actor.id,
       created_by_name: actor.name,
-      note: note || null,
+      note: formattedNote,
     })
     .select()
     .single();
 
   if (error) throw new Error(`Lỗi tạo mã QR ngoại lệ: ${error.message}`);
 
-  return mapQRToken(data);
+  const newToken = mapQRToken(data);
+  const cached = getCachedQRTokens();
+  setCachedQRTokens([newToken, ...cached.filter((t) => t.token !== newToken.token)]);
+  return newToken;
 }
 
 export async function getQRTokens(): Promise<QRExceptionToken[]> {
   checkSupabase();
-  const { data, error } = await supabase
-    .from('qr_exception_tokens')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(50);
+  try {
+    const { data, error } = await withQueryTimeout(
+      supabase
+        .from('qr_exception_tokens')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50),
+      12000,
+      'Timeout fetch qr_exception_tokens'
+    );
 
-  if (error) throw new Error(`Lỗi tải danh sách mã QR: ${error.message}`);
-  return (data || []).map(mapQRToken);
+    if (!error && data) {
+      const list = data.map(mapQRToken);
+      setCachedQRTokens(list);
+      return list;
+    }
+    if (error) {
+      console.warn('[getQRTokens notice]:', error.message);
+    }
+    return getCachedQRTokens();
+  } catch (err) {
+    console.warn('[getQRTokens error]:', err);
+    return getCachedQRTokens();
+  }
 }
 
 // ============================================================
@@ -1371,14 +1586,16 @@ export function subscribeRealtime(callback: () => void) {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         callback();
-      }, 1500);
+      }, 2500);
     };
 
     const channel = supabase
       .channel('canteen-realtime-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, debouncedCallback)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, debouncedCallback)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, debouncedCallback)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, debouncedCallback)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, debouncedCallback)
       .subscribe();
 
     return () => {
@@ -1397,6 +1614,7 @@ export function subscribeRealtime(callback: () => void) {
 function mapUser(row: any): UserProfile {
   return {
     id: row.id,
+    authUserId: row.auth_user_id || undefined,
     name: row.name,
     role: row.role,
     roleTitle: row.role_title || '',
@@ -1429,6 +1647,25 @@ function mapMenuItem(row: any): MenuItem {
 }
 
 function mapOrder(row: any): Order {
+  let mappedItems: any[] = [];
+  if (Array.isArray(row.order_items) && row.order_items.length > 0) {
+    mappedItems = row.order_items.map((i: any) => ({
+      menuItemId: i.menu_item_id || '',
+      name: i.name || 'Suất ăn Căn tin',
+      price: Number(i.price ?? 0),
+      quantity: Number(i.quantity ?? 1),
+      imageUrl: i.image_url || '',
+    }));
+  } else if (Array.isArray(row.items) && row.items.length > 0) {
+    mappedItems = row.items.map((i: any) => ({
+      menuItemId: i.menuItemId || i.menu_item_id || '',
+      name: i.name || 'Suất ăn Căn tin',
+      price: Number(i.price ?? 0),
+      quantity: Number(i.quantity ?? 1),
+      imageUrl: i.imageUrl || i.image_url || '',
+    }));
+  }
+
   return {
     id: row.id,
     orderCode: row.order_code,
@@ -1436,13 +1673,7 @@ function mapOrder(row: any): Order {
     userName: row.user_name || '',
     userPhone: row.user_phone || '',
     userDepartment: row.user_department || '',
-    items: (row.order_items || []).map((i: any) => ({
-      menuItemId: i.menu_item_id,
-      name: i.name,
-      price: Number(i.price),
-      quantity: Number(i.quantity),
-      imageUrl: i.image_url || '',
-    })),
+    items: mappedItems,
     totalAmount: Number(row.total_amount),
     deliveryMethod: row.delivery_method,
     roomNumber: row.room_number,
@@ -1460,6 +1691,14 @@ function mapOrder(row: any): Order {
 }
 
 function mapQRToken(row: any): QRExceptionToken {
+  let qty = 1;
+  if (row.quantity) {
+    qty = Number(row.quantity);
+  } else if (row.note) {
+    const m = String(row.note).match(/\[Số lượng:\s*(\d+)\s*suất\]/);
+    if (m) qty = parseInt(m[1], 10);
+  }
+
   return {
     token: row.token,
     createdAt: row.created_at,
@@ -1470,5 +1709,6 @@ function mapQRToken(row: any): QRExceptionToken {
     usedBy: row.used_by,
     usedAt: row.used_at,
     note: row.note,
+    quantity: qty,
   };
 }

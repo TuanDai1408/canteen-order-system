@@ -117,6 +117,12 @@ export function OrderHome({
   }, [cart, menu]);
 
   const totalItemsCount = cartItems.reduce((acc, curr) => acc + curr.qty, 0);
+  const [feedbackModal, setFeedbackModal] = useState<{
+    title: string;
+    message: string;
+    type: 'error' | 'success' | 'warning';
+  } | null>(null);
+
   const cartSubtotal = cartItems.reduce((s, { item, qty }) => s + item.price * qty, 0);
   const remainingWallet = currentUser.walletBalance - cartSubtotal;
   const isBalanceSufficient = remainingWallet >= 0;
@@ -125,8 +131,14 @@ export function OrderHome({
     const item = menu.find((m) => m.id === id);
     if (!item) return;
     const currentQty = cart[id] || 0;
-    if (currentQty >= item.currentStock) {
-      setMessage({ type: 'err', text: `Món "${item.name}" chỉ còn ${item.currentStock} suất.` });
+    const remainingStock = Math.max(0, item.currentStock - currentQty);
+
+    if (remainingStock <= 0) {
+      setFeedbackModal({
+        title: 'Hết suất khả dụng',
+        message: `Món "${item.name}" chỉ còn ${item.currentStock} suất trong kho và bạn đã thêm toàn bộ vào khay chọn.`,
+        type: 'warning',
+      });
       return;
     }
     setCart((prev) => ({ ...prev, [id]: currentQty + 1 }));
@@ -150,17 +162,40 @@ export function OrderHome({
   };
 
   const handlePlaceOrder = async () => {
-    if (cartItems.length === 0) return;
-    if (deliveryMethod === 'room_delivery' && !roomNumber.trim()) {
-      setMessage({ type: 'err', text: 'Vui lòng điền số phòng nhận suất ăn (VD: P.302)' });
+    if (cartItems.length === 0) {
+      setFeedbackModal({
+        title: 'Giỏ hàng đang trống',
+        message: 'Vui lòng chọn ít nhất một món ăn trước khi xác nhận đặt đơn.',
+        type: 'warning',
+      });
       return;
     }
+
+    if (deliveryMethod === 'room_delivery' && !roomNumber.trim()) {
+      setFeedbackModal({
+        title: 'Thiếu thông tin nhận hàng',
+        message: 'Vui lòng điền số phòng nhận suất ăn (Ví dụ: P.302, Phòng GV Toán...) để Căn tin chuyển đến tận nơi.',
+        type: 'warning',
+      });
+      return;
+    }
+
     if (!timeStatus.isOpen && !exceptionToken.trim()) {
-      setMessage({
-        type: 'err',
-        text: `${timeStatus.message}. Để đặt món khẩn cấp, vui lòng nhập Mã QR Ngoại lệ từ Quản lý Căn tin.`,
+      setFeedbackModal({
+        title: 'Cổng đặt món đã đóng',
+        message: `${timeStatus.message}.\n\nNếu bạn có nhu cầu đặt suất ăn bổ sung ngoài giờ quy định, vui lòng nhập "Mã QR Ngoại Lệ" do Quản lý Căn tin cấp.`,
+        type: 'warning',
       });
       setShowExceptionField(true);
+      return;
+    }
+
+    if (currentUser.walletBalance < cartSubtotal) {
+      setFeedbackModal({
+        title: 'Số dư ví không đủ',
+        message: `Tổng tiền đơn hàng là ${formatVnd(cartSubtotal)}, nhưng số dư ví của bạn hiện chỉ còn ${formatVnd(currentUser.walletBalance)}. Vui lòng liên hệ Quản lý Căn tin để được cấp thêm hạn mức ví.`,
+        type: 'error',
+      });
       return;
     }
 
@@ -171,6 +206,9 @@ export function OrderHome({
         items: cartItems.map(({ item, qty }) => ({
           menuItemId: item.id,
           quantity: qty,
+          name: item.name,
+          price: item.price,
+          imageUrl: item.imageUrl,
         })),
         deliveryMethod,
         roomNumber: deliveryMethod === 'room_delivery' ? roomNumber.trim() : undefined,
@@ -180,21 +218,30 @@ export function OrderHome({
       });
 
       if (!result.success) {
-        setMessage({ type: 'err', text: result.error || 'Đặt món thất bại. Vui lòng thử lại.' });
+        setFeedbackModal({
+          title: 'Đặt món không thành công',
+          message: result.error || 'Hệ thống không thể xử lý đơn đặt món của bạn lúc này. Vui lòng thử lại.',
+          type: 'error',
+        });
       } else {
-        setMessage({
-          type: 'ok',
-          text: `🎉 Đặt thành công! Mã đơn: ${result.order_code} — Tổng ${formatVnd(result.total_amount || cartSubtotal)}`,
+        setFeedbackModal({
+          title: 'Đặt món thành công! 🎉',
+          message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}`,
+          type: 'success',
         });
         setCart({});
         setIsCartOpen(false);
         setExceptionToken('');
         setShowExceptionField(false);
-        onRefresh();
+        await onRefresh();
         setTab('orders');
       }
     } catch (e: any) {
-      setMessage({ type: 'err', text: e.message || 'Lỗi kết nối khi gửi đơn' });
+      setFeedbackModal({
+        title: 'Lỗi kết nối khi gửi đơn',
+        message: e.message || 'Không thể kết nối đến máy chủ Căn tin. Vui lòng kiểm tra mạng và thử lại.',
+        type: 'error',
+      });
     } finally {
       setSubmitting(false);
     }
@@ -205,13 +252,25 @@ export function OrderHome({
     try {
       const result = await cancelOrder(orderId, 'Hủy bởi người dùng');
       if (result.success) {
-        setMessage({ type: 'ok', text: 'Đã hủy đơn hàng thành công, tiền đã hoàn lại ví.' });
-        onRefresh();
+        setFeedbackModal({
+          title: 'Hủy đơn thành công',
+          message: 'Đơn hàng đã được hủy và toàn bộ tiền đã hoàn lại ví suất ăn của bạn.',
+          type: 'success',
+        });
+        await onRefresh();
       } else {
-        setMessage({ type: 'err', text: result.error || 'Không thể hủy đơn này.' });
+        setFeedbackModal({
+          title: 'Không thể hủy đơn',
+          message: result.error || 'Đơn hàng không thể hủy vào thời điểm này.',
+          type: 'error',
+        });
       }
     } catch (err: any) {
-      setMessage({ type: 'err', text: err.message || 'Lỗi khi hủy đơn' });
+      setFeedbackModal({
+        title: 'Lỗi khi hủy đơn',
+        message: err.message || 'Lỗi kết nối khi gửi yêu cầu hủy đơn.',
+        type: 'error',
+      });
     } finally {
       setSubmitting(false);
       setCancellingOrderId(null);
@@ -413,7 +472,10 @@ export function OrderHome({
           </button>
 
           <button
-            onClick={() => setTab('orders')}
+            onClick={() => {
+              setTab('orders');
+              handleManualRefresh();
+            }}
             className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-semibold text-sm transition cursor-pointer ${
               tab === 'orders'
                 ? 'bg-teal-700 text-white shadow-sm'
@@ -496,14 +558,15 @@ export function OrderHome({
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2.5 sm:gap-4">
                 {filteredMenu.map((item) => {
                   const qtyInCart = cart[item.id] || 0;
-                  const isSoldOut = item.currentStock <= 0;
-                  const isLowStock = item.currentStock > 0 && item.currentStock <= 5;
+                  const effectiveStock = Math.max(0, item.currentStock - qtyInCart);
+                  const isSoldOut = effectiveStock <= 0;
+                  const isLowStock = effectiveStock > 0 && effectiveStock <= 5;
 
                   return (
                     <div
                       key={item.id}
                       className={`bg-white rounded-2xl sm:rounded-3xl border border-slate-200/80 shadow-xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between ${
-                        isSoldOut ? 'opacity-70 bg-slate-50/80' : ''
+                        item.currentStock <= 0 ? 'opacity-70 bg-slate-50/80' : ''
                       }`}
                     >
                       <div>
@@ -529,15 +592,15 @@ export function OrderHome({
                           <div className="absolute bottom-1.5 right-1.5">
                             {isSoldOut ? (
                               <span className="text-[9px] sm:text-[10px] font-bold text-red-600 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
-                                Hết suất
+                                {item.currentStock <= 0 ? 'Hết suất' : 'Hết khả dụng'}
                               </span>
                             ) : isLowStock ? (
                               <span className="text-[9px] sm:text-[10px] font-bold text-amber-700 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
-                                Còn {item.currentStock}
+                                Còn {effectiveStock} {qtyInCart > 0 ? `(chọn ${qtyInCart})` : ''}
                               </span>
                             ) : (
                               <span className="text-[9px] sm:text-[10px] font-semibold text-emerald-700 bg-white/95 px-1.5 py-0.5 rounded shadow-xs">
-                                Còn {item.currentStock}
+                                Còn {effectiveStock} {qtyInCart > 0 ? `(chọn ${qtyInCart})` : ''}
                               </span>
                             )}
                           </div>
@@ -577,7 +640,7 @@ export function OrderHome({
                             <>
                               <button
                                 onClick={() => removeFromCart(item.id)}
-                                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs shadow-xs transition cursor-pointer"
+                                className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg sm:rounded-xl bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 flex items-center justify-center font-bold text-xs shadow-xs transition cursor-pointer active:scale-95"
                                 aria-label="Giảm số lượng"
                               >
                                 <Minus className="w-3 h-3" />
@@ -589,11 +652,11 @@ export function OrderHome({
                           )}
                           <button
                             onClick={() => addToCart(item.id)}
-                            disabled={isSoldOut || qtyInCart >= item.currentStock}
+                            disabled={isSoldOut || effectiveStock <= 0}
                             className={`h-7 sm:h-8 px-2 sm:px-2.5 rounded-lg sm:rounded-xl font-bold text-xs flex items-center justify-center gap-1 transition cursor-pointer shadow-xs ${
-                              isSoldOut || qtyInCart >= item.currentStock
+                              isSoldOut || effectiveStock <= 0
                                 ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                : 'bg-teal-700 hover:bg-teal-800 text-white shadow-teal-700/20'
+                                : 'bg-teal-700 hover:bg-teal-800 text-white shadow-teal-700/20 active:scale-95'
                             }`}
                             aria-label="Thêm vào khay"
                           >
@@ -613,6 +676,20 @@ export function OrderHome({
         {/* ================= TAB 2: MY ORDERS ================= */}
         {tab === 'orders' && (
           <div className="space-y-4">
+            <div className="flex items-center justify-between pb-1">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Lịch sử đặt suất ăn</h3>
+                <p className="text-[11px] text-slate-500">Được đồng bộ trực tiếp từ Căn tin Supabase</p>
+              </div>
+              <button
+                onClick={handleManualRefresh}
+                disabled={isRefreshing}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl shadow-xs transition cursor-pointer disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isRefreshing ? 'animate-spin' : ''}`} />
+                <span>{isRefreshing ? 'Đang đồng bộ...' : 'Làm mới'}</span>
+              </button>
+            </div>
             {orders.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center shadow-sm">
                 <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400">
@@ -718,14 +795,23 @@ export function OrderHome({
 
                     {/* Order Items */}
                     <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                      {o.items.map((it, idx) => (
-                        <div key={idx} className="flex justify-between text-xs text-slate-700">
+                      {o.items && o.items.length > 0 ? (
+                        o.items.map((it, idx) => (
+                          <div key={idx} className="flex justify-between text-xs text-slate-700">
+                            <span>
+                              <strong className="text-slate-900">{it.quantity}×</strong> {it.name || 'Suất ăn Căn tin'}
+                            </span>
+                            <span className="font-medium">{formatVnd((it.price || 0) * (it.quantity || 1))}</span>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="flex justify-between text-xs text-slate-700">
                           <span>
-                            <strong className="text-slate-900">{it.quantity}×</strong> {it.name}
+                            <strong className="text-slate-900">1×</strong> Suất ăn Căn tin
                           </span>
-                          <span className="font-medium">{formatVnd(it.price * it.quantity)}</span>
+                          <span className="font-medium">{formatVnd(o.totalAmount)}</span>
                         </div>
-                      ))}
+                      )}
                     </div>
 
                     {/* Order Total & Cancel Action */}
@@ -1056,6 +1142,56 @@ export function OrderHome({
                 ) : (
                   'Xác nhận hủy'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: FEEDBACK / POPUP THÔNG BÁO ================= */}
+      {feedbackModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white rounded-3xl border border-slate-200 shadow-2xl p-6 text-center space-y-4">
+            <div className="mx-auto w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner">
+              {feedbackModal.type === 'error' && (
+                <div className="w-14 h-14 rounded-2xl bg-red-100 border border-red-200 text-red-600 flex items-center justify-center">
+                  <XCircle className="w-8 h-8" />
+                </div>
+              )}
+              {feedbackModal.type === 'warning' && (
+                <div className="w-14 h-14 rounded-2xl bg-amber-100 border border-amber-200 text-amber-700 flex items-center justify-center">
+                  <AlertCircle className="w-8 h-8" />
+                </div>
+              )}
+              {feedbackModal.type === 'success' && (
+                <div className="w-14 h-14 rounded-2xl bg-emerald-100 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+                  <CheckCircle2 className="w-8 h-8" />
+                </div>
+              )}
+            </div>
+
+            <div>
+              <h3 className="text-lg font-extrabold text-slate-900">
+                {feedbackModal.title}
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-600 mt-2 leading-relaxed whitespace-pre-line font-medium">
+                {feedbackModal.message}
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setFeedbackModal(null)}
+                className={`w-full py-3 px-4 rounded-xl text-xs sm:text-sm font-bold shadow-sm transition cursor-pointer active:scale-95 ${
+                  feedbackModal.type === 'error'
+                    ? 'bg-red-600 hover:bg-red-700 text-white'
+                    : feedbackModal.type === 'warning'
+                      ? 'bg-amber-600 hover:bg-amber-700 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                }`}
+              >
+                Đã hiểu
               </button>
             </div>
           </div>

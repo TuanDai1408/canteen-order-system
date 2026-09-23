@@ -2,6 +2,7 @@ export type UserRole = 'teacher' | 'admin' | 'data_entry' | 'executive';
 
 export interface UserProfile {
   id: string;
+  authUserId?: string;
   name: string;
   role: UserRole;
   roleTitle: string;
@@ -83,6 +84,7 @@ export interface QRExceptionToken {
   usedBy?: string;
   usedAt?: string;
   note?: string;
+  quantity?: number;
 }
 
 export interface TimeGateStatus {

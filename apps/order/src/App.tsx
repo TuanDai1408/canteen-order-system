@@ -5,7 +5,9 @@ import {
   getAllMenuItems,
   getOrders,
   getUsers,
+  getCachedUsers,
   getQRTokens,
+  getCachedQRTokens,
   getTimeGateStatus,
   subscribeRealtime,
   logout,
@@ -33,46 +35,70 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   // Portal-specific states
-  const [portalMenu, setPortalMenu] = useState<MenuItem[]>([]);
-  const [allOrders, setAllOrders] = useState<Order[]>([]);
-  const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
-  const [tokens, setTokens] = useState<QRExceptionToken[]>([]);
+  const [portalMenu, setPortalMenu] = useState<MenuItem[]>(() => getCachedMenu());
+  const [allOrders, setAllOrders] = useState<Order[]>(() => getCachedOrders());
+  const [allUsers, setAllUsers] = useState<UserProfile[]>(() => getCachedUsers());
+  const [tokens, setTokens] = useState<QRExceptionToken[]>(() => getCachedQRTokens());
 
   const userRef = useRef<UserProfile | null>(user);
   userRef.current = user;
   const currentViewRef = useRef<'order' | 'portal'>(currentView);
   currentViewRef.current = currentView;
+  const isRefreshingOrderRef = useRef(false);
+  const isRefreshingPortalRef = useRef(false);
 
   const refreshOrderData = useCallback(async (profile: UserProfile) => {
+    if (isRefreshingOrderRef.current) return;
+    isRefreshingOrderRef.current = true;
     try {
-      const [menuData, ordersData] = await Promise.all([
+      const [menuRes, ordersRes] = await Promise.allSettled([
         getMenu(),
-        getOrders({ userId: profile.id }),
+        getOrders({ userId: profile.id, authUserId: profile.authUserId }),
+        fetchTimeGateConfig(),
       ]);
-      setMenu(menuData);
-      setOrders(ordersData);
+      if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
+        setMenu(menuRes.value);
+      }
+      if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+        setOrders(ordersRes.value);
+      }
       setTimeStatus(getTimeGateStatus());
       setError(null);
     } catch (e: any) {
       console.warn('[refreshOrderData notice]:', e);
+    } finally {
+      isRefreshingOrderRef.current = false;
     }
   }, []);
 
   const refreshPortalData = useCallback(async () => {
+    if (isRefreshingPortalRef.current) return;
+    isRefreshingPortalRef.current = true;
     try {
-      const [m, o, u, t] = await Promise.all([
+      const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
         getAllMenuItems(),
         getOrders(),
         getUsers(),
         getQRTokens(),
+        fetchTimeGateConfig(),
       ]);
-      setPortalMenu(m);
-      setAllOrders(o);
-      setAllUsers(u);
-      setTokens(t);
+      if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
+        setPortalMenu(mRes.value);
+      }
+      if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
+        setAllOrders(oRes.value);
+      }
+      if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
+        setAllUsers(uRes.value);
+      }
+      if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
+        setTokens(tRes.value);
+      }
       setTimeStatus(getTimeGateStatus());
     } catch (e: any) {
       console.warn('[refreshPortalData notice]:', e);
+    } finally {
+      isRefreshingPortalRef.current = false;
     }
   }, []);
 
@@ -80,26 +106,31 @@ export default function App() {
     let mounted = true;
     async function init() {
       try {
-        // Tải đồng thời hồ sơ người dùng và thực đơn Supabase để tối ưu tốc độ phản hồi
-        const [profile, menuData] = await Promise.all([
+        const [profileRes, menuRes] = await Promise.allSettled([
           getCurrentUserProfile(),
           getMenu(),
         ]);
         if (!mounted) return;
-        setMenu(menuData);
+        if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
+          setMenu(menuRes.value);
+        }
+        const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
+
         if (profile) {
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
             refreshPortalData();
           } else {
             setCurrentView('order');
-            const [ordersData] = await Promise.all([
-              getOrders({ userId: profile.id }),
+            const [ordersRes] = await Promise.allSettled([
+              getOrders({ userId: profile.id, authUserId: profile.authUserId }),
               fetchTimeGateConfig(),
             ]);
             if (mounted) {
-              setOrders(ordersData);
+              if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+                setOrders(ordersRes.value);
+              }
               setTimeStatus(getTimeGateStatus());
             }
           }
@@ -183,7 +214,10 @@ export default function App() {
         timeStatus={timeStatus}
         onRefresh={refreshPortalData}
         onLogout={handleLogout}
-        onSwitchToOrder={() => setCurrentView('order')}
+        onSwitchToOrder={() => {
+          setCurrentView('order');
+          if (user) refreshOrderData(user);
+        }}
       />
     );
   }

@@ -121,6 +121,11 @@ export function PortalDashboard({
   const [isCreateQROpen, setIsCreateQROpen] = useState(false);
   const [qrExpiryMins, setQrExpiryMins] = useState(30);
   const [qrNote, setQrNote] = useState('Cấp ngoại lệ đặt suất bổ sung');
+  const [qrQuantity, setQrQuantity] = useState<number>(1);
+  const [isCreatingQR, setIsCreatingQR] = useState(false);
+  const [isAddingDish, setIsAddingDish] = useState(false);
+  const [isSavingDish, setIsSavingDish] = useState(false);
+  const [isUpdatingWallet, setIsUpdatingWallet] = useState(false);
 
   // POS Thermal Receipt state
   const [printReceiptOrder, setPrintReceiptOrder] = useState<Order | null>(null);
@@ -301,16 +306,19 @@ export function PortalDashboard({
 
   // Create QR
   const handleCreateQR = async () => {
+    setIsCreatingQR(true);
     try {
-      const token = await createQRToken(currentUser, qrNote, qrExpiryMins);
+      const token = await createQRToken(currentUser, qrNote, qrExpiryMins, qrQuantity);
       setMsg({
         type: 'ok',
-        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút)`,
+        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượng: ${qrQuantity} suất)`,
       });
       setIsCreateQROpen(false);
       onRefresh();
     } catch (e: any) {
       setMsg({ type: 'err', text: e.message || 'Lỗi khi tạo mã QR' });
+    } finally {
+      setIsCreatingQR(false);
     }
   };
 
@@ -331,6 +339,7 @@ export function PortalDashboard({
   // Add new dish
   const handleAddDish = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsAddingDish(true);
     try {
       await createMenuItem(
         {
@@ -362,6 +371,8 @@ export function PortalDashboard({
       onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi thêm món mới' });
+    } finally {
+      setIsAddingDish(false);
     }
   };
 
@@ -369,6 +380,7 @@ export function PortalDashboard({
   const handleUpdateWallet = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!walletModalUser) return;
+    setIsUpdatingWallet(true);
     try {
       const newBal = Math.max(0, walletModalUser.walletBalance + walletAmountChange);
       await updateUserWallet(walletModalUser.id, newBal, walletNote);
@@ -380,6 +392,8 @@ export function PortalDashboard({
       onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật ví' });
+    } finally {
+      setIsUpdatingWallet(false);
     }
   };
 
@@ -448,6 +462,7 @@ export function PortalDashboard({
     e.preventDefault();
     if (!editingDish || !editDishForm) return;
 
+    setIsSavingDish(true);
     try {
       await updateMenuItem(
         editingDish.id,
@@ -469,6 +484,8 @@ export function PortalDashboard({
       onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật món ăn' });
+    } finally {
+      setIsSavingDish(false);
     }
   };
 
@@ -1455,11 +1472,17 @@ export function PortalDashboard({
                           </td>
                           <td className="py-3 px-4 max-w-xs">
                             <div className="space-y-0.5">
-                              {o.items.map((it, i) => (
-                                <p key={i} className="text-slate-700 text-[11px] truncate">
-                                  <strong className="text-indigo-600">{it.quantity}×</strong> {it.name}
+                              {o.items && o.items.length > 0 ? (
+                                o.items.map((it, i) => (
+                                  <p key={i} className="text-slate-700 text-[11px] truncate">
+                                    <strong className="text-indigo-600">{it.quantity}×</strong> {it.name || 'Suất ăn Căn tin'}
+                                  </p>
+                                ))
+                              ) : (
+                                <p className="text-slate-500 text-[11px] italic">
+                                  1× Suất ăn Căn tin
                                 </p>
-                              ))}
+                              )}
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-extrabold text-indigo-600 whitespace-nowrap">
@@ -1760,6 +1783,7 @@ export function PortalDashboard({
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4">Mã Token</th>
+                        <th className="py-3 px-4 text-center">Số suất cấp</th>
                         <th className="py-3 px-4">Ghi chú</th>
                         <th className="py-3 px-4">Tạo bởi</th>
                         <th className="py-3 px-4">Thời gian hết hạn</th>
@@ -1773,6 +1797,11 @@ export function PortalDashboard({
                         return (
                           <tr key={t.token} className="hover:bg-slate-50/70">
                             <td className="py-3 px-4 font-mono font-extrabold text-indigo-700">{t.token}</td>
+                            <td className="py-3 px-4 text-center">
+                              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200">
+                                {t.quantity || 1} suất
+                              </span>
+                            </td>
                             <td className="py-3 px-4 text-slate-700">{t.note || '—'}</td>
                             <td className="py-3 px-4 text-slate-500">{t.createdByName}</td>
                             <td className="py-3 px-4 text-slate-700">
@@ -1957,9 +1986,17 @@ export function PortalDashboard({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px]"
+                  disabled={isAddingDish}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px] flex items-center justify-center gap-2 transition"
                 >
-                  Thêm món ngay
+                  {isAddingDish ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Đang lưu...</span>
+                    </>
+                  ) : (
+                    <span>Thêm món ngay</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2145,9 +2182,17 @@ export function PortalDashboard({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px]"
+                  disabled={isSavingDish}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer shadow-sm shadow-indigo-600/30 min-h-[44px] flex items-center justify-center gap-2 transition"
                 >
-                  Lưu thay đổi món ăn
+                  {isSavingDish ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Đang lưu...</span>
+                    </>
+                  ) : (
+                    <span>Lưu thay đổi món ăn</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2220,9 +2265,17 @@ export function PortalDashboard({
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+                  disabled={isUpdatingWallet}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer min-h-[44px] flex items-center justify-center gap-2 transition"
                 >
-                  Cập nhật ví
+                  {isUpdatingWallet ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Đang cập nhật...</span>
+                    </>
+                  ) : (
+                    <span>Cập nhật ví</span>
+                  )}
                 </button>
               </div>
             </form>
@@ -2365,6 +2418,52 @@ export function PortalDashboard({
 
             <div className="space-y-3">
               <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Số lượng suất được phép đặt
+                </label>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setQrQuantity((prev) => Math.max(1, prev - 1))}
+                    className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold flex items-center justify-center transition cursor-pointer"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={qrQuantity}
+                    onChange={(e) => setQrQuantity(Math.max(1, Math.min(50, parseInt(e.target.value) || 1)))}
+                    className="w-20 text-center py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setQrQuantity((prev) => Math.min(50, prev + 1))}
+                    className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold flex items-center justify-center transition cursor-pointer"
+                  >
+                    +
+                  </button>
+                  <div className="flex gap-1 ml-auto">
+                    {[1, 2, 5, 10].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setQrQuantity(q)}
+                        className={`px-2 py-1.5 text-xs font-bold rounded-lg transition cursor-pointer ${
+                          qrQuantity === q
+                            ? 'bg-indigo-600 text-white'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {q} suất
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">Thời gian hiệu lực</label>
                 <select
                   value={qrExpiryMins}
@@ -2399,9 +2498,17 @@ export function PortalDashboard({
                 </button>
                 <button
                   onClick={handleCreateQR}
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+                  disabled={isCreatingQR}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl cursor-pointer min-h-[44px] flex items-center justify-center gap-2 transition"
                 >
-                  Tạo Token ngay
+                  {isCreatingQR ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin text-white" />
+                      <span>Đang tạo...</span>
+                    </>
+                  ) : (
+                    <span>Tạo Token ngay</span>
+                  )}
                 </button>
               </div>
             </div>
@@ -2651,16 +2758,27 @@ export function PortalDashboard({
                     <span className="w-18 text-right">T.Tiền</span>
                   </div>
                   <div className="space-y-1.5 text-[11px]">
-                    {printReceiptOrder.items.map((it, idx) => (
-                      <div key={idx} className="flex justify-between items-start">
-                        <span className="w-1/2 pr-1 truncate font-medium">{it.name}</span>
-                        <span className="w-10 text-center font-bold">{it.quantity}</span>
-                        <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
+                    {printReceiptOrder.items && printReceiptOrder.items.length > 0 ? (
+                      printReceiptOrder.items.map((it, idx) => (
+                        <div key={idx} className="flex justify-between items-start">
+                          <span className="w-1/2 pr-1 truncate font-medium">{it.name || 'Suất ăn Căn tin'}</span>
+                          <span className="w-10 text-center font-bold">{it.quantity}</span>
+                          <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
+                          <span className="w-18 text-right font-bold text-slate-900">
+                            {formatVnd(it.price * it.quantity).replace(' ₫', '')}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="flex justify-between items-start">
+                        <span className="w-1/2 pr-1 truncate font-medium">Suất ăn Căn tin</span>
+                        <span className="w-10 text-center font-bold">1</span>
+                        <span className="w-16 text-right text-slate-600">{formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}</span>
                         <span className="w-18 text-right font-bold text-slate-900">
-                          {formatVnd(it.price * it.quantity).replace(' ₫', '')}
+                          {formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}
                         </span>
                       </div>
-                    ))}
+                    )}
                   </div>
                 </div>
 

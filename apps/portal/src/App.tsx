@@ -4,7 +4,9 @@ import {
   getAllMenuItems,
   getOrders,
   getUsers,
+  getCachedUsers,
   getQRTokens,
+  getCachedQRTokens,
   getTimeGateStatus,
   fetchTimeGateConfig,
   subscribeRealtime,
@@ -25,16 +27,19 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [menu, setMenu] = useState<MenuItem[]>(() => getCachedMenu());
   const [orders, setOrders] = useState<Order[]>(() => getCachedOrders());
-  const [users, setUsers] = useState<UserProfile[]>([]);
-  const [tokens, setTokens] = useState<QRExceptionToken[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>(() => getCachedUsers());
+  const [tokens, setTokens] = useState<QRExceptionToken[]>(() => getCachedQRTokens());
   const [timeStatus, setTimeStatus] = useState<TimeGateStatus>(() => getTimeGateStatus());
   const [loading, setLoading] = useState(true);
 
   const isMountedRef = useRef(true);
+  const isRefreshingRef = useRef(false);
 
   const refresh = useCallback(async () => {
+    if (isRefreshingRef.current) return;
+    isRefreshingRef.current = true;
     try {
-      const [m, o, u, t] = await Promise.all([
+      const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
         getAllMenuItems(),
         getOrders(),
         getUsers(),
@@ -42,13 +47,23 @@ export default function App() {
         fetchTimeGateConfig(),
       ]);
       if (!isMountedRef.current) return;
-      setMenu(m);
-      setOrders(o);
-      setUsers(u);
-      setTokens(t);
+      if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
+        setMenu(mRes.value);
+      }
+      if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
+        setOrders(oRes.value);
+      }
+      if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
+        setUsers(uRes.value);
+      }
+      if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
+        setTokens(tRes.value);
+      }
       setTimeStatus(getTimeGateStatus());
     } catch (e) {
       console.warn('Portal refresh note:', e);
+    } finally {
+      isRefreshingRef.current = false;
     }
   }, []);
 
@@ -56,24 +71,34 @@ export default function App() {
     isMountedRef.current = true;
     async function init() {
       try {
-        const [profile, m] = await Promise.all([
+        const [profileRes, mRes] = await Promise.allSettled([
           getCurrentUserProfile(),
           getAllMenuItems(),
         ]);
         if (!isMountedRef.current) return;
-        setMenu(m);
+        if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
+          setMenu(mRes.value);
+        }
+        const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
+
         if (profile) {
-          const [o, u, t] = await Promise.all([
+          const [oRes, uRes, tRes] = await Promise.allSettled([
             getOrders(),
             getUsers(),
             getQRTokens(),
             fetchTimeGateConfig(),
           ]);
           if (!isMountedRef.current) return;
-          setOrders(o);
-          setUsers(u);
-          setTokens(t);
+          if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
+            setOrders(oRes.value);
+          }
+          if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
+            setUsers(uRes.value);
+          }
+          if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
+            setTokens(tRes.value);
+          }
           setTimeStatus(getTimeGateStatus());
         }
       } catch (err) {
