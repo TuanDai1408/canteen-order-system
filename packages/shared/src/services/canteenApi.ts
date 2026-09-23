@@ -766,7 +766,14 @@ export async function placeOrder(params: {
   pickupTime: string;
   isExceptionOrder?: boolean;
   exceptionToken?: string;
-}): Promise<{ success: boolean; order_id?: string; order_code?: string; total_amount?: number; new_balance?: number; error?: string }> {
+}): Promise<{
+  success: boolean;
+  order_id?: string;
+  order_code?: string;
+  total_amount?: number;
+  new_balance?: number;
+  error?: string;
+}> {
   checkSupabase();
   const device = detectCurrentDevice();
 
@@ -774,117 +781,96 @@ export async function placeOrder(params: {
     return { success: false, error: 'Giỏ hàng trống. Vui lòng chọn ít nhất 1 món ăn.' };
   }
 
-  // 1. Thử gọi hàm RPC 'place_order' trên Supabase nếu có
-  try {
-    const { data: rpcData, error: rpcError } = await supabase.rpc('place_order', {
-      p_items: params.items.map((i) => ({
-        menu_item_id: isValidUuid(i.menuItemId) ? i.menuItemId : null,
-        quantity: i.quantity,
-      })),
-      p_delivery_method: params.deliveryMethod,
-      p_room_number: params.roomNumber || null,
-      p_pickup_time: params.pickupTime,
-      p_is_exception: params.isExceptionOrder || false,
-      p_exception_token: params.exceptionToken || null,
-      p_device_info: device,
-    });
-
-    if (!rpcError && rpcData && typeof rpcData === 'object') {
-      const res = rpcData as { success?: boolean; error?: string; order_id?: string; order_code?: string; total_amount?: number };
-      if (res.success) {
-        // Cập nhật lại cache sau khi RPC thành công
-        if (res.total_amount) {
-          const currProfile = getCachedUserProfile();
-          if (currProfile) {
-            currProfile.walletBalance = Math.max(0, currProfile.walletBalance - res.total_amount);
-            setCachedUserProfile(currProfile);
-          }
-        }
-        try {
-          window.dispatchEvent(new CustomEvent('canteen_order_created'));
-        } catch {}
-        return {
-          success: true,
-          order_id: res.order_id,
-          order_code: res.order_code,
-          total_amount: res.total_amount,
-        };
-      }
-      if (res.error) {
-        return { success: false, error: res.error };
-      }
-    }
-  } catch {
-    // Tiếp tục xử lý trực tiếp các bảng Supabase
-  }
-
-  // 2. Thực thi giao dịch qua bảng Supabase (Direct table transactions)
+  // 1. Xác thực người dùng hiện tại qua Supabase Auth
   const {
     data: { user: authUser },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!authUser) {
-    return { success: false, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' };
+  if (authError || !authUser) {
+    return {
+      success: false,
+      error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại để tiếp tục đặt món.',
+    };
   }
 
-  // Lấy thông tin người dùng từ bảng users hoặc upsert nếu chưa có
+  // 2. Tìm hoặc khởi tạo chính xác bản ghi user trong bảng users của Supabase (Bắt buộc để thỏa mãn Foreign Key)
   let userData: any = null;
   try {
-    const { data: fetchedUser } = await supabase
+    const { data: foundUsers } = await supabase
       .from('users')
       .select('*')
-      .or(`auth_user_id.eq.${authUser.id},id.eq.${authUser.id},email.eq.${authUser.email}`)
-      .maybeSingle();
+      .or(`auth_user_id.eq.${authUser.id},id.eq.${authUser.id},email.eq.${authUser.email}`);
 
-    if (fetchedUser) {
-      userData = fetchedUser;
+    if (foundUsers && foundUsers.length > 0) {
+      userData = foundUsers[0];
+      // Nếu auth_user_id chưa được map, cập nhật ngay
+      if (!userData.auth_user_id && authUser.id) {
+        try {
+          await supabase.from('users').update({ auth_user_id: authUser.id }).eq('id', userData.id);
+        } catch {}
+      }
     }
   } catch (userQueryErr) {
-    console.warn('[Fetch user on placeOrder note]:', userQueryErr);
+    console.warn('[placeOrder user query note]:', userQueryErr);
   }
 
+  // Nếu chưa có row trong bảng users, tiến hành chèn trực tiếp vào DB
   if (!userData) {
-    const cachedUsers = getCachedUsers();
-    const localUser = cachedUsers.find(
-      (u) => u.id === authUser.id || u.authUserId === authUser.id || u.email === authUser.email
-    );
+    const cachedProfile = getCachedUserProfile();
     const validUserId = isValidUuid(authUser.id) ? authUser.id : generateUUID();
     const newUserData = {
       id: validUserId,
       auth_user_id: isValidUuid(authUser.id) ? authUser.id : null,
-      email: authUser.email || '',
-      name: localUser?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Cán bộ',
-      role: localUser?.role || 'teacher',
-      role_title: localUser?.roleTitle || 'Giáo viên',
-      department: localUser?.department || 'Tổ Chuyên Môn',
-      default_room: localUser?.defaultRoom || 'P.101',
-      phone_number: localUser?.phoneNumber || '',
-      wallet_balance: localUser?.walletBalance ?? 1000000,
-      monthly_allowance: localUser?.monthlyAllowance ?? 1000000,
-      is_active: localUser?.isActive !== undefined ? localUser.isActive : true,
+      email: authUser.email || `${validUserId}@canteen.edu.vn`,
+      name:
+        cachedProfile?.name ||
+        authUser.user_metadata?.full_name ||
+        authUser.email?.split('@')[0] ||
+        'Cán bộ',
+      role: cachedProfile?.role || 'teacher',
+      role_title: cachedProfile?.roleTitle || 'Giáo viên',
+      department: cachedProfile?.department || 'Tổ Chuyên Môn',
+      default_room: cachedProfile?.defaultRoom || 'P.101',
+      phone_number: cachedProfile?.phoneNumber || '',
+      wallet_balance: cachedProfile?.walletBalance ?? 1000000,
+      monthly_allowance: cachedProfile?.monthlyAllowance ?? 1000000,
+      is_active: true,
     };
+
     try {
-      const { data: createdUser } = await supabase
+      const { data: createdUser, error: insertErr } = await supabase
         .from('users')
-        .upsert(newUserData)
+        .upsert(newUserData, { onConflict: 'email' })
         .select()
         .maybeSingle();
-      userData = createdUser || newUserData;
-    } catch {
+
+      if (createdUser) {
+        userData = createdUser;
+      } else {
+        const { data: reUser } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', authUser.email)
+          .maybeSingle();
+        userData = reUser || newUserData;
+      }
+    } catch (createErr) {
+      console.error('[placeOrder create user error]:', createErr);
       userData = newUserData;
     }
   }
 
-  // Kiểm tra tài khoản đã được Quản trị Canteen phê duyệt chưa
+  // Kiểm tra tài khoản đã kích hoạt chưa
   if (userData.is_active === false) {
     return {
       success: false,
-      error: 'Tài khoản của bạn đang chờ Ban Quản Trị Canteen phê duyệt và cấp hạn mức ví suất ăn. Vui lòng liên hệ Quản lý Căn tin để được kích hoạt.',
+      error: 'Tài khoản của bạn đang chờ Ban Quản Trị Canteen duyệt và cấp hạn mức ví. Vui lòng liên hệ Quản lý Căn tin để được kích hoạt.',
     };
   }
 
-  // Lấy danh sách món ăn từ bảng menu_items trên Supabase để map chính xác UUID và tồn kho
-  let menuList: any[] = [];
+  // 3. Lấy danh sách thực đơn từ bảng menu_items để map UUID chuẩn cho order_items
+  let dbMenuList: any[] = [];
   try {
     const { data: fetchedMenu } = await withQueryTimeout(
       supabase.from('menu_items').select('*'),
@@ -892,27 +878,15 @@ export async function placeOrder(params: {
       'Timeout fetch menu items'
     );
     if (fetchedMenu && fetchedMenu.length > 0) {
-      menuList = fetchedMenu;
-      setCachedMenu(menuList.map(mapMenuItem));
+      dbMenuList = fetchedMenu;
+      setCachedMenu(dbMenuList.map(mapMenuItem));
     }
   } catch (menuErr) {
-    console.warn('[Fetch menu on placeOrder note]:', menuErr);
+    console.warn('[placeOrder fetch menu note]:', menuErr);
   }
 
-  // Nếu DB chưa có món nào, seed thực đơn chuẩn lên DB
-  if (menuList.length === 0) {
-    try {
-      await seedMenuToSupabase();
-      const { data: reFetched } = await supabase.from('menu_items').select('*');
-      if (reFetched && reFetched.length > 0) {
-        menuList = reFetched;
-        setCachedMenu(menuList.map(mapMenuItem));
-      }
-    } catch {}
-  }
-
-  if (menuList.length === 0) {
-    menuList = getCachedMenu();
+  if (dbMenuList.length === 0) {
+    dbMenuList = getCachedMenu();
   }
 
   let totalAmount = 0;
@@ -926,12 +900,21 @@ export async function placeOrder(params: {
   }[] = [];
 
   for (const requestedItem of params.items) {
-    // Tìm món trong danh sách menu của Supabase bằng id hoặc theo tên
     const menuItem =
-      menuList.find((m) => m.id === requestedItem.menuItemId) ||
-      menuList.find((m) => requestedItem.name && m.name && m.name.toLowerCase() === requestedItem.name.toLowerCase()) ||
+      dbMenuList.find((m) => m.id === requestedItem.menuItemId) ||
+      dbMenuList.find(
+        (m) =>
+          requestedItem.name &&
+          m.name &&
+          m.name.trim().toLowerCase() === requestedItem.name.trim().toLowerCase()
+      ) ||
       DEFAULT_MENU_ITEMS.find((m) => m.id === requestedItem.menuItemId) ||
-      DEFAULT_MENU_ITEMS.find((m) => requestedItem.name && m.name && m.name.toLowerCase() === requestedItem.name.toLowerCase());
+      DEFAULT_MENU_ITEMS.find(
+        (m) =>
+          requestedItem.name &&
+          m.name &&
+          m.name.trim().toLowerCase() === requestedItem.name.trim().toLowerCase()
+      );
 
     const itemName = requestedItem.name || menuItem?.name || 'Suất ăn Căn tin';
     const itemPrice = Number(requestedItem.price ?? menuItem?.price ?? 35000);
@@ -948,11 +931,17 @@ export async function placeOrder(params: {
     const itemTotal = itemPrice * requestedItem.quantity;
     totalAmount += itemTotal;
 
-    const dbId = menuItem?.id && isValidUuid(menuItem.id) ? menuItem.id : isValidUuid(requestedItem.menuItemId) ? requestedItem.menuItemId : null;
+    // Chỉ gán real_db_item_id nếu ID đó là UUID hợp lệ và có trong bảng menu_items trên DB
+    let realDbId: string | null = null;
+    if (menuItem?.id && isValidUuid(menuItem.id)) {
+      realDbId = menuItem.id;
+    } else if (isValidUuid(requestedItem.menuItemId)) {
+      realDbId = requestedItem.menuItemId;
+    }
 
     orderItemsData.push({
       menu_item_id: requestedItem.menuItemId,
-      real_db_item_id: dbId,
+      real_db_item_id: realDbId,
       name: itemName,
       price: itemPrice,
       quantity: requestedItem.quantity,
@@ -960,7 +949,7 @@ export async function placeOrder(params: {
     });
   }
 
-  // Kiểm tra số dư ví
+  // 4. Kiểm tra số dư ví
   const currentWallet = Number(userData.wallet_balance ?? 0);
   if (currentWallet < totalAmount) {
     return {
@@ -969,7 +958,7 @@ export async function placeOrder(params: {
     };
   }
 
-  // Tạo mã đơn hàng chuẩn hoá POS: CT-YYYYMMDD-XXX (Ví dụ: CT-20260923-012)
+  // 5. Tạo mã đơn hàng chuẩn hoá POS: CT-YYYYMMDD-XXX
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -983,12 +972,16 @@ export async function placeOrder(params: {
   const seqStr = String(todayCount + Math.floor(Math.random() * 80) + 1).padStart(3, '0');
   const orderCode = `${datePrefix}${seqStr}`;
   const targetDate = getTomorrowStr();
-  const itemsSummaryText = orderItemsData.map((it) => `${it.quantity}x ${it.name} (${it.price}đ)`).join(', ');
+  const itemsSummaryText = orderItemsData
+    .map((it) => `${it.quantity}x ${it.name} (${formatVnd(it.price)})`)
+    .join(', ');
 
   const orderUuid = generateUUID();
 
-  // Tạo đơn hàng trong bảng orders trên Supabase
+  // 6. Chèn đơn hàng vào bảng orders trên Supabase
   let newOrder: any = null;
+  let orderInsertError: string | null = null;
+
   const fullOrderPayload: any = {
     id: orderUuid,
     order_code: orderCode,
@@ -1009,20 +1002,24 @@ export async function placeOrder(params: {
     is_exception_order: Boolean(params.isExceptionOrder),
     exception_token_used: params.exceptionToken || null,
     device_info: device,
-    note: params.isExceptionOrder ? `[Ngoại lệ: ${params.exceptionToken}] ${itemsSummaryText}` : itemsSummaryText,
+    note: params.isExceptionOrder
+      ? `[Ngoại lệ: ${params.exceptionToken}] ${itemsSummaryText}`
+      : itemsSummaryText,
   };
 
   try {
     const res1 = await withQueryTimeout(
-      supabase.from('orders').insert(fullOrderPayload).select().single(),
+      supabase.from('orders').insert(fullOrderPayload).select().maybeSingle(),
       15000,
       'Timeout creating order on Supabase'
     );
     if (!res1.error && res1.data) {
       newOrder = res1.data;
     } else {
-      console.warn('[Supabase order insert retry]:', res1.error?.message);
-      // Fallback với schema cơ bản nếu một số cột mở rộng không có trong bảng
+      orderInsertError = res1.error?.message || 'Lỗi không xác định khi thêm đơn vào Supabase';
+      console.warn('[placeOrder insert attempt 1 note]:', orderInsertError);
+
+      // Thử lại với schema tiêu chuẩn (loại bỏ các cột tuỳ chọn mở rộng nếu DB chưa cập nhật)
       const standardPayload = {
         id: orderUuid,
         order_code: orderCode,
@@ -1039,18 +1036,31 @@ export async function placeOrder(params: {
         used_qr_token: params.exceptionToken || null,
         note: itemsSummaryText,
       };
-      const res2 = await supabase.from('orders').insert(standardPayload).select().single();
+      const res2 = await supabase.from('orders').insert(standardPayload).select().maybeSingle();
       if (!res2.error && res2.data) {
         newOrder = res2.data;
+        orderInsertError = null;
+      } else {
+        orderInsertError = res2.error?.message || orderInsertError;
+        console.error('[placeOrder insert attempt 2 error]:', orderInsertError);
       }
     }
-  } catch (e) {
-    console.warn('[Supabase order insert notice - will save to local store]:', e);
+  } catch (e: any) {
+    orderInsertError = e.message || 'Lỗi kết nối máy chủ Supabase';
+    console.error('[placeOrder Supabase insert exception]:', e);
+  }
+
+  // Nếu insert vào Supabase thất bại, báo lỗi cụ thể để xử lý thay vì im lặng
+  if (!newOrder && orderInsertError) {
+    return {
+      success: false,
+      error: `Không thể lưu đơn hàng vào máy chủ Supabase: ${orderInsertError}. Vui lòng kiểm tra quyền truy cập RLS của bảng orders.`,
+    };
   }
 
   const generatedId = newOrder ? newOrder.id : orderUuid;
 
-  // Thêm chi tiết món ăn vào bảng order_items
+  // 7. Thêm chi tiết món ăn vào bảng order_items trên Supabase
   try {
     const itemsToInsert = orderItemsData.map((it) => ({
       id: generateUUID(),
@@ -1065,7 +1075,8 @@ export async function placeOrder(params: {
 
     const { error: itemErr } = await supabase.from('order_items').insert(itemsToInsert);
     if (itemErr) {
-      // Retry nếu cột id hoặc image_url không tồn tại trong schema SQL cũ
+      console.warn('[placeOrder order_items insert retry note]:', itemErr.message);
+      // Fallback không có cột image_url
       const standardItems = orderItemsData.map((it) => ({
         order_id: generatedId,
         menu_item_id: it.real_db_item_id,
@@ -1074,16 +1085,13 @@ export async function placeOrder(params: {
         quantity: it.quantity,
         subtotal: it.price * it.quantity,
       }));
-      const { error: retryErr } = await supabase.from('order_items').insert(standardItems);
-      if (retryErr) {
-        console.error('[Supabase order_items retry notice]:', retryErr.message);
-      }
+      await supabase.from('order_items').insert(standardItems);
     }
   } catch (e) {
-    console.warn('Order items insert notice:', e);
+    console.warn('[placeOrder order_items exception]:', e);
   }
 
-  // Trừ số lượng tồn kho của món ăn trên Supabase
+  // 8. Trừ tồn kho món ăn trên Supabase
   for (const it of orderItemsData) {
     if (it.real_db_item_id) {
       try {
@@ -1101,12 +1109,12 @@ export async function placeOrder(params: {
             .eq('id', it.real_db_item_id);
         }
       } catch (stockErr) {
-        console.warn('Stock update notice:', stockErr);
+        console.warn('[placeOrder stock update note]:', stockErr);
       }
     }
   }
 
-  // Trừ số dư ví của người dùng trong bảng users
+  // 9. Trừ số dư ví của người dùng trong bảng users trên Supabase
   const newBalance = Math.max(0, currentWallet - totalAmount);
   try {
     const { error: walletErr } = await supabase
@@ -1115,31 +1123,31 @@ export async function placeOrder(params: {
       .eq('id', userData.id);
 
     if (walletErr) {
-      console.warn('Wallet balance update error:', walletErr.message);
+      console.warn('[placeOrder wallet update note]:', walletErr.message);
     }
 
-    // Ghi nhật ký giao dịch ví
+    // Ghi nhật ký biến động ví
     await supabase.from('wallet_transactions').insert({
       id: generateUUID(),
       user_id: userData.id,
       amount: -totalAmount,
       type: 'order_payment',
-      order_id: isValidUuid(generatedId) ? generatedId : null,
-      note: `Thanh toán đơn hàng ${orderCode}`,
+      reference_id: orderCode,
       balance_after: newBalance,
+      note: `Thanh toán đơn hàng ${orderCode}`,
     });
   } catch (e) {
-    console.warn('Wallet balance sync notice:', e);
+    console.warn('[placeOrder wallet_transactions sync note]:', e);
   }
 
-  // Cập nhật lại cached user profile để UI trừ tiền ngay lập tức
+  // 10. Cập nhật local cached user profile để UI cập nhật số dư tức thì
   const currProfile = getCachedUserProfile();
   if (currProfile) {
     currProfile.walletBalance = newBalance;
     setCachedUserProfile(currProfile);
   }
 
-  // Cập nhật tồn kho trong cache thực đơn
+  // 11. Cập nhật tồn kho trong cache thực đơn
   const cachedMenu = getCachedMenu();
   const updatedCachedMenu = cachedMenu.map((m) => {
     const requested = orderItemsData.find((it) => it.menu_item_id === m.id || it.name === m.name);
@@ -1150,7 +1158,7 @@ export async function placeOrder(params: {
   });
   setCachedMenu(updatedCachedMenu);
 
-  // Tạo và lưu đơn vào cache cục bộ để hiển thị ngay tức thì
+  // 12. Tạo và lưu đơn vào cache cục bộ để hiển thị ngay tức thì
   const localOrder: Order = {
     id: generatedId,
     orderCode,
@@ -1204,7 +1212,11 @@ export async function placeOrder(params: {
   // Phát tín hiệu broadcast cho tab hoặc window khác cập nhật ví và đơn hàng
   try {
     window.dispatchEvent(new CustomEvent('canteen_order_created', { detail: localOrder }));
-    window.dispatchEvent(new CustomEvent('canteen_wallet_updated', { detail: { walletBalance: newBalance, userId: userData.id } }));
+    window.dispatchEvent(
+      new CustomEvent('canteen_wallet_updated', {
+        detail: { walletBalance: newBalance, userId: userData.id },
+      })
+    );
   } catch {}
 
   return {
@@ -1325,7 +1337,7 @@ export async function cancelOrder(
           user_id: user.id,
           amount: refundAmount,
           type: 'order_refund',
-          order_id: order.id,
+          reference_id: order.order_code || order.id,
           note: `Hoàn tiền hủy đơn ${order.order_code}`,
           balance_after: refundBalance,
         });
