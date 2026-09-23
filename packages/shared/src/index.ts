@@ -55,6 +55,9 @@ export {
   getTimeGateStatus,
   subscribeRealtime,
   withQueryTimeout,
+  parseItemsFromNote,
+  isValidUuid,
+  generateUUID,
 } from './services/canteenApi';
 
 // Utils

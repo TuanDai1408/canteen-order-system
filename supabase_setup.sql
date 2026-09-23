@@ -25,13 +25,18 @@ CREATE TABLE IF NOT EXISTS menu_items (
 -- 3. Bảng hồ sơ cán bộ & ví (users)
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    auth_user_id UUID,
     email TEXT UNIQUE NOT NULL,
     name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'teacher',
     role_title TEXT DEFAULT 'Giáo viên',
+    department TEXT DEFAULT 'Tổ Chuyên Môn',
+    phone_number TEXT DEFAULT '',
     default_room TEXT DEFAULT '',
+    avatar_url TEXT DEFAULT '',
     wallet_balance NUMERIC NOT NULL DEFAULT 1000000,
     monthly_allowance NUMERIC NOT NULL DEFAULT 1000000,
+    last_wallet_reset_date DATE,
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -43,17 +48,25 @@ CREATE TABLE IF NOT EXISTS orders (
     order_code TEXT UNIQUE NOT NULL,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     user_name TEXT NOT NULL,
-    user_email TEXT NOT NULL,
+    user_email TEXT NOT NULL DEFAULT '',
+    user_phone TEXT DEFAULT '',
+    user_department TEXT DEFAULT '',
     order_date DATE NOT NULL DEFAULT CURRENT_DATE,
-    meal_date DATE NOT NULL,
+    meal_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    target_date DATE DEFAULT CURRENT_DATE,
     delivery_method TEXT NOT NULL DEFAULT 'dine_in',
     room_number TEXT DEFAULT '',
     pickup_time TEXT NOT NULL DEFAULT '11:30',
     total_amount NUMERIC NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'confirmed',
     used_qr_token TEXT,
+    is_exception_order BOOLEAN NOT NULL DEFAULT false,
+    exception_token_used TEXT,
     device_info JSONB,
     note TEXT DEFAULT '',
+    cancellation_deadline TEXT DEFAULT '16:00',
+    cancelled_at TIMESTAMPTZ,
+    cancel_reason TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -66,7 +79,8 @@ CREATE TABLE IF NOT EXISTS order_items (
     name TEXT NOT NULL,
     price NUMERIC NOT NULL,
     quantity INTEGER NOT NULL DEFAULT 1,
-    subtotal NUMERIC NOT NULL,
+    subtotal NUMERIC NOT NULL DEFAULT 0,
+    image_url TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT now()
 );
 

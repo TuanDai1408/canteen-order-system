@@ -349,7 +349,8 @@ export async function createUserByAdmin(
   const cleanEmail = params.email.trim().toLowerCase();
   const pwd = params.password?.trim() || 'Canteen@123456';
 
-  let authUserId = `usr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  let authUserId: string | null = null;
+  const userUuid = generateUUID();
 
   // Thử đăng ký Supabase Auth
   try {
@@ -380,8 +381,8 @@ export async function createUserByAdmin(
       : 'Giáo viên';
 
   const newRow = {
-    id: authUserId,
-    auth_user_id: authUserId,
+    id: authUserId && isValidUuid(authUserId) ? authUserId : userUuid,
+    auth_user_id: authUserId && isValidUuid(authUserId) ? authUserId : null,
     name: params.name.trim(),
     email: cleanEmail,
     role: params.role,
@@ -476,13 +477,27 @@ export async function updateUserWallet(
   }
 }
 
+export const isValidUuid = (str?: string): boolean =>
+  !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+
+export const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
 // ============================================================
 // MENU
 // ============================================================
 
 export const DEFAULT_MENU_ITEMS: MenuItem[] = [
   {
-    id: 'dish-com-suon',
+    id: 'a1111111-1111-4111-8111-111111111101',
     name: 'Cơm sườn cốt lết nướng mật ong',
     category: 'Cơm trưa',
     description: 'Sườn nướng mật ong vàng ruộm, trứng ốp la, dưa leo tươi mát và canh súp rau củ',
@@ -494,7 +509,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-com-ga',
+    id: 'a1111111-1111-4111-8111-111111111102',
     name: 'Cơm gà xối mỡ da giòn',
     category: 'Cơm trưa',
     description: 'Đùi gà góc tư chiên giòn, cơm rang tỏi thơm dẻo, kèm sốt chua ngọt và salad',
@@ -506,7 +521,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-com-ca-kho',
+    id: 'a1111111-1111-4111-8111-111111111103',
     name: 'Cơm cá thu sốt cà chua',
     category: 'Cơm trưa',
     description: 'Cá sốt cà chua đậm đà hương vị gia đình, kèm canh mồng tơi cua đồng thanh nhiệt',
@@ -518,7 +533,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-pho-bo',
+    id: 'a1111111-1111-4111-8111-111111111104',
     name: 'Phở bò tái nạm đặc biệt',
     category: 'Bún / Phở',
     description: 'Bánh phở tươi, thịt bò tái nạm mềm thơm ngậy, nước hầm xương ống 12 tiếng cùng quẩy giòn',
@@ -530,7 +545,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-bun-bo-hue',
+    id: 'a1111111-1111-4111-8111-111111111105',
     name: 'Bún bò giò heo xứ Huế',
     category: 'Bún / Phở',
     description: 'Bún sợi to đặc trưng, khoanh giò nạc, chả cua Huế và nước dùng cay nồng hương sả',
@@ -542,7 +557,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-com-chay-nam',
+    id: 'a1111111-1111-4111-8111-111111111106',
     name: 'Cơm nấm đùi gà xào hạt sen (Chay)',
     category: 'Món Chay',
     description: 'Nấm tươi xào sốt tiêu đen, hạt sen bùi béo, đậu hũ non chiên giòn và canh rong biển',
@@ -554,7 +569,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-bun-cha-gio-chay',
+    id: 'a1111111-1111-4111-8111-111111111107',
     name: 'Bún chả giò chay rau sống',
     category: 'Món Chay',
     description: 'Chả giò khoai môn nấm mèo giòn rụm, đậu hũ nướng sả, nước mắm chay pha chua ngọt',
@@ -566,7 +581,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-tra-dao',
+    id: 'a1111111-1111-4111-8111-111111111108',
     name: 'Trà đào cam sả hạt chia',
     category: 'Đồ uống / Tráng miệng',
     description: 'Trà thảo mộc ướp sả thanh mát, miếng đào giòn ngâm thơm ngon và hạt chia giàu dinh dưỡng',
@@ -578,7 +593,7 @@ export const DEFAULT_MENU_ITEMS: MenuItem[] = [
     forDate: '',
   },
   {
-    id: 'dish-sua-chua',
+    id: 'a1111111-1111-4111-8111-111111111109',
     name: 'Sữa chua dẻo ngũ cốc trái cây',
     category: 'Đồ uống / Tráng miệng',
     description: 'Sữa chua tự nhiên nhà làm thơm mát, kiwi dâu tây tươi mọng cùng ngũ cốc giòn tan',
@@ -755,11 +770,15 @@ export async function placeOrder(params: {
   checkSupabase();
   const device = detectCurrentDevice();
 
-  // 1. Thử gọi hàm RPC 'place_order' trên Supabase nếu đã tạo
+  if (!params.items || params.items.length === 0) {
+    return { success: false, error: 'Giỏ hàng trống. Vui lòng chọn ít nhất 1 món ăn.' };
+  }
+
+  // 1. Thử gọi hàm RPC 'place_order' trên Supabase nếu có
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc('place_order', {
       p_items: params.items.map((i) => ({
-        menu_item_id: i.menuItemId,
+        menu_item_id: isValidUuid(i.menuItemId) ? i.menuItemId : null,
         quantity: i.quantity,
       })),
       p_delivery_method: params.deliveryMethod,
@@ -773,6 +792,17 @@ export async function placeOrder(params: {
     if (!rpcError && rpcData && typeof rpcData === 'object') {
       const res = rpcData as { success?: boolean; error?: string; order_id?: string; order_code?: string; total_amount?: number };
       if (res.success) {
+        // Cập nhật lại cache sau khi RPC thành công
+        if (res.total_amount) {
+          const currProfile = getCachedUserProfile();
+          if (currProfile) {
+            currProfile.walletBalance = Math.max(0, currProfile.walletBalance - res.total_amount);
+            setCachedUserProfile(currProfile);
+          }
+        }
+        try {
+          window.dispatchEvent(new CustomEvent('canteen_order_created'));
+        } catch {}
         return {
           success: true,
           order_id: res.order_id,
@@ -785,10 +815,10 @@ export async function placeOrder(params: {
       }
     }
   } catch {
-    // Nếu RPC chưa cài đặt trên database, thực thi trực tiếp qua các bảng Supabase
+    // Tiếp tục xử lý trực tiếp các bảng Supabase
   }
 
-  // 2. Thực thi giao dịch trực tiếp qua bảng Supabase (Direct table transactions)
+  // 2. Thực thi giao dịch qua bảng Supabase (Direct table transactions)
   const {
     data: { user: authUser },
   } = await supabase.auth.getUser();
@@ -797,15 +827,52 @@ export async function placeOrder(params: {
     return { success: false, error: 'Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.' };
   }
 
-  // Lấy thông tin người dùng từ bảng users
-  const { data: userData, error: userErr } = await supabase
-    .from('users')
-    .select('*')
-    .or(`auth_user_id.eq.${authUser.id},id.eq.${authUser.id}`)
-    .maybeSingle();
+  // Lấy thông tin người dùng từ bảng users hoặc upsert nếu chưa có
+  let userData: any = null;
+  try {
+    const { data: fetchedUser } = await supabase
+      .from('users')
+      .select('*')
+      .or(`auth_user_id.eq.${authUser.id},id.eq.${authUser.id},email.eq.${authUser.email}`)
+      .maybeSingle();
 
-  if (userErr || !userData) {
-    return { success: false, error: 'Không tìm thấy hồ sơ người dùng trên hệ thống.' };
+    if (fetchedUser) {
+      userData = fetchedUser;
+    }
+  } catch (userQueryErr) {
+    console.warn('[Fetch user on placeOrder note]:', userQueryErr);
+  }
+
+  if (!userData) {
+    const cachedUsers = getCachedUsers();
+    const localUser = cachedUsers.find(
+      (u) => u.id === authUser.id || u.authUserId === authUser.id || u.email === authUser.email
+    );
+    const validUserId = isValidUuid(authUser.id) ? authUser.id : generateUUID();
+    const newUserData = {
+      id: validUserId,
+      auth_user_id: isValidUuid(authUser.id) ? authUser.id : null,
+      email: authUser.email || '',
+      name: localUser?.name || authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'Cán bộ',
+      role: localUser?.role || 'teacher',
+      role_title: localUser?.roleTitle || 'Giáo viên',
+      department: localUser?.department || 'Tổ Chuyên Môn',
+      default_room: localUser?.defaultRoom || 'P.101',
+      phone_number: localUser?.phoneNumber || '',
+      wallet_balance: localUser?.walletBalance ?? 1000000,
+      monthly_allowance: localUser?.monthlyAllowance ?? 1000000,
+      is_active: localUser?.isActive !== undefined ? localUser.isActive : true,
+    };
+    try {
+      const { data: createdUser } = await supabase
+        .from('users')
+        .upsert(newUserData)
+        .select()
+        .maybeSingle();
+      userData = createdUser || newUserData;
+    } catch {
+      userData = newUserData;
+    }
   }
 
   // Kiểm tra tài khoản đã được Quản trị Canteen phê duyệt chưa
@@ -816,43 +883,42 @@ export async function placeOrder(params: {
     };
   }
 
-  // Lấy chi tiết món ăn từ bảng menu_items hoặc cache
-  const itemIds = params.items.map((i) => i.menuItemId);
+  // Lấy danh sách món ăn từ bảng menu_items trên Supabase để map chính xác UUID và tồn kho
   let menuList: any[] = [];
   try {
     const { data: fetchedMenu } = await withQueryTimeout(
-      supabase
-        .from('menu_items')
-        .select('*')
-        .in('id', itemIds),
+      supabase.from('menu_items').select('*'),
       12000,
       'Timeout fetch menu items'
     );
     if (fetchedMenu && fetchedMenu.length > 0) {
       menuList = fetchedMenu;
+      setCachedMenu(menuList.map(mapMenuItem));
     }
-  } catch {}
+  } catch (menuErr) {
+    console.warn('[Fetch menu on placeOrder note]:', menuErr);
+  }
 
+  // Nếu DB chưa có món nào, seed thực đơn chuẩn lên DB
   if (menuList.length === 0) {
-    const cached = getCachedMenu();
-    menuList = cached
-      .filter((m) => itemIds.includes(m.id))
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        price: m.price,
-        current_stock: m.currentStock,
-        image_url: m.imageUrl,
-      }));
+    try {
+      await seedMenuToSupabase();
+      const { data: reFetched } = await supabase.from('menu_items').select('*');
+      if (reFetched && reFetched.length > 0) {
+        menuList = reFetched;
+        setCachedMenu(menuList.map(mapMenuItem));
+      }
+    } catch {}
   }
 
   if (menuList.length === 0) {
-    return { success: false, error: 'Không thể tải thông tin món ăn từ hệ thống.' };
+    menuList = getCachedMenu();
   }
 
   let totalAmount = 0;
   const orderItemsData: {
     menu_item_id: string;
+    real_db_item_id: string | null;
     name: string;
     price: number;
     quantity: number;
@@ -860,10 +926,16 @@ export async function placeOrder(params: {
   }[] = [];
 
   for (const requestedItem of params.items) {
-    const menuItem = menuList.find((m) => m.id === requestedItem.menuItemId);
-    const itemName = menuItem?.name || requestedItem.name || 'Suất ăn Căn tin';
-    const itemPrice = Number(menuItem?.price ?? requestedItem.price ?? 35000);
-    const itemImg = menuItem?.image_url || menuItem?.imageUrl || requestedItem.imageUrl || '';
+    // Tìm món trong danh sách menu của Supabase bằng id hoặc theo tên
+    const menuItem =
+      menuList.find((m) => m.id === requestedItem.menuItemId) ||
+      menuList.find((m) => requestedItem.name && m.name && m.name.toLowerCase() === requestedItem.name.toLowerCase()) ||
+      DEFAULT_MENU_ITEMS.find((m) => m.id === requestedItem.menuItemId) ||
+      DEFAULT_MENU_ITEMS.find((m) => requestedItem.name && m.name && m.name.toLowerCase() === requestedItem.name.toLowerCase());
+
+    const itemName = requestedItem.name || menuItem?.name || 'Suất ăn Căn tin';
+    const itemPrice = Number(requestedItem.price ?? menuItem?.price ?? 35000);
+    const itemImg = requestedItem.imageUrl || menuItem?.image_url || menuItem?.imageUrl || '';
     const itemStock = menuItem ? Number(menuItem.current_stock ?? menuItem.currentStock ?? 999) : 999;
 
     if (itemStock < requestedItem.quantity) {
@@ -872,10 +944,15 @@ export async function placeOrder(params: {
         error: `Món "${itemName}" chỉ còn ${itemStock} suất, không đủ ${requestedItem.quantity} suất yêu cầu.`,
       };
     }
+
     const itemTotal = itemPrice * requestedItem.quantity;
     totalAmount += itemTotal;
+
+    const dbId = menuItem?.id && isValidUuid(menuItem.id) ? menuItem.id : isValidUuid(requestedItem.menuItemId) ? requestedItem.menuItemId : null;
+
     orderItemsData.push({
       menu_item_id: requestedItem.menuItemId,
+      real_db_item_id: dbId,
       name: itemName,
       price: itemPrice,
       quantity: requestedItem.quantity,
@@ -884,10 +961,11 @@ export async function placeOrder(params: {
   }
 
   // Kiểm tra số dư ví
-  if (Number(userData.wallet_balance) < totalAmount) {
+  const currentWallet = Number(userData.wallet_balance ?? 0);
+  if (currentWallet < totalAmount) {
     return {
       success: false,
-      error: `Số dư ví không đủ. Cần ${totalAmount.toLocaleString('vi-VN')} đ, số dư hiện có ${Number(userData.wallet_balance).toLocaleString('vi-VN')} đ.`,
+      error: `Số dư ví không đủ. Cần ${formatVnd(totalAmount)}, số dư hiện có ${formatVnd(currentWallet)}.`,
     };
   }
 
@@ -902,109 +980,169 @@ export async function placeOrder(params: {
   const todayCount = allCached.filter(
     (o) => o.orderCode && o.orderCode.startsWith(datePrefix)
   ).length;
-  const seqStr = String(todayCount + 1).padStart(3, '0');
+  const seqStr = String(todayCount + Math.floor(Math.random() * 80) + 1).padStart(3, '0');
   const orderCode = `${datePrefix}${seqStr}`;
   const targetDate = getTomorrowStr();
+  const itemsSummaryText = orderItemsData.map((it) => `${it.quantity}x ${it.name} (${it.price}đ)`).join(', ');
 
-  // Tạo đơn hàng trong bảng orders
+  const orderUuid = generateUUID();
+
+  // Tạo đơn hàng trong bảng orders trên Supabase
   let newOrder: any = null;
+  const fullOrderPayload: any = {
+    id: orderUuid,
+    order_code: orderCode,
+    user_id: userData.id,
+    user_name: userData.name || authUser.email?.split('@')[0] || 'Cán bộ',
+    user_email: userData.email || authUser.email || '',
+    user_phone: userData.phone_number || '',
+    user_department: userData.department || '',
+    order_date: now.toISOString().split('T')[0],
+    meal_date: targetDate,
+    target_date: targetDate,
+    delivery_method: params.deliveryMethod,
+    room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || '' : '',
+    pickup_time: params.pickupTime,
+    total_amount: totalAmount,
+    status: 'confirmed',
+    used_qr_token: params.exceptionToken || null,
+    is_exception_order: Boolean(params.isExceptionOrder),
+    exception_token_used: params.exceptionToken || null,
+    device_info: device,
+    note: params.isExceptionOrder ? `[Ngoại lệ: ${params.exceptionToken}] ${itemsSummaryText}` : itemsSummaryText,
+  };
+
   try {
-    const { data: insertedOrder, error: orderInsertErr } = await withQueryTimeout(
-      supabase
-        .from('orders')
-        .insert({
-          order_code: orderCode,
-          user_id: userData.id,
-          user_name: userData.name,
-          user_phone: userData.phone_number || '',
-          user_department: userData.department || '',
-          total_amount: totalAmount,
-          delivery_method: params.deliveryMethod,
-          room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || null : null,
-          pickup_time: params.pickupTime,
-          target_date: targetDate,
-          status: 'confirmed',
-          is_exception_order: params.isExceptionOrder || false,
-          exception_token_used: params.exceptionToken || null,
-          device_info: device,
-        })
-        .select()
-        .single(),
+    const res1 = await withQueryTimeout(
+      supabase.from('orders').insert(fullOrderPayload).select().single(),
       15000,
       'Timeout creating order on Supabase'
     );
-    if (!orderInsertErr && insertedOrder) {
-      newOrder = insertedOrder;
+    if (!res1.error && res1.data) {
+      newOrder = res1.data;
+    } else {
+      console.warn('[Supabase order insert retry]:', res1.error?.message);
+      // Fallback với schema cơ bản nếu một số cột mở rộng không có trong bảng
+      const standardPayload = {
+        id: orderUuid,
+        order_code: orderCode,
+        user_id: userData.id,
+        user_name: userData.name || authUser.email?.split('@')[0] || 'Cán bộ',
+        user_email: userData.email || authUser.email || '',
+        order_date: now.toISOString().split('T')[0],
+        meal_date: targetDate,
+        delivery_method: params.deliveryMethod,
+        room_number: params.deliveryMethod === 'room_delivery' ? params.roomNumber || '' : '',
+        pickup_time: params.pickupTime,
+        total_amount: totalAmount,
+        status: 'confirmed',
+        used_qr_token: params.exceptionToken || null,
+        note: itemsSummaryText,
+      };
+      const res2 = await supabase.from('orders').insert(standardPayload).select().single();
+      if (!res2.error && res2.data) {
+        newOrder = res2.data;
+      }
     }
   } catch (e) {
     console.warn('[Supabase order insert notice - will save to local store]:', e);
   }
 
-  const generatedId = newOrder ? newOrder.id : `ord-${Date.now()}`;
+  const generatedId = newOrder ? newOrder.id : orderUuid;
 
-  // Kiểm tra UUID hợp lệ để không bị lỗi 22P02 khi insert vào Supabase
-  const isValidUuid = (str?: string) =>
-    !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+  // Thêm chi tiết món ăn vào bảng order_items
+  try {
+    const itemsToInsert = orderItemsData.map((it) => ({
+      id: generateUUID(),
+      order_id: generatedId,
+      menu_item_id: it.real_db_item_id,
+      name: it.name,
+      price: it.price,
+      quantity: it.quantity,
+      subtotal: it.price * it.quantity,
+      image_url: it.image_url || '',
+    }));
 
-  // Thêm chi tiết món ăn vào bảng order_items nếu đã tạo được order trên Supabase
-  if (newOrder) {
-    try {
-      const itemsToInsert = orderItemsData.map((it) => ({
-        order_id: newOrder.id,
-        menu_item_id: isValidUuid(it.menu_item_id) ? it.menu_item_id : null,
+    const { error: itemErr } = await supabase.from('order_items').insert(itemsToInsert);
+    if (itemErr) {
+      // Retry nếu cột id hoặc image_url không tồn tại trong schema SQL cũ
+      const standardItems = orderItemsData.map((it) => ({
+        order_id: generatedId,
+        menu_item_id: it.real_db_item_id,
         name: it.name,
         price: it.price,
         quantity: it.quantity,
-        image_url: it.image_url || '',
+        subtotal: it.price * it.quantity,
       }));
-      const { error: itemErr } = await supabase.from('order_items').insert(itemsToInsert);
-      if (itemErr) {
-        console.error('[Supabase order_items insert error]:', itemErr.message);
+      const { error: retryErr } = await supabase.from('order_items').insert(standardItems);
+      if (retryErr) {
+        console.error('[Supabase order_items retry notice]:', retryErr.message);
       }
+    }
+  } catch (e) {
+    console.warn('Order items insert notice:', e);
+  }
 
-      // Trừ số lượng tồn kho của món ăn trên Supabase
-      for (const it of params.items) {
-        if (isValidUuid(it.menuItemId)) {
-          const curr = menuList.find((m) => m.id === it.menuItemId);
-          if (curr) {
-            const currentStockVal = Number(curr.current_stock ?? curr.currentStock ?? 0);
-            await supabase
-              .from('menu_items')
-              .update({ current_stock: Math.max(0, currentStockVal - it.quantity) })
-              .eq('id', it.menuItemId);
-          }
+  // Trừ số lượng tồn kho của món ăn trên Supabase
+  for (const it of orderItemsData) {
+    if (it.real_db_item_id) {
+      try {
+        const { data: currentDbItem } = await supabase
+          .from('menu_items')
+          .select('current_stock')
+          .eq('id', it.real_db_item_id)
+          .maybeSingle();
+
+        if (currentDbItem) {
+          const currentStockVal = Number(currentDbItem.current_stock ?? 0);
+          await supabase
+            .from('menu_items')
+            .update({ current_stock: Math.max(0, currentStockVal - it.quantity) })
+            .eq('id', it.real_db_item_id);
         }
+      } catch (stockErr) {
+        console.warn('Stock update notice:', stockErr);
       }
-    } catch (e) {
-      console.warn('Order items insert note:', e);
     }
   }
 
-  // Trừ số dư ví của người dùng
-  const newBalance = Number(userData.wallet_balance) - totalAmount;
+  // Trừ số dư ví của người dùng trong bảng users
+  const newBalance = Math.max(0, currentWallet - totalAmount);
   try {
-    await supabase
+    const { error: walletErr } = await supabase
       .from('users')
       .update({ wallet_balance: newBalance, updated_at: new Date().toISOString() })
       .eq('id', userData.id);
 
+    if (walletErr) {
+      console.warn('Wallet balance update error:', walletErr.message);
+    }
+
     // Ghi nhật ký giao dịch ví
     await supabase.from('wallet_transactions').insert({
+      id: generateUUID(),
       user_id: userData.id,
       amount: -totalAmount,
       type: 'order_payment',
-      order_id: generatedId,
+      order_id: isValidUuid(generatedId) ? generatedId : null,
       note: `Thanh toán đơn hàng ${orderCode}`,
       balance_after: newBalance,
     });
   } catch (e) {
-    console.warn('Wallet balance sync note:', e);
+    console.warn('Wallet balance sync notice:', e);
+  }
+
+  // Cập nhật lại cached user profile để UI trừ tiền ngay lập tức
+  const currProfile = getCachedUserProfile();
+  if (currProfile) {
+    currProfile.walletBalance = newBalance;
+    setCachedUserProfile(currProfile);
   }
 
   // Cập nhật tồn kho trong cache thực đơn
   const cachedMenu = getCachedMenu();
   const updatedCachedMenu = cachedMenu.map((m) => {
-    const requested = params.items.find((it) => it.menuItemId === m.id);
+    const requested = orderItemsData.find((it) => it.menu_item_id === m.id || it.name === m.name);
     if (requested) {
       return { ...m, currentStock: Math.max(0, m.currentStock - requested.quantity) };
     }
@@ -1017,7 +1155,7 @@ export async function placeOrder(params: {
     id: generatedId,
     orderCode,
     userId: userData.id,
-    userName: userData.name,
+    userName: userData.name || authUser.email?.split('@')[0] || 'Cán bộ',
     userPhone: userData.phone_number || '',
     userDepartment: userData.department || '',
     items: orderItemsData.map((it) => ({
@@ -1035,27 +1173,38 @@ export async function placeOrder(params: {
     createdAt: new Date().toISOString(),
     status: 'confirmed',
     cancellationDeadline: '16:00',
-    isExceptionOrder: params.isExceptionOrder || false,
+    isExceptionOrder: Boolean(params.isExceptionOrder),
     exceptionTokenUsed: params.exceptionToken || undefined,
     deviceInfo: device,
   };
 
   const userOrders = getCachedOrders(userData.id);
-  setCachedOrders(
-    [localOrder, ...userOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)],
-    userData.id
-  );
+  const updatedUserOrders = [
+    localOrder,
+    ...userOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  setCachedOrders(updatedUserOrders, userData.id);
+
   if (authUser.id && authUser.id !== userData.id) {
     const authOrders = getCachedOrders(authUser.id);
-    setCachedOrders(
-      [localOrder, ...authOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)],
-      authUser.id
-    );
+    const updatedAuthOrders = [
+      localOrder,
+      ...authOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode),
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    setCachedOrders(updatedAuthOrders, authUser.id);
   }
-  const allOrders = getCachedOrders();
-  setCachedOrders(
-    [localOrder, ...allOrders.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode)]
-  );
+
+  const allOrdersList = getCachedOrders();
+  const updatedAllOrders = [
+    localOrder,
+    ...allOrdersList.filter((o) => o.id !== localOrder.id && o.orderCode !== localOrder.orderCode),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  setCachedOrders(updatedAllOrders);
+
+  // Phát tín hiệu broadcast cho tab hoặc window khác cập nhật
+  try {
+    window.dispatchEvent(new CustomEvent('canteen_order_created', { detail: localOrder }));
+  } catch {}
 
   return {
     success: true,
@@ -1071,6 +1220,10 @@ export async function cancelOrder(
 ): Promise<{ success: boolean; error?: string }> {
   checkSupabase();
 
+  if (!orderId) {
+    return { success: false, error: 'Mã đơn hàng không hợp lệ.' };
+  }
+
   // 1. Thử gọi RPC 'cancel_order' nếu có
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc('cancel_order', {
@@ -1079,80 +1232,183 @@ export async function cancelOrder(
     });
     if (!rpcError && rpcData && typeof rpcData === 'object') {
       const res = rpcData as { success?: boolean; error?: string };
-      if (res.success) return { success: true };
+      if (res.success) {
+        try {
+          window.dispatchEvent(new CustomEvent('canteen_order_created'));
+        } catch {}
+        return { success: true };
+      }
       if (res.error) return { success: false, error: res.error };
     }
   } catch {
     // Tiếp tục xử lý bằng bảng trực tiếp nếu RPC chưa có
   }
 
-  // 2. Cập nhật trạng thái hủy trực tiếp trên Supabase
-  const { data: order, error: fetchErr } = await supabase
-    .from('orders')
-    .select('*, order_items(*)')
-    .eq('id', orderId)
-    .single();
+  // 2. Tìm kiếm đơn hàng trong Supabase theo id hoặc order_code
+  let order: any = null;
+  try {
+    const { data: byId } = await supabase
+      .from('orders')
+      .select('*, order_items(*)')
+      .eq('id', orderId)
+      .maybeSingle();
 
-  if (fetchErr || !order) {
-    return { success: false, error: 'Không tìm thấy thông tin đơn hàng.' };
-  }
-
-  if (order.status === 'cancelled') {
-    return { success: false, error: 'Đơn hàng này đã được hủy trước đó.' };
-  }
-
-  if (order.status === 'completed') {
-    return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
-  }
-
-  // Cập nhật trạng thái đơn thành cancelled
-  const { error: updateErr } = await supabase
-    .from('orders')
-    .update({
-      status: 'cancelled',
-      cancelled_at: new Date().toISOString(),
-      cancel_reason: reason || 'Người dùng hủy đơn',
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', orderId);
-
-  if (updateErr) {
-    return { success: false, error: `Lỗi cập nhật hủy đơn: ${updateErr.message}` };
-  }
-
-  // Hoàn tiền lại ví cho người dùng
-  const { data: user } = await supabase.from('users').select('*').eq('id', order.user_id).single();
-  if (user) {
-    const refundBalance = Number(user.wallet_balance) + Number(order.total_amount);
-    await supabase
-      .from('users')
-      .update({ wallet_balance: refundBalance, updated_at: new Date().toISOString() })
-      .eq('id', user.id);
-
-    await supabase.from('wallet_transactions').insert({
-      user_id: user.id,
-      amount: Number(order.total_amount),
-      type: 'order_refund',
-      order_id: order.id,
-      note: `Hoàn tiền hủy đơn ${order.order_code}`,
-      balance_after: refundBalance,
-    });
-  }
-
-  // Phục hồi lại số lượng tồn kho món ăn
-  if (order.order_items && Array.isArray(order.order_items)) {
-    for (const it of order.order_items) {
-      const { data: mItem } = await supabase.from('menu_items').select('*').eq('id', it.menu_item_id).maybeSingle();
-      if (mItem) {
-        await supabase
-          .from('menu_items')
-          .update({ current_stock: mItem.current_stock + it.quantity })
-          .eq('id', it.menu_item_id);
-      }
+    if (byId) {
+      order = byId;
+    } else {
+      const { data: byCode } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .eq('order_code', orderId)
+        .maybeSingle();
+      if (byCode) order = byCode;
     }
+  } catch (err) {
+    console.warn('[Fetch order for cancellation notice]:', err);
   }
 
-  return { success: true };
+  // 3. Nếu tìm thấy trên Supabase
+  if (order) {
+    if (order.status === 'cancelled') {
+      return { success: false, error: 'Đơn hàng này đã được hủy trước đó.' };
+    }
+
+    if (order.status === 'completed') {
+      return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
+    }
+
+    // Cập nhật trạng thái đơn thành cancelled
+    const { error: updateErr } = await supabase
+      .from('orders')
+      .update({
+        status: 'cancelled',
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: reason || 'Người dùng hủy đơn',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', order.id);
+
+    if (updateErr) {
+      return { success: false, error: `Lỗi cập nhật hủy đơn: ${updateErr.message}` };
+    }
+
+    // Hoàn tiền lại ví cho người dùng trong Supabase
+    try {
+      const { data: user } = await supabase.from('users').select('*').eq('id', order.user_id).maybeSingle();
+      if (user) {
+        const refundBalance = Number(user.wallet_balance || 0) + Number(order.total_amount || 0);
+        await supabase
+          .from('users')
+          .update({ wallet_balance: refundBalance, updated_at: new Date().toISOString() })
+          .eq('id', user.id);
+
+        await supabase.from('wallet_transactions').insert({
+          id: generateUUID(),
+          user_id: user.id,
+          amount: Number(order.total_amount || 0),
+          type: 'order_refund',
+          order_id: order.id,
+          note: `Hoàn tiền hủy đơn ${order.order_code}`,
+          balance_after: refundBalance,
+        });
+
+        // Cập nhật local cached user profile
+        const currProfile = getCachedUserProfile();
+        if (currProfile && (currProfile.id === user.id || currProfile.authUserId === user.id || currProfile.authUserId === user.auth_user_id)) {
+          currProfile.walletBalance = refundBalance;
+          setCachedUserProfile(currProfile);
+        }
+      }
+    } catch (refundErr) {
+      console.warn('[Refund wallet notice]:', refundErr);
+    }
+
+    // Phục hồi lại số lượng tồn kho món ăn
+    try {
+      let itemsList: any[] = order.order_items;
+      if (!itemsList || itemsList.length === 0) {
+        const { data: fetchedItems } = await supabase.from('order_items').select('*').eq('order_id', order.id);
+        if (fetchedItems) itemsList = fetchedItems;
+      }
+      if (itemsList && Array.isArray(itemsList)) {
+        for (const it of itemsList) {
+          if (it.menu_item_id && isValidUuid(it.menu_item_id)) {
+            const { data: mItem } = await supabase.from('menu_items').select('current_stock').eq('id', it.menu_item_id).maybeSingle();
+            if (mItem) {
+              await supabase
+                .from('menu_items')
+                .update({ current_stock: Number(mItem.current_stock ?? 0) + Number(it.quantity ?? 1) })
+                .eq('id', it.menu_item_id);
+            }
+          }
+        }
+      }
+    } catch (restockErr) {
+      console.warn('[Restock menu items notice]:', restockErr);
+    }
+
+    // Cập nhật trạng thái trong localStorage cache
+    const allCached = getCachedOrders();
+    const updatedAll = allCached.map((o) =>
+      o.id === order.id || o.orderCode === order.order_code
+        ? { ...o, status: 'cancelled' as const, cancelledAt: new Date().toISOString(), cancelReason: reason || 'Người dùng hủy đơn' }
+        : o
+    );
+    setCachedOrders(updatedAll);
+    if (order.user_id) {
+      const userCached = getCachedOrders(order.user_id);
+      setCachedOrders(
+        userCached.map((o) =>
+          o.id === order.id || o.orderCode === order.order_code
+            ? { ...o, status: 'cancelled' as const, cancelledAt: new Date().toISOString(), cancelReason: reason || 'Người dùng hủy đơn' }
+            : o
+        ),
+        order.user_id
+      );
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('canteen_order_created'));
+    } catch {}
+
+    return { success: true };
+  }
+
+  // 4. Nếu không tìm thấy trong Supabase, kiểm tra trong local storage cache
+  const cachedList = getCachedOrders();
+  const cachedOrder = cachedList.find((o) => o.id === orderId || o.orderCode === orderId);
+
+  if (cachedOrder) {
+    if (cachedOrder.status === 'cancelled') {
+      return { success: false, error: 'Đơn hàng này đã được hủy trước đó.' };
+    }
+    if (cachedOrder.status === 'completed') {
+      return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
+    }
+
+    // Cập nhật cache thành đã hủy
+    const updatedAll = cachedList.map((o) =>
+      o.id === cachedOrder.id || o.orderCode === cachedOrder.orderCode
+        ? { ...o, status: 'cancelled' as const, cancelledAt: new Date().toISOString(), cancelReason: reason || 'Người dùng hủy đơn' }
+        : o
+    );
+    setCachedOrders(updatedAll);
+
+    // Hoàn tiền vào local profile
+    const currProfile = getCachedUserProfile();
+    if (currProfile) {
+      currProfile.walletBalance = (currProfile.walletBalance || 0) + (cachedOrder.totalAmount || 0);
+      setCachedUserProfile(currProfile);
+    }
+
+    try {
+      window.dispatchEvent(new CustomEvent('canteen_order_created'));
+    } catch {}
+
+    return { success: true };
+  }
+
+  return { success: false, error: 'Không tìm thấy thông tin đơn hàng.' };
 }
 
 export function getCachedOrders(userId?: string): Order[] {
@@ -1161,7 +1417,9 @@ export function getCachedOrders(userId?: string): Order[] {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.sort((a: Order, b: Order) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      }
     }
     // Nếu cache theo userId trống, kiểm tra cache 'all' xem có đơn của user này không
     if (userId) {
@@ -1172,7 +1430,9 @@ export function getCachedOrders(userId?: string): Order[] {
           const matching = allParsed.filter(
             (o: Order) => o.userId === userId
           );
-          if (matching.length > 0) return matching;
+          if (matching.length > 0) {
+            return matching.sort((a: Order, b: Order) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+          }
         }
       }
     }
@@ -1184,7 +1444,10 @@ export function setCachedOrders(orders: Order[], userId?: string) {
   try {
     const key = `canteen_orders_cache_${userId || 'all'}`;
     if (Array.isArray(orders)) {
-      localStorage.setItem(key, JSON.stringify(orders.slice(0, 100)));
+      const sorted = [...orders].sort(
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      );
+      localStorage.setItem(key, JSON.stringify(sorted.slice(0, 200)));
     }
   } catch {}
 }
@@ -1204,8 +1467,12 @@ export async function getOrders(filters?: {
       .select('*, order_items(*)')
       .order('created_at', { ascending: false });
 
-    if (filters?.targetDate) query = query.eq('target_date', filters.targetDate);
-    if (filters?.status) query = query.eq('status', filters.status);
+    if (filters?.targetDate) {
+      query = query.or(`target_date.eq.${filters.targetDate},meal_date.eq.${filters.targetDate}`);
+    }
+    if (filters?.status && filters.status !== 'all') {
+      query = query.eq('status', filters.status);
+    }
 
     if (filters?.userId && filters?.authUserId && filters.userId !== filters.authUserId) {
       query = query.or(`user_id.eq.${filters.userId},user_id.eq.${filters.authUserId}`);
@@ -1216,9 +1483,9 @@ export async function getOrders(filters?: {
     }
 
     if (filters?.userId || filters?.authUserId) {
-      query = query.limit(50);
+      query = query.limit(100);
     } else {
-      query = query.limit(200);
+      query = query.limit(300);
     }
 
     let data: any[] | null = null;
@@ -1233,15 +1500,19 @@ export async function getOrders(filters?: {
     }
 
     // Nếu query join *, order_items(*) thất bại, fallback query trực tiếp bảng orders
-    if (queryError && !data) {
+    if (queryError || !data) {
       try {
         let fallbackQuery = supabase
           .from('orders')
           .select('*')
           .order('created_at', { ascending: false });
 
-        if (filters?.targetDate) fallbackQuery = fallbackQuery.eq('target_date', filters.targetDate);
-        if (filters?.status) fallbackQuery = fallbackQuery.eq('status', filters.status);
+        if (filters?.targetDate) {
+          fallbackQuery = fallbackQuery.or(`target_date.eq.${filters.targetDate},meal_date.eq.${filters.targetDate}`);
+        }
+        if (filters?.status && filters.status !== 'all') {
+          fallbackQuery = fallbackQuery.eq('status', filters.status);
+        }
         if (filters?.userId && filters?.authUserId && filters.userId !== filters.authUserId) {
           fallbackQuery = fallbackQuery.or(`user_id.eq.${filters.userId},user_id.eq.${filters.authUserId}`);
         } else if (filters?.userId) {
@@ -1249,30 +1520,43 @@ export async function getOrders(filters?: {
         } else if (filters?.authUserId) {
           fallbackQuery = fallbackQuery.eq('user_id', filters.authUserId);
         }
-        fallbackQuery = fallbackQuery.limit(filters?.userId || filters?.authUserId ? 50 : 200);
+        fallbackQuery = fallbackQuery.limit(filters?.userId || filters?.authUserId ? 100 : 300);
 
         const fbRes = await withQueryTimeout(fallbackQuery, 10000, 'Fallback getOrders timeout');
         if (fbRes.data) {
           data = fbRes.data;
           queryError = null;
-          if (data.length > 0) {
-            const orderIds = data.map((o) => o.id).filter(Boolean);
-            try {
-              const { data: itemsData } = await supabase
-                .from('order_items')
-                .select('*')
-                .in('order_id', orderIds);
-              if (itemsData && itemsData.length > 0) {
-                data = data.map((ord) => ({
-                  ...ord,
-                  order_items: itemsData.filter((it) => it.order_id === ord.id),
-                }));
-              }
-            } catch {}
-          }
         }
       } catch (fbErr) {
         console.warn('[Fallback direct orders query notice]:', fbErr);
+      }
+    }
+
+    // Luôn chủ động fetch order_items nếu có đơn nào bị thiếu items do join không trả về
+    if (data && data.length > 0) {
+      const ordersMissingItems = data.filter(
+        (o) => !o.order_items || !Array.isArray(o.order_items) || o.order_items.length === 0
+      );
+      if (ordersMissingItems.length > 0) {
+        const missingIds = ordersMissingItems.map((o) => o.id).filter(Boolean);
+        try {
+          const { data: itemsData } = await supabase
+            .from('order_items')
+            .select('*')
+            .in('order_id', missingIds);
+
+          if (itemsData && itemsData.length > 0) {
+            data = data.map((ord) => {
+              const matchedItems = itemsData.filter((it) => it.order_id === ord.id);
+              if (matchedItems.length > 0) {
+                return { ...ord, order_items: matchedItems };
+              }
+              return ord;
+            });
+          }
+        } catch (itemErr) {
+          console.warn('[Fetch order_items notice]:', itemErr);
+        }
       }
     }
 
@@ -1286,6 +1570,7 @@ export async function getOrders(filters?: {
         }
         return ord;
       });
+
       // Giữ đơn mới trong cache nếu chưa kịp sync lên DB (tạo trong 24 giờ)
       for (const c of cached) {
         if (!combined.some((o) => o.id === c.id || o.orderCode === c.orderCode)) {
@@ -1295,6 +1580,10 @@ export async function getOrders(filters?: {
           }
         }
       }
+
+      // Luôn sắp xếp đơn hàng mới nhất lên đầu (LIFO: newest first)
+      combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
       setCachedOrders(combined, filters?.userId);
       if (!filters?.userId) {
         setCachedOrders(combined);
@@ -1577,8 +1866,22 @@ export function fileToBase64(file: File): Promise<string> {
 // ============================================================
 
 export function subscribeRealtime(callback: () => void) {
+  // Lắng nghe sự kiện tạo đơn nội bộ giữa các tabs / components
+  const localHandler = () => {
+    callback();
+  };
+  if (typeof window !== 'undefined') {
+    window.addEventListener('canteen_order_created', localHandler);
+    window.addEventListener('storage', localHandler);
+  }
+
   if (!isSupabaseConfigured || !supabase) {
-    return () => {};
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('storage', localHandler);
+      }
+    };
   }
   try {
     let debounceTimer: any = null;
@@ -1586,7 +1889,7 @@ export function subscribeRealtime(callback: () => void) {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         callback();
-      }, 2500);
+      }, 400);
     };
 
     const channel = supabase
@@ -1601,9 +1904,18 @@ export function subscribeRealtime(callback: () => void) {
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('storage', localHandler);
+      }
     };
   } catch {
-    return () => {};
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('storage', localHandler);
+      }
+    };
   }
 }
 
@@ -1646,6 +1958,67 @@ function mapMenuItem(row: any): MenuItem {
   };
 }
 
+export function parseItemsFromNote(noteText?: string): { menuItemId: string; name: string; price: number; quantity: number; imageUrl: string }[] {
+  if (!noteText || typeof noteText !== 'string') return [];
+  const items: { menuItemId: string; name: string; price: number; quantity: number; imageUrl: string }[] = [];
+  
+  // Xóa các tag đặc biệt [Ngoại lệ: ...] hoặc [Ghi chú: ...]
+  const clean = noteText.replace(/\[.*?\]/g, '').trim();
+  if (!clean) return [];
+
+  const parts = clean.split(/[,;\n]+/).map((p) => p.trim()).filter(Boolean);
+  for (const part of parts) {
+    // Kiểu 1: 1x Cơm sườn cốt lết (35000đ) hoặc 2x Trà đào (15000đ)
+    const matchFull = part.match(/^(\d+)\s*[xX×*]\s*(.*?)(?:\s*[\(（](\d+(?:[.,]\d+)?)\s*đ?[\)）])?$/);
+    if (matchFull) {
+      const qty = parseInt(matchFull[1], 10) || 1;
+      const name = matchFull[2].trim();
+      const price = matchFull[3] ? parseInt(matchFull[3].replace(/[.,]/g, ''), 10) : 35000;
+      if (name) {
+        items.push({
+          menuItemId: '',
+          name,
+          quantity: qty,
+          price,
+          imageUrl: '',
+        });
+      }
+      continue;
+    }
+
+    // Kiểu 2: Cơm sườn cốt lết (35000đ)
+    const matchPrice = part.match(/^(.*?)\s*[\(（](\d+(?:[.,]\d+)?)\s*đ?[\)）]$/);
+    if (matchPrice) {
+      const name = matchPrice[1].trim();
+      const price = parseInt(matchPrice[2].replace(/[.,]/g, ''), 10) || 35000;
+      if (name) {
+        items.push({
+          menuItemId: '',
+          name,
+          quantity: 1,
+          price,
+          imageUrl: '',
+        });
+      }
+      continue;
+    }
+
+    // Kiểu 3: Tên món đơn thuần: "Cơm gà xối mỡ"
+    const simpleName = part.trim();
+    if (simpleName && simpleName.length > 2 && !simpleName.startsWith('Ăn tại') && !simpleName.startsWith('Giao tận')) {
+      items.push({
+        menuItemId: '',
+        name: simpleName,
+        quantity: 1,
+        price: 35000,
+        imageUrl: '',
+      });
+    }
+  }
+
+  return items;
+}
+
 function mapOrder(row: any): Order {
   let mappedItems: any[] = [];
   if (Array.isArray(row.order_items) && row.order_items.length > 0) {
@@ -1666,6 +2039,23 @@ function mapOrder(row: any): Order {
     }));
   }
 
+  // Nếu chưa có items qua quan hệ join, thử phân tích từ chuỗi note
+  if (mappedItems.length === 0 && row.note) {
+    const fromNote = parseItemsFromNote(row.note);
+    if (fromNote.length > 0) {
+      mappedItems = fromNote;
+    }
+  }
+
+  // Nếu vẫn chưa có items, thử tìm trong local cache
+  if (mappedItems.length === 0 && (row.id || row.order_code)) {
+    const cached = getCachedOrders();
+    const matched = cached.find((c) => c.id === row.id || c.orderCode === row.order_code);
+    if (matched && matched.items && matched.items.length > 0) {
+      mappedItems = matched.items;
+    }
+  }
+
   return {
     id: row.id,
     orderCode: row.order_code,
@@ -1674,18 +2064,18 @@ function mapOrder(row: any): Order {
     userPhone: row.user_phone || '',
     userDepartment: row.user_department || '',
     items: mappedItems,
-    totalAmount: Number(row.total_amount),
-    deliveryMethod: row.delivery_method,
-    roomNumber: row.room_number,
-    pickupTime: row.pickup_time || '',
-    targetDate: row.target_date,
-    createdAt: row.created_at,
-    status: row.status,
-    cancellationDeadline: row.cancellation_deadline,
+    totalAmount: Number(row.total_amount || 0),
+    deliveryMethod: row.delivery_method || 'dine_in',
+    roomNumber: row.room_number || '',
+    pickupTime: row.pickup_time || '11:30',
+    targetDate: row.target_date || row.meal_date || row.order_date || '',
+    createdAt: row.created_at || new Date().toISOString(),
+    status: row.status || 'confirmed',
+    cancellationDeadline: row.cancellation_deadline || '16:00',
     cancelledAt: row.cancelled_at,
     cancelReason: row.cancel_reason,
-    isExceptionOrder: row.is_exception_order,
-    exceptionTokenUsed: row.exception_token_used,
+    isExceptionOrder: Boolean(row.is_exception_order || row.used_qr_token),
+    exceptionTokenUsed: row.exception_token_used || row.used_qr_token || '',
     deviceInfo: row.device_info,
   };
 }

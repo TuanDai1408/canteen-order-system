@@ -3,6 +3,7 @@ import {
   formatVnd,
   placeOrder,
   cancelOrder,
+  parseItemsFromNote,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -283,7 +284,13 @@ export function OrderHome({
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  const activeOrdersCount = orders.filter((o) => o.status !== 'cancelled').length;
+  const sortedOrders = useMemo(() => {
+    return [...orders].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [orders]);
+
+  const activeOrdersCount = sortedOrders.filter((o) => o.status !== 'cancelled').length;
 
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col font-sans text-slate-800 pb-28 sm:pb-24">
@@ -690,7 +697,7 @@ export function OrderHome({
                 <span>{isRefreshing ? 'Đang đồng bộ...' : 'Làm mới'}</span>
               </button>
             </div>
-            {orders.length === 0 ? (
+            {sortedOrders.length === 0 ? (
               <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center shadow-sm">
                 <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center mx-auto mb-3 text-slate-400">
                   <ShoppingBag className="w-8 h-8" />
@@ -707,11 +714,12 @@ export function OrderHome({
                 </button>
               </div>
             ) : (
-              orders.map((o) => {
+              sortedOrders.map((o) => {
                 const isCancelled = o.status === 'cancelled';
                 const isCompleted = o.status === 'completed';
                 const isPreparing = o.status === 'preparing';
                 const isConfirmed = o.status === 'confirmed';
+                const orderItems = (o.items && o.items.length > 0) ? o.items : parseItemsFromNote((o as any).note);
 
                 return (
                   <div
@@ -795,8 +803,8 @@ export function OrderHome({
 
                     {/* Order Items */}
                     <div className="space-y-1.5 border-t border-slate-100 pt-3">
-                      {o.items && o.items.length > 0 ? (
-                        o.items.map((it, idx) => (
+                      {orderItems && orderItems.length > 0 ? (
+                        orderItems.map((it, idx) => (
                           <div key={idx} className="flex justify-between text-xs text-slate-700">
                             <span>
                               <strong className="text-slate-900">{it.quantity}×</strong> {it.name || 'Suất ăn Căn tin'}

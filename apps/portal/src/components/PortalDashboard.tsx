@@ -13,6 +13,7 @@ import {
   getCustomTimeGateConfig,
   setCustomTimeGateConfig,
   getTomorrowStr,
+  parseItemsFromNote,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -190,6 +191,29 @@ export function PortalDashboard({
   const roomDeliveryCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'room_delivery').length, [activeOrders]);
   const dineInCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'dine_in').length, [activeOrders]);
 
+  const dishSummary = useMemo(() => {
+    const map = new Map<string, { name: string; quantity: number; totalAmount: number }>();
+    for (const ord of activeOrders) {
+      const items = (ord.items && ord.items.length > 0) ? ord.items : parseItemsFromNote((ord as any).note);
+      if (items && items.length > 0) {
+        for (const it of items) {
+          const dishName = it.name || 'Suất ăn Căn tin';
+          const curr = map.get(dishName) || { name: dishName, quantity: 0, totalAmount: 0 };
+          curr.quantity += it.quantity;
+          curr.totalAmount += (it.price || 0) * it.quantity;
+          map.set(dishName, curr);
+        }
+      } else {
+        const dishName = 'Suất ăn Căn tin';
+        const curr = map.get(dishName) || { name: dishName, quantity: 0, totalAmount: 0 };
+        curr.quantity += 1;
+        curr.totalAmount += ord.totalAmount || 0;
+        map.set(dishName, curr);
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
+  }, [activeOrders]);
+
   const ordersByStatus = useMemo(() => ({
     confirmed: orders.filter((o) => o.status === 'confirmed').length,
     preparing: orders.filter((o) => o.status === 'preparing').length,
@@ -229,17 +253,19 @@ export function PortalDashboard({
     });
   }, [menu, menuFilterCat, menuSearch]);
 
-  // Filtered Orders
+  // Filtered Orders (Sorted newest first)
   const filteredOrders = useMemo(() => {
-    return orders.filter((o) => {
-      const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
-      const matchDelivery = orderDeliveryFilter === 'all' || o.deliveryMethod === orderDeliveryFilter;
-      const matchSearch =
-        o.orderCode.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        o.userName.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase()));
-      return matchStatus && matchDelivery && matchSearch;
-    });
+    return orders
+      .filter((o) => {
+        const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
+        const matchDelivery = orderDeliveryFilter === 'all' || o.deliveryMethod === orderDeliveryFilter;
+        const matchSearch =
+          o.orderCode.toLowerCase().includes(orderSearch.toLowerCase()) ||
+          o.userName.toLowerCase().includes(orderSearch.toLowerCase()) ||
+          (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase()));
+        return matchStatus && matchDelivery && matchSearch;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders, orderStatusFilter, orderDeliveryFilter, orderSearch]);
 
   // Pending users count for approval
@@ -1367,6 +1393,49 @@ export function PortalDashboard({
                 </div>
               </div>
 
+              {/* Bảng tổng hợp các món ăn nhà bếp cần chuẩn bị */}
+              {dishSummary.length > 0 && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center">
+                        <ChefHat className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                          Tổng hợp Món ăn Nhà Bếp Cần Nấu (Ngày mai)
+                        </h3>
+                        <p className="text-[11px] text-slate-500">
+                          Tự động tổng hợp từ tất cả các đơn đặt suất ăn của cán bộ, giáo viên
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      Tổng: {dishSummary.reduce((s, d) => s + d.quantity, 0)} suất ăn
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
+                    {dishSummary.map((dish, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3 bg-slate-50 hover:bg-indigo-50/40 rounded-xl border border-slate-200 transition flex items-center justify-between"
+                      >
+                        <div className="min-w-0 pr-2">
+                          <p className="font-bold text-xs text-slate-900 truncate">{dish.name}</p>
+                          <p className="text-[10px] text-slate-500 mt-0.5">
+                            Doanh thu: {formatVnd(dish.totalAmount)}
+                          </p>
+                        </div>
+                        <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-extrabold text-xs font-mono flex-shrink-0 shadow-2xs">
+                          {dish.quantity} suất
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Batch Action Bar */}
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                 <div className="flex items-center gap-2">
@@ -1472,17 +1541,21 @@ export function PortalDashboard({
                           </td>
                           <td className="py-3 px-4 max-w-xs">
                             <div className="space-y-0.5">
-                              {o.items && o.items.length > 0 ? (
-                                o.items.map((it, i) => (
-                                  <p key={i} className="text-slate-700 text-[11px] truncate">
-                                    <strong className="text-indigo-600">{it.quantity}×</strong> {it.name || 'Suất ăn Căn tin'}
+                              {(() => {
+                                const orderItems = (o.items && o.items.length > 0) ? o.items : parseItemsFromNote((o as any).note);
+                                if (orderItems && orderItems.length > 0) {
+                                  return orderItems.map((it, i) => (
+                                    <p key={i} className="text-slate-700 text-[11px] truncate font-medium">
+                                      <strong className="text-indigo-600">{it.quantity}×</strong> {it.name || 'Suất ăn Căn tin'}
+                                    </p>
+                                  ));
+                                }
+                                return (
+                                  <p className="text-slate-500 text-[11px] italic">
+                                    1× Suất ăn Căn tin
                                   </p>
-                                ))
-                              ) : (
-                                <p className="text-slate-500 text-[11px] italic">
-                                  1× Suất ăn Căn tin
-                                </p>
-                              )}
+                                );
+                              })()}
                             </div>
                           </td>
                           <td className="py-3 px-4 text-right font-extrabold text-indigo-600 whitespace-nowrap">
