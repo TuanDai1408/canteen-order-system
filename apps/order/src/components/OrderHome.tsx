@@ -11,6 +11,7 @@ import {
   type TimeGateStatus,
   type DeliveryMethod,
 } from '@canteen/shared';
+import { BrandLogo } from './BrandLogo';
 import {
   UtensilsCrossed,
   ShoppingBag,
@@ -333,15 +334,19 @@ export function OrderHome({
       <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 text-white shadow-md">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-500 to-emerald-500 flex items-center justify-center text-white shadow-md shadow-teal-500/20">
-              <UtensilsCrossed className="w-5 h-5" />
-            </div>
+            <BrandLogo size={42} />
             <div>
               <div className="flex items-center gap-2">
-                <span className="font-bold text-sm sm:text-base tracking-tight">Canteen Học Đường</span>
+                <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">
+                  <span className="text-orange-500">A.</span>
+                  <span className="text-emerald-400">KITCHEN</span>
+                </span>
+                <span className="hidden xs:inline-block text-xs font-semibold text-slate-300">
+                  · Bếp ăn ĐH Hùng Vương
+                </span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Supabase Live
+                  Live
                 </span>
               </div>
               <p className="text-xs text-slate-400">
@@ -430,7 +435,7 @@ export function OrderHome({
                 <span className={timeStatus.isOpen ? 'text-emerald-300 font-medium' : 'text-rose-300 font-medium'}>
                   {timeStatus.isOpen ? 'Đang mở nhận đơn ngày mai' : 'Đã đóng cổng nhận đơn thường'}
                 </span>
-                <span className="text-slate-400 hidden sm:inline">· Hạn chót: 16:00 hôm nay</span>
+                <span className="text-slate-400 hidden sm:inline">· Hạn chót: {timeStatus.closesAt || '16:00'} hôm nay</span>
               </div>
             </div>
 
@@ -1134,7 +1139,7 @@ export function OrderHome({
                     <span>Mã Ngoại lệ Đặt khẩn cấp (Emergency Token)</span>
                   </div>
                   <p className="text-[11px] text-amber-700">
-                    Cổng đặt suất ăn tiêu chuẩn đã đóng lúc 16:00. Để đặt bổ sung, vui lòng nhập mã QR ngoại lệ do Quản trị viên cấp.
+                    Cổng đặt suất ăn tiêu chuẩn đã đóng lúc {timeStatus.closesAt || '16:00'}. Để đặt bổ sung, vui lòng nhập mã QR ngoại lệ do Quản trị viên cấp.
                   </p>
                   <input
                     type="text"

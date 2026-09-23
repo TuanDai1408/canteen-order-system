@@ -49,6 +49,7 @@ export {
   getCustomTimeGateConfig,
   fetchTimeGateConfig,
   setCustomTimeGateConfig,
+  type TimeGateConfig,
   createQRToken,
   getQRTokens,
   getCachedQRTokens,
@@ -73,3 +74,4 @@ export {
   type CompressImageOptions,
   type CompressResult,
 } from './utils/imageCompressor';
+

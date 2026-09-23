@@ -86,6 +86,16 @@ export async function signUp(
   });
 
   if (error) {
+    const msg = (error.message || '').toLowerCase();
+    if (msg.includes('rate limit') || msg.includes('too many requests')) {
+      throw new Error(
+        'Hệ thống Supabase đang bật chế độ gửi mail xác nhận và đã vượt quá giới hạn 3-4 email/giờ của gói mặc định. ' +
+        'Cách khắc phục triệt để: Vào Supabase Dashboard -> Authentication -> Providers -> Email -> TẮT mục "Confirm email" (Enable email confirmations = OFF).'
+      );
+    }
+    if (msg.includes('user already registered') || msg.includes('already exists')) {
+      throw new Error('Email này đã được đăng ký tài khoản trên hệ thống. Vui lòng chuyển sang tab Đăng nhập.');
+    }
     throw new Error(error.message || 'Đăng ký tài khoản thất bại.');
   }
 
@@ -1167,9 +1177,8 @@ export async function placeOrder(params: {
   // 7. Thêm chi tiết món ăn vào bảng order_items trên Supabase (Adaptive Schema)
   try {
     let itemsPayload: any[] = orderItemsData.map((it) => ({
-      id: generateUUID(),
       order_id: generatedId,
-      menu_item_id: it.real_db_item_id,
+      menu_item_id: it.real_db_item_id || null,
       name: it.name,
       price: it.price,
       quantity: it.quantity,
@@ -1177,14 +1186,28 @@ export async function placeOrder(params: {
       image_url: it.image_url || '',
     }));
 
-    for (let itAttempt = 0; itAttempt < 5; itAttempt++) {
+    for (let itAttempt = 0; itAttempt < 6; itAttempt++) {
       const { error: itemErr } = await supabase.from('order_items').insert(itemsPayload);
-      if (!itemErr) break;
+      if (!itemErr) {
+        console.log('[placeOrder]: Successfully inserted order_items into Supabase');
+        break;
+      }
 
-      const itemErrMsg = itemErr.message || '';
+      console.warn(`[placeOrder order_items attempt ${itAttempt} notice]:`, itemErr);
+
+      const itemErrMsg = (itemErr.message || '').toLowerCase();
+
+      // Nếu lỗi do khoá ngoại menu_item_id (món ăn chưa có trên DB hoặc khác ID)
+      if (itemErrMsg.includes('menu_item_id') || itemErrMsg.includes('foreign key') || itemErrMsg.includes('violates foreign key')) {
+        console.warn('[order_items adaptive]: Khoá ngoại menu_item_id không hợp lệ, chuyển về null để lưu tên món...');
+        itemsPayload = itemsPayload.map((it) => ({ ...it, menu_item_id: null }));
+        continue;
+      }
+
+      // Nếu lỗi do thiếu cột trên bảng order_items
       const missingItemCol =
-        itemErrMsg.match(/Could not find the '([^']+)' column/) ||
-        itemErrMsg.match(/column "([^"]+)" of relation/i);
+        (itemErr.message || '').match(/Could not find the '([^']+)' column/) ||
+        (itemErr.message || '').match(/column "([^"]+)" of relation/i);
 
       if (missingItemCol && missingItemCol[1]) {
         const col = missingItemCol[1];
@@ -1197,17 +1220,32 @@ export async function placeOrder(params: {
         continue;
       }
 
-      if (itAttempt === 0) {
-        // Fallback standard không có image_url & id
+      // Fallback: Chèn tối giản chỉ với order_id, name, price, quantity
+      if (itAttempt === 2) {
         itemsPayload = orderItemsData.map((it) => ({
           order_id: generatedId,
-          menu_item_id: it.real_db_item_id,
           name: it.name,
           price: it.price,
           quantity: it.quantity,
-          subtotal: it.price * it.quantity,
         }));
         continue;
+      }
+
+      // Fallback: Chèn từng món một
+      if (itAttempt === 3) {
+        for (const it of orderItemsData) {
+          try {
+            await supabase.from('order_items').insert({
+              order_id: generatedId,
+              name: it.name,
+              price: it.price,
+              quantity: it.quantity,
+            });
+          } catch (singleErr) {
+            console.warn('[placeOrder single item insert error]:', singleErr);
+          }
+        }
+        break;
       }
       break;
     }
@@ -2015,7 +2053,13 @@ export async function seedMenuToSupabase(): Promise<{ success: boolean; count: n
 
 const TIME_GATE_STORAGE_KEY = 'canteen_time_gate_config';
 
-export function getCustomTimeGateConfig(): { openTime: string; closeTime: string } {
+export interface TimeGateConfig {
+  openTime: string;
+  closeTime: string;
+  isForceOpen?: boolean;
+}
+
+export function getCustomTimeGateConfig(): TimeGateConfig {
   try {
     const saved = localStorage.getItem(TIME_GATE_STORAGE_KEY);
     if (saved) {
@@ -2025,20 +2069,22 @@ export function getCustomTimeGateConfig(): { openTime: string; closeTime: string
   } catch {
     // fallback
   }
-  return { openTime: '07:00', closeTime: '16:00' };
+  return { openTime: '06:00', closeTime: '22:00', isForceOpen: false };
 }
 
-export async function fetchTimeGateConfig(): Promise<{ openTime: string; closeTime: string }> {
+export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
   try {
     if (isSupabaseConfigured && supabase) {
       let matchedRow: any = null;
 
-      // 1. Thử đọc từ bảng 'settings'
+      // 1. Thử đọc từ bảng 'settings' lấy bản ghi mới nhất
       try {
         const { data: sData } = await supabase
           .from('settings')
           .select('*')
-          .in('key', ['time_gate', 'time_gate_config']);
+          .in('key', ['time_gate', 'time_gate_config'])
+          .order('updated_at', { ascending: false })
+          .limit(5);
         if (sData && sData.length > 0) matchedRow = sData[0];
       } catch {}
 
@@ -2048,7 +2094,9 @@ export async function fetchTimeGateConfig(): Promise<{ openTime: string; closeTi
           const { data: sysData } = await supabase
             .from('system_settings')
             .select('*')
-            .in('key', ['time_gate', 'time_gate_config', 'canteen_time_gate']);
+            .in('key', ['time_gate', 'time_gate_config', 'canteen_time_gate'])
+            .order('updated_at', { ascending: false })
+            .limit(5);
           if (sysData && sysData.length > 0) matchedRow = sysData[0];
         } catch {}
       }
@@ -2062,13 +2110,17 @@ export async function fetchTimeGateConfig(): Promise<{ openTime: string; closeTi
         }
         let openTime =
           val.openTime ||
-          (val.open_hour !== undefined ? `${String(val.open_hour).padStart(2, '0')}:00` : '07:00');
+          (val.open_hour !== undefined ? `${String(val.open_hour).padStart(2, '0')}:00` : '06:00');
         let closeTime =
           val.closeTime ||
-          (val.close_hour !== undefined ? `${String(val.close_hour).padStart(2, '0')}:00` : '16:00');
+          (val.close_hour !== undefined ? `${String(val.close_hour).padStart(2, '0')}:00` : '22:00');
+        let isForceOpen = Boolean(val.isForceOpen || val.is_force_open || val.forceOpen);
 
-        const cfg = { openTime, closeTime };
+        const cfg: TimeGateConfig = { openTime, closeTime, isForceOpen };
         localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
+        }
         return cfg;
       }
     }
@@ -2081,47 +2133,82 @@ export async function fetchTimeGateConfig(): Promise<{ openTime: string; closeTi
 export async function setCustomTimeGateConfig(
   openTime: string,
   closeTime: string,
-  actor?: UserProfile
+  actor?: UserProfile,
+  isForceOpen?: boolean
 ): Promise<void> {
   const [openHour] = openTime.split(':').map(Number);
   const [closeHour] = closeTime.split(':').map(Number);
-  const cfg = { openTime, closeTime };
+  const cfg: TimeGateConfig = {
+    openTime,
+    closeTime,
+    isForceOpen: Boolean(isForceOpen),
+  };
   localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
 
   if (isSupabaseConfigured && supabase) {
     const payload = {
       openTime,
       closeTime,
-      open_hour: isNaN(openHour) ? 7 : openHour,
-      close_hour: isNaN(closeHour) ? 16 : closeHour,
+      open_hour: isNaN(openHour) ? 6 : openHour,
+      close_hour: isNaN(closeHour) ? 22 : closeHour,
+      isForceOpen: Boolean(isForceOpen),
       timezone: 'Asia/Ho_Chi_Minh',
       updated_by: actor?.name || 'Admin',
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Lưu vào bảng 'settings'
+    // Lưu đồng thời vào cả 'settings' và 'system_settings' để đồng bộ 100%
     try {
-      await supabase.from('settings').upsert({
-        key: 'time_gate',
-        value: payload,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {}
-
-    // 2. Lưu vào bảng 'system_settings'
-    try {
-      await supabase.from('system_settings').upsert({
-        key: 'time_gate_config',
-        value: payload,
-        updated_at: new Date().toISOString(),
-      });
-    } catch {}
+      await Promise.allSettled([
+        supabase.from('settings').upsert({
+          key: 'time_gate',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('settings').upsert({
+          key: 'time_gate_config',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'time_gate_config',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+      ]);
+    } catch (e) {
+      console.warn('Sync time gate to supabase warning:', e);
+    }
   }
 
   // Phát tín hiệu cập nhật thời gian mở cổng cho toàn bộ ứng dụng
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
+    window.dispatchEvent(new Event('storage'));
   }
+}
+
+/**
+ * Lấy giờ & phút chuẩn theo múi giờ Việt Nam (UTC+7)
+ */
+function getVietnamTime(): { hours: number; minutes: number } {
+  try {
+    const d = new Date();
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Ho_Chi_Minh',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const hourPart = parts.find((p) => p.type === 'hour');
+    const minPart = parts.find((p) => p.type === 'minute');
+    if (hourPart && minPart) {
+      return { hours: parseInt(hourPart.value, 10), minutes: parseInt(minPart.value, 10) };
+    }
+  } catch (e) {}
+  const now = new Date();
+  return { hours: now.getHours(), minutes: now.getMinutes() };
 }
 
 export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: number): TimeGateStatus {
@@ -2129,40 +2216,52 @@ export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: num
   const [cfgOpenH, cfgOpenM] = cfg.openTime.split(':').map(Number);
   const [cfgCloseH, cfgCloseM] = cfg.closeTime.split(':').map(Number);
 
-  const openH = customOpenHour ?? (isNaN(cfgOpenH) ? 7 : cfgOpenH);
+  const openH = customOpenHour ?? (isNaN(cfgOpenH) ? 6 : cfgOpenH);
   const openM = isNaN(cfgOpenM) ? 0 : cfgOpenM;
-  const closeH = customCloseHour ?? (isNaN(cfgCloseH) ? 16 : cfgCloseH);
+  const closeH = customCloseHour ?? (isNaN(cfgCloseH) ? 22 : cfgCloseH);
   const closeM = isNaN(cfgCloseM) ? 0 : cfgCloseM;
 
-  const now = new Date();
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  const vnTime = getVietnamTime();
+  const localNow = new Date();
+  const localTime = { hours: localNow.getHours(), minutes: localNow.getMinutes() };
+
   const openMinutes = openH * 60 + openM;
   const closeMinutes = closeH * 60 + closeM;
 
-  let isOpen = false;
-  let remainingMinutes: number | undefined;
-
-  if (openMinutes <= closeMinutes) {
-    // Khung giờ cùng trong 1 ngày (VD: 07:00 -> 23:00)
-    isOpen = currentMinutes >= openMinutes && currentMinutes < closeMinutes;
-    if (isOpen) remainingMinutes = closeMinutes - currentMinutes;
-  } else {
-    // Khung giờ qua đêm (VD: 18:00 -> 06:00 sáng hôm sau)
-    isOpen = currentMinutes >= openMinutes || currentMinutes < closeMinutes;
-    if (isOpen) {
-      remainingMinutes =
-        currentMinutes >= openMinutes
-          ? 24 * 60 - currentMinutes + closeMinutes
-          : closeMinutes - currentMinutes;
+  const checkIsOpen = (h: number, m: number): { open: boolean; remaining?: number } => {
+    const curM = h * 60 + m;
+    if (openMinutes === closeMinutes) {
+      return { open: true, remaining: 24 * 60 };
     }
-  }
+    if (openMinutes <= closeMinutes) {
+      // Khung giờ cùng trong 1 ngày (VD: 06:00 -> 22:00)
+      const open = curM >= openMinutes && curM < closeMinutes;
+      return { open, remaining: open ? closeMinutes - curM : undefined };
+    } else {
+      // Khung giờ qua đêm (VD: 18:00 -> 06:00 sáng hôm sau)
+      const open = curM >= openMinutes || curM < closeMinutes;
+      const remaining = open
+        ? curM >= openMinutes
+          ? 24 * 60 - curM + closeMinutes
+          : closeMinutes - curM
+        : undefined;
+      return { open, remaining };
+    }
+  };
+
+  const vnStatus = checkIsOpen(vnTime.hours, vnTime.minutes);
+  const localStatus = checkIsOpen(localTime.hours, localTime.minutes);
+
+  // Cổng mở nếu: được cấu hình Luôn Mở (forceOpen), hoặc giờ VN nằm trong khung giờ, hoặc giờ local nằm trong khung giờ
+  const isOpen = Boolean(cfg.isForceOpen) || vnStatus.open || localStatus.open;
+  const remainingMinutes = vnStatus.remaining ?? localStatus.remaining;
 
   return {
     isOpen,
-    currentHour: now.getHours(),
-    currentMinute: now.getMinutes(),
+    currentHour: vnTime.hours,
+    currentMinute: vnTime.minutes,
     message: isOpen
-      ? `Căn tin đang mở nhận đơn đặt suất (từ ${cfg.openTime} đến ${cfg.closeTime})`
+      ? `Cổng đặt món đang mở nhận đơn (từ ${cfg.openTime} đến ${cfg.closeTime})`
       : `Cổng đặt món thường hiện đang đóng. Khung giờ nhận đơn: ${cfg.openTime} – ${cfg.closeTime}`,
     opensAt: cfg.openTime,
     closesAt: cfg.closeTime,

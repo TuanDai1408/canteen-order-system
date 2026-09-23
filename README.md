@@ -1,4 +1,4 @@
-# Hệ thống Quản lý & Đặt Suất ăn Canteen Học Đường (Monorepo)
+# Hệ thống Quản lý & Đặt Suất ăn Bếp ăn Đại Học Hùng Vương - A.KITCHEN (Monorepo)
 
 Hệ thống chuyên nghiệp phục vụ đặt suất ăn trưa và quản lý vận hành căn tin trường học, kết nối trực tiếp với Supabase Cloud.
 

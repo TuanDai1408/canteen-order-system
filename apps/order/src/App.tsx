@@ -114,14 +114,16 @@ export default function App() {
     let mounted = true;
     async function init() {
       try {
-        const [profileRes, menuRes] = await Promise.allSettled([
+        const [profileRes, menuRes, timeCfgRes] = await Promise.allSettled([
           getCurrentUserProfile(),
           getMenu(),
+          fetchTimeGateConfig(),
         ]);
         if (!mounted) return;
         if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
           setMenu(menuRes.value);
         }
+        setTimeStatus(getTimeGateStatus());
         const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
 
@@ -133,7 +135,6 @@ export default function App() {
             setCurrentView('order');
             const [ordersRes] = await Promise.allSettled([
               getOrders({ userId: profile.id, authUserId: profile.authUserId }),
-              fetchTimeGateConfig(),
             ]);
             if (mounted) {
               if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {

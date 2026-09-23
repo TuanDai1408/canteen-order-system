@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { login, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
+import { BrandLogo } from './BrandLogo';
 import {
   Building2,
   Mail,
@@ -49,20 +50,20 @@ export function LoginPage({ onSuccess }: Props) {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4 py-8 relative overflow-hidden font-sans">
       {/* Background soft ambient accents */}
-      <div className="absolute -top-32 -left-32 w-96 h-96 bg-indigo-100/70 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-teal-100/70 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -top-32 -left-32 w-96 h-96 bg-orange-100/70 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-emerald-100/70 rounded-full blur-3xl pointer-events-none" />
 
       <div className="w-full max-w-md relative z-10">
         {/* Brand header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-indigo-600 shadow-xl shadow-indigo-600/20 mb-3 sm:mb-4 text-white">
-            <Building2 className="w-7 h-7 sm:w-8 sm:h-8" />
+          <div className="inline-flex items-center justify-center mb-2">
+            <BrandLogo size={76} />
           </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
-            Portal Quản Lý Canteen
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 mt-1">
+            Bếp ăn Đại Học Hùng Vương
           </h1>
           <p className="text-slate-500 text-xs sm:text-sm mt-1 max-w-sm mx-auto">
-            Trung tâm vận hành suất ăn, điều phối nhà bếp & quản lý ví
+            Portal Quản trị & Điều hành Suất ăn (A.KITCHEN)
           </p>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -160,7 +161,7 @@ export function LoginPage({ onSuccess }: Props) {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-6">
-          © Ban Quản Lý Canteen & Dinh Dưỡng Học Đường
+          © Bếp ăn Đại Học Hùng Vương - A.KITCHEN
         </p>
       </div>
     </div>

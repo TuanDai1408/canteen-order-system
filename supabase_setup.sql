@@ -92,12 +92,20 @@ CREATE TABLE IF NOT EXISTS order_items (
     order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
     menu_item_id UUID REFERENCES menu_items(id) ON DELETE SET NULL,
     name TEXT NOT NULL,
-    price NUMERIC NOT NULL,
+    price NUMERIC NOT NULL DEFAULT 0,
     quantity INTEGER NOT NULL DEFAULT 1,
     subtotal NUMERIC NOT NULL DEFAULT 0,
     image_url TEXT DEFAULT '',
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+-- Đảm bảo các cột trên order_items luôn có mặt đầy đủ
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS price NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS subtotal NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS image_url TEXT DEFAULT '';
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS menu_item_id UUID REFERENCES menu_items(id) ON DELETE SET NULL;
 
 -- 6. Bảng mã QR ngoại lệ (qr_exception_tokens)
 CREATE TABLE IF NOT EXISTS qr_exception_tokens (

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { login, signUp, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
+import { BrandLogo } from './BrandLogo';
 import {
   UtensilsCrossed,
   Mail,
@@ -68,14 +69,14 @@ export function LoginPage({ onSuccess }: Props) {
       <div className="w-full max-w-md relative z-10">
         {/* Brand header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-teal-600 shadow-xl shadow-teal-600/20 mb-3 sm:mb-4 text-white">
-            <UtensilsCrossed className="w-7 h-7 sm:w-8 sm:h-8" />
+          <div className="inline-flex items-center justify-center mb-2">
+            <BrandLogo size={76} />
           </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900">
-            Canteen Học Đường
+          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 mt-1">
+            Bếp ăn Đại Học Hùng Vương
           </h1>
           <p className="text-slate-500 text-xs sm:text-sm mt-1 max-w-sm mx-auto">
-            Hệ thống đặt suất ăn trực tuyến dành cho Giáo viên & Cán bộ nhân viên
+            Hệ thống đặt suất ăn trực tuyến (A.KITCHEN) dành cho Cán bộ & Giảng viên
           </p>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -232,7 +233,7 @@ export function LoginPage({ onSuccess }: Props) {
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-6">
-          © Hệ thống Quản lý Suất ăn Căn tin Học đường
+          © Bếp ăn Đại Học Hùng Vương - A.KITCHEN
         </p>
       </div>
     </div>

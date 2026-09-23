@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   formatVnd,
   updateMenuItem,
@@ -23,6 +23,7 @@ import {
   type OrderStatus,
   type UserRole,
 } from '@canteen/shared';
+import { BrandLogo } from './BrandLogo';
 import {
   LayoutDashboard,
   UtensilsCrossed,
@@ -140,9 +141,18 @@ export function PortalDashboard({
 
   // Admin Time Gate Settings
   const initialTimeCfg = getCustomTimeGateConfig();
-  const [timeOpen, setTimeOpen] = useState(initialTimeCfg.openTime);
-  const [timeClose, setTimeClose] = useState(initialTimeCfg.closeTime);
+  const [timeOpen, setTimeOpen] = useState(initialTimeCfg.openTime || '06:00');
+  const [timeClose, setTimeClose] = useState(initialTimeCfg.closeTime || '22:00');
+  const [isForceOpen, setIsForceOpen] = useState(Boolean(initialTimeCfg.isForceOpen));
   const [isSavingTime, setIsSavingTime] = useState(false);
+
+  // Sync state when timeStatus prop changes from external fetch
+  useEffect(() => {
+    if (timeStatus.opensAt) setTimeOpen(timeStatus.opensAt);
+    if (timeStatus.closesAt) setTimeClose(timeStatus.closesAt);
+    const cfg = getCustomTimeGateConfig();
+    setIsForceOpen(Boolean(cfg.isForceOpen));
+  }, [timeStatus.opensAt, timeStatus.closesAt]);
 
   // Edit Dish state
   const [editingDish, setEditingDish] = useState<MenuItem | null>(null);
@@ -429,16 +439,16 @@ export function PortalDashboard({
   };
 
   // Save Admin Time Gate Config
-  const handleSaveTimeGate = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveTimeGate = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     setIsSavingTime(true);
     try {
-      await setCustomTimeGateConfig(timeOpen, timeClose, currentUser);
+      await setCustomTimeGateConfig(timeOpen, timeClose, currentUser, isForceOpen);
       setMsg({
         type: 'ok',
-        text: `Đã cập nhật khung giờ nhận đơn thường: ${timeOpen} – ${timeClose} thành công!`,
+        text: `Đã cập nhật khung giờ nhận đơn: ${timeOpen} – ${timeClose} ${isForceOpen ? '(Luôn mở 24/7)' : ''} thành công!`,
       });
-      onRefresh();
+      await onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật khung giờ nhận đơn' });
     } finally {
@@ -677,14 +687,15 @@ export function PortalDashboard({
           {/* Logo & Header */}
           <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white shadow-md shadow-indigo-600/20">
-                <Building2 className="w-5 h-5" />
-              </div>
+              <BrandLogo size={40} />
               <div>
-                <h2 className="font-extrabold text-sm tracking-tight text-slate-900">Portal Quản Lý</h2>
+                <h2 className="font-extrabold text-sm tracking-tight text-slate-900">
+                  <span className="text-orange-600">A.</span>
+                  <span className="text-emerald-700">KITCHEN</span>
+                </h2>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <p className="text-[11px] text-emerald-600 font-semibold">Supabase Live Cloud</p>
+                  <p className="text-[11px] text-slate-600 font-semibold truncate max-w-[130px]">Bếp ăn ĐH Hùng Vương</p>
                 </div>
               </div>
             </div>
@@ -710,7 +721,7 @@ export function PortalDashboard({
                   timeStatus.isOpen ? 'bg-emerald-500' : 'bg-rose-500'
                 } animate-pulse`}
               />
-              {timeStatus.isOpen ? 'Mở (đến 16h)' : 'Đã đóng'}
+              {timeStatus.isOpen ? `Mở (đến ${timeStatus.closesAt || '16:00'})` : 'Đã đóng'}
             </span>
           </div>
 
@@ -1099,6 +1110,44 @@ export function PortalDashboard({
                     </div>
                   </div>
 
+                  {/* Quick Presets */}
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="text-xs font-bold text-slate-600">Chọn nhanh khung giờ:</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTimeOpen('06:00');
+                        setTimeClose('22:00');
+                        setIsForceOpen(false);
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 transition cursor-pointer"
+                    >
+                      06:00 – 22:00 (Mở rộng)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTimeOpen('07:00');
+                        setTimeClose('16:00');
+                        setIsForceOpen(false);
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 transition cursor-pointer"
+                    >
+                      07:00 – 16:00 (Tiêu chuẩn)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setTimeOpen('00:00');
+                        setTimeClose('23:59');
+                        setIsForceOpen(true);
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition cursor-pointer"
+                    >
+                      🟢 Luôn mở 24/7 (Thử nghiệm)
+                    </button>
+                  </div>
+
                   <form onSubmit={handleSaveTimeGate} className="mt-4 flex flex-col sm:flex-row items-end gap-3">
                     <div className="w-full sm:w-44">
                       <label className="block text-xs font-bold text-slate-700 mb-1">
@@ -1128,7 +1177,7 @@ export function PortalDashboard({
 
                     <div className="flex-1 text-xs text-slate-500 pb-1">
                       <p>
-                        Hiện tại: <strong className="text-slate-800 font-mono">{timeOpen} – {timeClose}</strong> hàng ngày.
+                        Cấu hình: <strong className="text-slate-800 font-mono">{timeOpen} – {timeClose}</strong> {isForceOpen ? '(Chế độ luôn mở)' : 'hàng ngày'}.
                       </p>
                     </div>
 
@@ -1142,7 +1191,7 @@ export function PortalDashboard({
                       ) : (
                         <Check className="w-4 h-4" />
                       )}
-                      <span>{isSavingTime ? 'Đang lưu vào Supabase...' : 'Lưu cấu hình giờ'}</span>
+                      <span>{isSavingTime ? 'Đang lưu vào Supabase...' : 'Lưu & Đồng bộ ngay'}</span>
                     </button>
                   </form>
                 </div>
@@ -1875,7 +1924,7 @@ export function PortalDashboard({
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 mb-1">Mã QR Ngoại Lệ (Exception Tokens)</h3>
                   <p className="text-xs text-slate-500">
-                    Dùng khi cổng đặt món thường đã đóng (sau 16:00). Cán bộ nhập mã này để được phép đặt suất ăn bổ sung.
+                    Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Cán bộ nhập mã này để được phép đặt suất ăn bổ sung.
                   </p>
                 </div>
                 <button
@@ -2771,8 +2820,8 @@ export function PortalDashboard({
               {/* Printable thermal ticket with JetBrains Mono / Courier New */}
               <div className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px]">
                 <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                  <h4 className="font-bold text-sm uppercase tracking-wider">CANTEEN HỌC ĐƯỜNG</h4>
-                  <p className="text-[11px] text-slate-600">PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
+                  <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
+                  <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
                   <p className="text-[10px] text-slate-500">
                     Khổ in nhiệt K80 / K58
                   </p>
@@ -2920,8 +2969,8 @@ export function PortalDashboard({
                   </div>
 
                   <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-                    <h4 className="font-bold text-sm uppercase tracking-wider">CANTEEN HỌC ĐƯỜNG</h4>
-                    <p className="text-[11px] text-slate-600">PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
+                    <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
+                    <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
                     <p className="text-[10px] text-slate-500">Khổ in nhiệt K80 / K58</p>
                   </div>
 

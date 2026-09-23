@@ -75,14 +75,16 @@ export default function App() {
     isMountedRef.current = true;
     async function init() {
       try {
-        const [profileRes, mRes] = await Promise.allSettled([
+        const [profileRes, mRes, timeCfgRes] = await Promise.allSettled([
           getCurrentUserProfile(),
           getAllMenuItems(),
+          fetchTimeGateConfig(),
         ]);
         if (!isMountedRef.current) return;
         if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
           setMenu(mRes.value);
         }
+        setTimeStatus(getTimeGateStatus());
         const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
 
@@ -91,7 +93,6 @@ export default function App() {
             getOrders(),
             getUsers(),
             getQRTokens(),
-            fetchTimeGateConfig(),
           ]);
           if (!isMountedRef.current) return;
           if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
@@ -127,12 +128,20 @@ export default function App() {
       }
     };
 
+    const handleTimeGateUpdated = () => {
+      if (isMountedRef.current) {
+        setTimeStatus(getTimeGateStatus());
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
+    window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
 
     return () => {
       isMountedRef.current = false;
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
+      window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
     };
   }, [refresh]);
 
