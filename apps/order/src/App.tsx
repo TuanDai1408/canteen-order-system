@@ -51,11 +51,15 @@ export default function App() {
     if (isRefreshingOrderRef.current) return;
     isRefreshingOrderRef.current = true;
     try {
-      const [menuRes, ordersRes] = await Promise.allSettled([
+      const [profileRes, menuRes, ordersRes] = await Promise.allSettled([
+        getCurrentUserProfile(),
         getMenu(),
         getOrders({ userId: profile.id, authUserId: profile.authUserId }),
         fetchTimeGateConfig(),
       ]);
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        setUser(profileRes.value);
+      }
       if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
         setMenu(menuRes.value);
       }
@@ -75,13 +79,17 @@ export default function App() {
     if (isRefreshingPortalRef.current) return;
     isRefreshingPortalRef.current = true;
     try {
-      const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
+      const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
+        getCurrentUserProfile(),
         getAllMenuItems(),
         getOrders(),
         getUsers(),
         getQRTokens(),
         fetchTimeGateConfig(),
       ]);
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        setUser(profileRes.value);
+      }
       if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
         setPortalMenu(mRes.value);
       }
@@ -155,6 +163,16 @@ export default function App() {
       }
     });
 
+    const handleWalletUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ walletBalance?: number }>;
+      if (customEvent.detail && customEvent.detail.walletBalance !== undefined) {
+        const newBalance = customEvent.detail.walletBalance;
+        setUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : prev));
+      }
+    };
+
+    window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
+
     const clock = setInterval(() => {
       setTimeStatus(getTimeGateStatus());
     }, 30_000);
@@ -162,6 +180,7 @@ export default function App() {
     return () => {
       mounted = false;
       unsub();
+      window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       clearInterval(clock);
     };
   }, [refreshOrderData, refreshPortalData]);

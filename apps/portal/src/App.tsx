@@ -39,7 +39,8 @@ export default function App() {
     if (isRefreshingRef.current) return;
     isRefreshingRef.current = true;
     try {
-      const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
+      const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
+        getCurrentUserProfile(),
         getAllMenuItems(),
         getOrders(),
         getUsers(),
@@ -47,6 +48,9 @@ export default function App() {
         fetchTimeGateConfig(),
       ]);
       if (!isMountedRef.current) return;
+      if (profileRes.status === 'fulfilled' && profileRes.value) {
+        setUser(profileRes.value);
+      }
       if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
         setMenu(mRes.value);
       }
@@ -115,9 +119,20 @@ export default function App() {
       }
     });
 
+    const handleWalletUpdated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ walletBalance?: number }>;
+      if (customEvent.detail && customEvent.detail.walletBalance !== undefined) {
+        const newBalance = customEvent.detail.walletBalance;
+        setUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : prev));
+      }
+    };
+
+    window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
+
     return () => {
       isMountedRef.current = false;
       unsub();
+      window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
     };
   }, [refresh]);
 

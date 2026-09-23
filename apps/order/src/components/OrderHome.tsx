@@ -225,6 +225,10 @@ export function OrderHome({
           type: 'error',
         });
       } else {
+        if (result.new_balance !== undefined) {
+          currentUser.walletBalance = result.new_balance;
+          onUserUpdate?.({ ...currentUser, walletBalance: result.new_balance });
+        }
         setFeedbackModal({
           title: 'Đặt món thành công! 🎉',
           message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}`,
@@ -253,9 +257,13 @@ export function OrderHome({
     try {
       const result = await cancelOrder(orderId, 'Hủy bởi người dùng');
       if (result.success) {
+        if (result.new_balance !== undefined) {
+          currentUser.walletBalance = result.new_balance;
+          onUserUpdate?.({ ...currentUser, walletBalance: result.new_balance });
+        }
         setFeedbackModal({
           title: 'Hủy đơn thành công',
-          message: 'Đơn hàng đã được hủy và toàn bộ tiền đã hoàn lại ví suất ăn của bạn.',
+          message: `Đơn hàng đã được hủy thành công! ${result.refund_amount ? `Đã hoàn trả ${formatVnd(result.refund_amount)} vào ví suất ăn.` : 'Tiền đã được hoàn lại ví.'}`,
           type: 'success',
         });
         await onRefresh();

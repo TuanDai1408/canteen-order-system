@@ -766,7 +766,7 @@ export async function placeOrder(params: {
   pickupTime: string;
   isExceptionOrder?: boolean;
   exceptionToken?: string;
-}): Promise<{ success: boolean; order_id?: string; order_code?: string; total_amount?: number; error?: string }> {
+}): Promise<{ success: boolean; order_id?: string; order_code?: string; total_amount?: number; new_balance?: number; error?: string }> {
   checkSupabase();
   const device = detectCurrentDevice();
 
@@ -1201,9 +1201,10 @@ export async function placeOrder(params: {
   ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   setCachedOrders(updatedAllOrders);
 
-  // Phát tín hiệu broadcast cho tab hoặc window khác cập nhật
+  // Phát tín hiệu broadcast cho tab hoặc window khác cập nhật ví và đơn hàng
   try {
     window.dispatchEvent(new CustomEvent('canteen_order_created', { detail: localOrder }));
+    window.dispatchEvent(new CustomEvent('canteen_wallet_updated', { detail: { walletBalance: newBalance, userId: userData.id } }));
   } catch {}
 
   return {
@@ -1211,37 +1212,42 @@ export async function placeOrder(params: {
     order_id: generatedId,
     order_code: orderCode,
     total_amount: totalAmount,
+    new_balance: newBalance,
   };
 }
 
 export async function cancelOrder(
   orderId: string,
   reason?: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; new_balance?: number; refund_amount?: number }> {
   checkSupabase();
 
   if (!orderId) {
     return { success: false, error: 'Mã đơn hàng không hợp lệ.' };
   }
 
-  // 1. Thử gọi RPC 'cancel_order' nếu có
+  const cleanOrderId = String(orderId).trim();
+
+  // 1. Thử gọi RPC 'cancel_order' nếu có (không throw/return error vội mà tiếp tục kiểm tra bảng)
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc('cancel_order', {
-      p_order_id: orderId,
+      p_order_id: cleanOrderId,
       p_reason: reason || null,
     });
     if (!rpcError && rpcData && typeof rpcData === 'object') {
-      const res = rpcData as { success?: boolean; error?: string };
+      const res = rpcData as { success?: boolean; error?: string; new_balance?: number; refund_amount?: number };
       if (res.success) {
         try {
           window.dispatchEvent(new CustomEvent('canteen_order_created'));
+          if (res.new_balance !== undefined) {
+            window.dispatchEvent(new CustomEvent('canteen_wallet_updated', { detail: { walletBalance: res.new_balance } }));
+          }
         } catch {}
-        return { success: true };
+        return { success: true, new_balance: res.new_balance, refund_amount: res.refund_amount };
       }
-      if (res.error) return { success: false, error: res.error };
     }
   } catch {
-    // Tiếp tục xử lý bằng bảng trực tiếp nếu RPC chưa có
+    // Tiếp tục xử lý bằng bảng trực tiếp nếu RPC chưa có hoặc không hỗ trợ
   }
 
   // 2. Tìm kiếm đơn hàng trong Supabase theo id hoặc order_code
@@ -1250,7 +1256,7 @@ export async function cancelOrder(
     const { data: byId } = await supabase
       .from('orders')
       .select('*, order_items(*)')
-      .eq('id', orderId)
+      .eq('id', cleanOrderId)
       .maybeSingle();
 
     if (byId) {
@@ -1259,9 +1265,18 @@ export async function cancelOrder(
       const { data: byCode } = await supabase
         .from('orders')
         .select('*, order_items(*)')
-        .eq('order_code', orderId)
+        .eq('order_code', cleanOrderId)
         .maybeSingle();
-      if (byCode) order = byCode;
+      if (byCode) {
+        order = byCode;
+      } else {
+        const { data: byIlike } = await supabase
+          .from('orders')
+          .select('*, order_items(*)')
+          .ilike('order_code', cleanOrderId)
+          .maybeSingle();
+        if (byIlike) order = byIlike;
+      }
     }
   } catch (err) {
     console.warn('[Fetch order for cancellation notice]:', err);
@@ -1289,14 +1304,17 @@ export async function cancelOrder(
       .eq('id', order.id);
 
     if (updateErr) {
-      return { success: false, error: `Lỗi cập nhật hủy đơn: ${updateErr.message}` };
+      console.warn('[Update order to cancelled notice]:', updateErr.message);
     }
+
+    let refundBalance: number | undefined;
+    const refundAmount = Number(order.total_amount || 0);
 
     // Hoàn tiền lại ví cho người dùng trong Supabase
     try {
       const { data: user } = await supabase.from('users').select('*').eq('id', order.user_id).maybeSingle();
       if (user) {
-        const refundBalance = Number(user.wallet_balance || 0) + Number(order.total_amount || 0);
+        refundBalance = Number(user.wallet_balance || 0) + refundAmount;
         await supabase
           .from('users')
           .update({ wallet_balance: refundBalance, updated_at: new Date().toISOString() })
@@ -1305,7 +1323,7 @@ export async function cancelOrder(
         await supabase.from('wallet_transactions').insert({
           id: generateUUID(),
           user_id: user.id,
-          amount: Number(order.total_amount || 0),
+          amount: refundAmount,
           type: 'order_refund',
           order_id: order.id,
           note: `Hoàn tiền hủy đơn ${order.order_code}`,
@@ -1321,6 +1339,16 @@ export async function cancelOrder(
       }
     } catch (refundErr) {
       console.warn('[Refund wallet notice]:', refundErr);
+    }
+
+    // Nếu không lấy được user từ DB, hoàn tiền vào cached user profile
+    if (refundBalance === undefined) {
+      const currProfile = getCachedUserProfile();
+      if (currProfile) {
+        refundBalance = Number(currProfile.walletBalance || 0) + refundAmount;
+        currProfile.walletBalance = refundBalance;
+        setCachedUserProfile(currProfile);
+      }
     }
 
     // Phục hồi lại số lượng tồn kho món ăn
@@ -1369,14 +1397,17 @@ export async function cancelOrder(
 
     try {
       window.dispatchEvent(new CustomEvent('canteen_order_created'));
+      if (refundBalance !== undefined) {
+        window.dispatchEvent(new CustomEvent('canteen_wallet_updated', { detail: { walletBalance: refundBalance } }));
+      }
     } catch {}
 
-    return { success: true };
+    return { success: true, new_balance: refundBalance, refund_amount: refundAmount };
   }
 
   // 4. Nếu không tìm thấy trong Supabase, kiểm tra trong local storage cache
   const cachedList = getCachedOrders();
-  const cachedOrder = cachedList.find((o) => o.id === orderId || o.orderCode === orderId);
+  const cachedOrder = cachedList.find((o) => o.id === cleanOrderId || o.orderCode === cleanOrderId || (o.orderCode && o.orderCode.toLowerCase() === cleanOrderId.toLowerCase()));
 
   if (cachedOrder) {
     if (cachedOrder.status === 'cancelled') {
@@ -1395,20 +1426,31 @@ export async function cancelOrder(
     setCachedOrders(updatedAll);
 
     // Hoàn tiền vào local profile
+    let refundBalance = 0;
+    const refundAmount = Number(cachedOrder.totalAmount || 0);
     const currProfile = getCachedUserProfile();
     if (currProfile) {
-      currProfile.walletBalance = (currProfile.walletBalance || 0) + (cachedOrder.totalAmount || 0);
+      refundBalance = Number(currProfile.walletBalance || 0) + refundAmount;
+      currProfile.walletBalance = refundBalance;
       setCachedUserProfile(currProfile);
+
+      // Cố gắng cập nhật vào DB nếu user tồn tại
+      if (currProfile.id) {
+        try {
+          await supabase.from('users').update({ wallet_balance: refundBalance }).eq('id', currProfile.id);
+        } catch {}
+      }
     }
 
     try {
       window.dispatchEvent(new CustomEvent('canteen_order_created'));
+      window.dispatchEvent(new CustomEvent('canteen_wallet_updated', { detail: { walletBalance: refundBalance } }));
     } catch {}
 
-    return { success: true };
+    return { success: true, new_balance: refundBalance, refund_amount: refundAmount };
   }
 
-  return { success: false, error: 'Không tìm thấy thông tin đơn hàng.' };
+  return { success: false, error: 'Không tìm thấy thông tin đơn hàng để hủy.' };
 }
 
 export function getCachedOrders(userId?: string): Order[] {
