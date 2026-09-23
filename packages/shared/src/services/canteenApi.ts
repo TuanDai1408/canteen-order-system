@@ -2083,28 +2083,34 @@ export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
     if (isSupabaseConfigured && supabase) {
       let matchedRow: any = null;
 
-      // 1. Thử đọc từ bảng 'settings' lấy bản ghi mới nhất
+      // 1. Thử đọc từ bảng 'settings'
       try {
-        const { data: sData } = await supabase
+        const { data: sData, error: sErr } = await supabase
           .from('settings')
-          .select('*')
-          .in('key', ['time_gate', 'time_gate_config'])
-          .order('updated_at', { ascending: false })
-          .limit(5);
-        if (sData && sData.length > 0) matchedRow = sData[0];
-      } catch {}
+          .select('*');
+        if (!sErr && Array.isArray(sData) && sData.length > 0) {
+          matchedRow = sData.find(
+            (r) => r.key === 'time_gate_config' || r.key === 'time_gate'
+          ) || sData[0];
+        }
+      } catch (err) {
+        console.warn('Fetch from settings notice:', err);
+      }
 
       // 2. Nếu không có trong 'settings', thử 'system_settings'
       if (!matchedRow) {
         try {
-          const { data: sysData } = await supabase
+          const { data: sysData, error: sysErr } = await supabase
             .from('system_settings')
-            .select('*')
-            .in('key', ['time_gate', 'time_gate_config', 'canteen_time_gate'])
-            .order('updated_at', { ascending: false })
-            .limit(5);
-          if (sysData && sysData.length > 0) matchedRow = sysData[0];
-        } catch {}
+            .select('*');
+          if (!sysErr && Array.isArray(sysData) && sysData.length > 0) {
+            matchedRow = sysData.find(
+              (r) => r.key === 'time_gate_config' || r.key === 'time_gate' || r.key === 'canteen_time_gate'
+            ) || sysData[0];
+          }
+        } catch (err) {
+          console.warn('Fetch from system_settings notice:', err);
+        }
       }
 
       if (matchedRow?.value) {
@@ -2114,18 +2120,19 @@ export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
             val = JSON.parse(val);
           } catch {}
         }
-        let openTime =
+        const openTime =
           val.openTime ||
           (val.open_hour !== undefined ? `${String(val.open_hour).padStart(2, '0')}:00` : '06:00');
-        let closeTime =
+        const closeTime =
           val.closeTime ||
           (val.close_hour !== undefined ? `${String(val.close_hour).padStart(2, '0')}:00` : '22:00');
-        let isForceOpen = Boolean(val.isForceOpen || val.is_force_open || val.forceOpen);
+        const isForceOpen = Boolean(val.isForceOpen || val.is_force_open || val.forceOpen);
 
         const cfg: TimeGateConfig = { openTime, closeTime, isForceOpen };
         localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
+          window.dispatchEvent(new Event('storage'));
         }
         return cfg;
       }
@@ -2180,17 +2187,22 @@ export async function setCustomTimeGateConfig(
     try {
       await Promise.allSettled([
         supabase.from('settings').upsert({
-          key: 'time_gate',
+          key: 'time_gate_config',
           value: payload,
           updated_at: new Date().toISOString(),
         }),
         supabase.from('settings').upsert({
-          key: 'time_gate_config',
+          key: 'time_gate',
           value: payload,
           updated_at: new Date().toISOString(),
         }),
         supabase.from('system_settings').upsert({
           key: 'time_gate_config',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'time_gate',
           value: payload,
           updated_at: new Date().toISOString(),
         }),
@@ -2235,9 +2247,6 @@ export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: num
   const closeM = isNaN(cfgCloseM) ? 0 : cfgCloseM;
 
   const vnTime = getVietnamTime();
-  const localNow = new Date();
-  const localTime = { hours: localNow.getHours(), minutes: localNow.getMinutes() };
-
   const openMinutes = openH * 60 + openM;
   const closeMinutes = closeH * 60 + closeM;
 
@@ -2263,11 +2272,10 @@ export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: num
   };
 
   const vnStatus = checkIsOpen(vnTime.hours, vnTime.minutes);
-  const localStatus = checkIsOpen(localTime.hours, localTime.minutes);
 
-  // Cổng mở nếu: được cấu hình Luôn Mở (forceOpen), hoặc giờ VN nằm trong khung giờ, hoặc giờ local nằm trong khung giờ
-  const isOpen = Boolean(cfg.isForceOpen) || vnStatus.open || localStatus.open;
-  const remainingMinutes = vnStatus.remaining ?? localStatus.remaining;
+  // Cổng mở nếu: được cấu hình Luôn Mở (forceOpen), hoặc giờ VN nằm trong khung giờ
+  const isOpen = Boolean(cfg.isForceOpen) || vnStatus.open;
+  const remainingMinutes = vnStatus.remaining;
 
   return {
     isOpen,

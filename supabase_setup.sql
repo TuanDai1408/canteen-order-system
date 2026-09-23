@@ -155,6 +155,7 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE order_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE qr_exception_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE wallet_transactions ENABLE ROW LEVEL SECURITY;
 
@@ -195,8 +196,16 @@ CREATE POLICY "All system_settings" ON system_settings FOR ALL USING (true) WITH
 DROP POLICY IF EXISTS "All wallet_transactions" ON wallet_transactions;
 CREATE POLICY "All wallet_transactions" ON wallet_transactions FOR ALL USING (true) WITH CHECK (true);
 
--- Bật Realtime cho các bảng cần thiết
-ALTER PUBLICATION supabase_realtime ADD TABLE menu_items, orders, users;
+-- Bật Realtime cho tất cả các bảng cần thiết
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE menu_items, orders, order_items, users, settings, system_settings, qr_exception_tokens;
+  EXCEPTION
+    WHEN duplicate_object THEN NULL;
+    WHEN others THEN NULL;
+  END;
+END $$;
 
 -- ========================================================
 -- SEED DATA THẬT: THỰC ĐƠN MÓN ĂN CHUẨN

@@ -61,6 +61,8 @@ import {
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
+import { PaginationControls } from './PaginationControls';
+import { exportOrdersToExcel, exportUsersToExcel } from '../utils/exportExcel';
 
 interface Props {
   currentUser: UserProfile;
@@ -304,6 +306,53 @@ export function PortalDashboard({
       return matchStatus && matchSearch;
     });
   }, [users, userSearch, userStatusFilter]);
+
+  // Pagination states for all table tabs
+  const [orderPage, setOrderPage] = useState(1);
+  const [orderPageSize, setOrderPageSize] = useState(10);
+
+  const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(10);
+
+  const [menuPage, setMenuPage] = useState(1);
+  const [menuPageSize, setMenuPageSize] = useState(12);
+
+  const [qrPage, setQrPage] = useState(1);
+  const [qrPageSize, setQrPageSize] = useState(10);
+
+  // Reset page numbers when search / filters change
+  useEffect(() => {
+    setOrderPage(1);
+  }, [orderStatusFilter, orderDeliveryFilter, orderSearch]);
+
+  useEffect(() => {
+    setUserPage(1);
+  }, [userStatusFilter, userSearch]);
+
+  useEffect(() => {
+    setMenuPage(1);
+  }, [menuSearch, menuFilterCat]);
+
+  // Paginated Slices
+  const paginatedOrders = useMemo(() => {
+    const start = (orderPage - 1) * orderPageSize;
+    return filteredOrders.slice(start, start + orderPageSize);
+  }, [filteredOrders, orderPage, orderPageSize]);
+
+  const paginatedUsers = useMemo(() => {
+    const start = (userPage - 1) * userPageSize;
+    return filteredUsers.slice(start, start + userPageSize);
+  }, [filteredUsers, userPage, userPageSize]);
+
+  const paginatedMenu = useMemo(() => {
+    const start = (menuPage - 1) * menuPageSize;
+    return filteredMenu.slice(start, start + menuPageSize);
+  }, [filteredMenu, menuPage, menuPageSize]);
+
+  const paginatedTokens = useMemo(() => {
+    const start = (qrPage - 1) * qrPageSize;
+    return tokens.slice(start, start + qrPageSize);
+  }, [tokens, qrPage, qrPageSize]);
 
   // Handle Approve User & Fund Initial Wallet
   const handleApproveUser = async (e: React.FormEvent) => {
@@ -1300,123 +1349,140 @@ export function PortalDashboard({
                   </p>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
-                  {filteredMenu.map((item) => {
-                    const isOutOfStock = item.currentStock <= 0;
-                    return (
-                      <div
-                        key={item.id}
-                        className={`bg-white border rounded-2xl p-2.5 sm:p-4 shadow-xs flex flex-col justify-between transition-all ${
-                          isOutOfStock
-                            ? 'border-slate-300/80 bg-slate-50/90 opacity-60'
-                            : 'border-slate-200 hover:border-indigo-200'
-                        }`}
-                      >
-                        <div>
-                          <div className="h-28 sm:h-40 rounded-xl overflow-hidden bg-slate-100 relative mb-2 sm:mb-3">
-                            {item.imageUrl ? (
-                              <img
-                                src={item.imageUrl}
-                                alt={item.name}
-                                className={`w-full h-full object-cover transition-all ${
-                                  isOutOfStock ? 'grayscale opacity-60' : ''
-                                }`}
-                                loading="lazy"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-slate-400">
-                                <UtensilsCrossed className="w-6 h-6 sm:w-8 sm:h-8" />
-                              </div>
-                            )}
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
+                    {paginatedMenu.map((item) => {
+                      const isOutOfStock = item.currentStock <= 0;
+                      return (
+                        <div
+                          key={item.id}
+                          className={`bg-white border rounded-2xl p-2.5 sm:p-4 shadow-xs flex flex-col justify-between transition-all ${
+                            isOutOfStock
+                              ? 'border-slate-300/80 bg-slate-50/90 opacity-60'
+                              : 'border-slate-200 hover:border-indigo-200'
+                          }`}
+                        >
+                          <div>
+                            <div className="h-28 sm:h-40 rounded-xl overflow-hidden bg-slate-100 relative mb-2 sm:mb-3">
+                              {item.imageUrl ? (
+                                <img
+                                  src={item.imageUrl}
+                                  alt={item.name}
+                                  className={`w-full h-full object-cover transition-all ${
+                                    isOutOfStock ? 'grayscale opacity-60' : ''
+                                  }`}
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                  <UtensilsCrossed className="w-6 h-6 sm:w-8 sm:h-8" />
+                                </div>
+                              )}
 
-                            {isOutOfStock && (
-                              <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-1 text-center">
-                                <span className="bg-red-600/90 text-white font-extrabold text-[10px] sm:text-xs px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
-                                  Hết suất
-                                </span>
-                              </div>
-                            )}
+                              {isOutOfStock && (
+                                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-1 text-center">
+                                  <span className="bg-red-600/90 text-white font-extrabold text-[10px] sm:text-xs px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
+                                    Hết suất
+                                  </span>
+                                </div>
+                              )}
 
-                            <span className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
-                              {item.category}
-                            </span>
+                              <span className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
+                                {item.category}
+                              </span>
 
-                            <button
-                              onClick={() => handleStartEditDish(item)}
-                              className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 bg-white/95 hover:bg-white backdrop-blur-xs text-slate-700 hover:text-indigo-600 text-[10px] sm:text-[11px] font-bold px-2 py-1 rounded-lg shadow-xs border border-slate-200/80 flex items-center gap-1 transition cursor-pointer"
-                              title="Chỉnh sửa thông tin và ảnh món"
-                            >
-                              <Pencil className="w-3 h-3 text-indigo-600" />
-                              <span className="hidden sm:inline">Sửa món</span>
-                            </button>
-                          </div>
-
-                          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-0.5 sm:gap-2">
-                            <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">
-                              {item.name}
-                            </h4>
-                            <span className="text-indigo-600 font-extrabold text-xs sm:text-sm whitespace-nowrap">
-                              {formatVnd(item.price)}
-                            </span>
-                          </div>
-                          <p className="text-[11px] sm:text-xs text-slate-500 mt-1 line-clamp-2">
-                            {item.description}
-                          </p>
-                        </div>
-
-                        <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
-                          <div className="flex items-center justify-between sm:block">
-                            <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
-                            <p className="text-xs font-bold text-slate-900">
-                              <span
-                                className={
-                                  item.currentStock === 0
-                                    ? 'text-rose-600 font-extrabold'
-                                    : item.currentStock < 10
-                                      ? 'text-amber-600'
-                                      : 'text-emerald-600'
-                                }
+                              <button
+                                onClick={() => handleStartEditDish(item)}
+                                className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 bg-white/95 hover:bg-white backdrop-blur-xs text-slate-700 hover:text-indigo-600 text-[10px] sm:text-[11px] font-bold px-2 py-1 rounded-lg shadow-xs border border-slate-200/80 flex items-center gap-1 transition cursor-pointer"
+                                title="Chỉnh sửa thông tin và ảnh món"
                               >
-                                {item.currentStock}
-                              </span>{' '}
-                              / {item.preparedStock}
+                                <Pencil className="w-3 h-3 text-indigo-600" />
+                                <span className="hidden sm:inline">Sửa món</span>
+                              </button>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-0.5 sm:gap-2">
+                              <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">
+                                {item.name}
+                              </h4>
+                              <span className="text-indigo-600 font-extrabold text-xs sm:text-sm whitespace-nowrap">
+                                {formatVnd(item.price)}
+                              </span>
+                            </div>
+                            <p className="text-[11px] sm:text-xs text-slate-500 mt-1 line-clamp-2">
+                              {item.description}
                             </p>
                           </div>
 
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => handleToggleStock(item, -5)}
-                              className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
-                              title="Trừ 5 suất"
-                            >
-                              -5
-                            </button>
-                            <button
-                              onClick={() => handleToggleStock(item, -1)}
-                              className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
-                              title="Trừ 1 suất"
-                            >
-                              <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleToggleStock(item, 1)}
-                              className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
-                              title="Thêm 1 suất"
-                            >
-                              <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleToggleStock(item, 5)}
-                              className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
-                              title="Thêm 5 suất"
-                            >
-                              +5
-                            </button>
+                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
+                            <div className="flex items-center justify-between sm:block">
+                              <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
+                              <p className="text-xs font-bold text-slate-900">
+                                <span
+                                  className={
+                                    item.currentStock === 0
+                                      ? 'text-rose-600 font-extrabold'
+                                      : item.currentStock < 10
+                                        ? 'text-amber-600'
+                                        : 'text-emerald-600'
+                                  }
+                                >
+                                  {item.currentStock}
+                                </span>{' '}
+                                / {item.preparedStock}
+                              </p>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-1">
+                              <button
+                                onClick={() => handleToggleStock(item, -5)}
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                title="Trừ 5 suất"
+                              >
+                                -5
+                              </button>
+                              <button
+                                onClick={() => handleToggleStock(item, -1)}
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                title="Trừ 1 suất"
+                              >
+                                <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleToggleStock(item, 1)}
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                title="Thêm 1 suất"
+                              >
+                                <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleToggleStock(item, 5)}
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                title="Thêm 5 suất"
+                              >
+                                +5
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+
+                  <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-xs">
+                    <PaginationControls
+                      currentPage={menuPage}
+                      totalItems={filteredMenu.length}
+                      pageSize={menuPageSize}
+                      pageSizeOptions={[6, 12, 24, 48]}
+                      onPageChange={setMenuPage}
+                      onPageSizeChange={(sz) => {
+                        setMenuPageSize(sz);
+                        setMenuPage(1);
+                      }}
+                      itemName="món ăn"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -1455,7 +1521,7 @@ export function PortalDashboard({
                   ))}
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={orderDeliveryFilter}
                     onChange={(e: any) => setOrderDeliveryFilter(e.target.value)}
@@ -1476,6 +1542,15 @@ export function PortalDashboard({
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
                     />
                   </div>
+
+                  <button
+                    onClick={() => exportOrdersToExcel(filteredOrders)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[40px] whitespace-nowrap transition"
+                    title="Xuất danh sách đơn hàng đã lọc ra file Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Xuất Excel ({filteredOrders.length})</span>
+                  </button>
                 </div>
               </div>
 
@@ -1595,7 +1670,7 @@ export function PortalDashboard({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredOrders.map((o) => (
+                      {paginatedOrders.map((o) => (
                         <tr key={o.id} className="hover:bg-slate-50/70">
                           <td className="py-3 px-3 text-center">
                             <input
@@ -1714,6 +1789,19 @@ export function PortalDashboard({
                     </div>
                   )}
                 </div>
+
+                <PaginationControls
+                  currentPage={orderPage}
+                  totalItems={filteredOrders.length}
+                  pageSize={orderPageSize}
+                  pageSizeOptions={[10, 20, 50, 100]}
+                  onPageChange={setOrderPage}
+                  onPageSizeChange={(sz) => {
+                    setOrderPageSize(sz);
+                    setOrderPage(1);
+                  }}
+                  itemName="đơn hàng"
+                />
               </div>
             </div>
           )}
@@ -1798,8 +1886,8 @@ export function PortalDashboard({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="relative min-w-[200px] flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[180px] flex-1">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
@@ -1809,6 +1897,15 @@ export function PortalDashboard({
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px]"
                     />
                   </div>
+
+                  <button
+                    onClick={() => exportUsersToExcel(filteredUsers)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[38px] whitespace-nowrap transition"
+                    title="Xuất danh sách cán bộ và số dư ví ra file Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Xuất Excel ({filteredUsers.length})</span>
+                  </button>
 
                   <button
                     onClick={() => setIsAddUserOpen(true)}
@@ -1835,7 +1932,7 @@ export function PortalDashboard({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {filteredUsers.map((u) => {
+                      {paginatedUsers.map((u) => {
                         const isPending = u.isActive === false;
                         return (
                           <tr key={u.id} className={`hover:bg-slate-50/70 ${isPending ? 'bg-amber-50/30' : ''}`}>
@@ -1913,6 +2010,19 @@ export function PortalDashboard({
                     </div>
                   )}
                 </div>
+
+                <PaginationControls
+                  currentPage={userPage}
+                  totalItems={filteredUsers.length}
+                  pageSize={userPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                  onPageChange={setUserPage}
+                  onPageSizeChange={(sz) => {
+                    setUserPageSize(sz);
+                    setUserPage(1);
+                  }}
+                  itemName="cán bộ"
+                />
               </div>
             </div>
           )}
@@ -1951,7 +2061,7 @@ export function PortalDashboard({
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {tokens.map((t) => {
+                      {paginatedTokens.map((t) => {
                         const isExpired = new Date(t.expiresAt) < new Date();
                         return (
                           <tr key={t.token} className="hover:bg-slate-50/70">
@@ -1999,6 +2109,19 @@ export function PortalDashboard({
                     <div className="p-8 text-center text-slate-400 text-xs">Chưa có mã QR ngoại lệ nào.</div>
                   )}
                 </div>
+
+                <PaginationControls
+                  currentPage={qrPage}
+                  totalItems={tokens.length}
+                  pageSize={qrPageSize}
+                  pageSizeOptions={[10, 20, 50]}
+                  onPageChange={setQrPage}
+                  onPageSizeChange={(sz) => {
+                    setQrPageSize(sz);
+                    setQrPage(1);
+                  }}
+                  itemName="mã QR"
+                />
               </div>
             </div>
           )}
@@ -2822,7 +2945,7 @@ export function PortalDashboard({
                 <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
                   <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
                   <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[10px] text-slate-500 no-print">
                     Khổ in nhiệt K80 / K58
                   </p>
                 </div>
@@ -2861,32 +2984,32 @@ export function PortalDashboard({
                 {/* Monospace aligned column table */}
                 <div className="py-2.5 border-b border-dashed border-slate-400">
                   <div className="flex justify-between font-bold text-[11px] pb-1 border-b border-slate-200 mb-1.5">
-                    <span className="w-1/2">Tên món</span>
-                    <span className="w-10 text-center">SL</span>
-                    <span className="w-16 text-right">Đơn giá</span>
-                    <span className="w-18 text-right">T.Tiền</span>
+                    <span className="flex-1 pr-1">Tên món</span>
+                    <span className="w-7 text-center shrink-0">SL</span>
+                    <span className="w-14 text-right shrink-0">Đơn giá</span>
+                    <span className="w-16 text-right shrink-0">T.Tiền</span>
                   </div>
                   <div className="space-y-1.5 text-[11px]">
                     {(() => {
                       const printItems = getOrderDisplayItems(printReceiptOrder, menu);
                       if (printItems && printItems.length > 0) {
                         return printItems.map((it, idx) => (
-                          <div key={idx} className="flex justify-between items-start">
-                            <span className="w-1/2 pr-1 truncate font-medium">{it.name}</span>
-                            <span className="w-10 text-center font-bold">{it.quantity}</span>
-                            <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
-                            <span className="w-18 text-right font-bold text-slate-900">
+                          <div key={idx} className="flex justify-between items-start leading-tight">
+                            <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words">{it.name}</span>
+                            <span className="w-7 text-center font-bold shrink-0">{it.quantity}</span>
+                            <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">{formatVnd(it.price).replace(' ₫', '')}</span>
+                            <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
                               {formatVnd(it.price * it.quantity).replace(' ₫', '')}
                             </span>
                           </div>
                         ));
                       }
                       return (
-                        <div className="flex justify-between items-start">
-                          <span className="w-1/2 pr-1 truncate font-medium">Suất ăn Căn tin</span>
-                          <span className="w-10 text-center font-bold">1</span>
-                          <span className="w-16 text-right text-slate-600">{formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}</span>
-                          <span className="w-18 text-right font-bold text-slate-900">
+                        <div className="flex justify-between items-start leading-tight">
+                          <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words">Suất ăn Căn tin</span>
+                          <span className="w-7 text-center font-bold shrink-0">1</span>
+                          <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">{formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}</span>
+                          <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
                             {formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}
                           </span>
                         </div>
@@ -2913,8 +3036,8 @@ export function PortalDashboard({
                 </div>
 
                 <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                  <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                  <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
+                  <p className="font-medium text-slate-800">Chúc quý Thầy / Cô ngon miệng!</p>
+                  <p className="text-[9px] text-slate-400 italic font-mono no-print">JetBrains Mono · Courier New (Monospace)</p>
                 </div>
               </div>
             </div>
@@ -2964,14 +3087,14 @@ export function PortalDashboard({
                   key={ord.id}
                   className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px] relative break-after-page"
                 >
-                  <div className="absolute top-2 right-2 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 border border-slate-200">
+                  <div className="no-print absolute top-2 right-2 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 border border-slate-200">
                     #{idx + 1}/{batchPrintOrders.length}
                   </div>
 
                   <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
                     <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
                     <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
-                    <p className="text-[10px] text-slate-500">Khổ in nhiệt K80 / K58</p>
+                    <p className="text-[10px] text-slate-500 no-print">Khổ in nhiệt K80 / K58</p>
                   </div>
 
                   <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
@@ -3005,19 +3128,21 @@ export function PortalDashboard({
 
                   <div className="py-2.5 border-b border-dashed border-slate-400">
                     <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1 border-b border-slate-200 pb-1">
-                      <span>Món</span>
-                      <span>SL × Giá</span>
-                      <span className="text-right">T.Tiền</span>
+                      <span className="flex-1 pr-1">Tên món</span>
+                      <span className="w-7 text-center shrink-0">SL</span>
+                      <span className="w-14 text-right shrink-0">Đơn giá</span>
+                      <span className="w-16 text-right shrink-0">T.Tiền</span>
                     </div>
-                    <div className="space-y-1 text-[11px]">
+                    <div className="space-y-1.5 text-[11px]">
                       {getOrderDisplayItems(ord, menu).map((it, i) => (
-                        <div key={i} className="flex justify-between items-center">
-                          <span className="truncate max-w-[140px] font-medium text-slate-800">{it.name}</span>
-                          <span className="text-slate-500 font-mono text-[10px]">
-                            {it.quantity}×{formatVnd(it.price).replace('₫', '')}
+                        <div key={i} className="flex justify-between items-start leading-tight">
+                          <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words text-slate-800">{it.name}</span>
+                          <span className="w-7 text-center font-bold shrink-0">{it.quantity}</span>
+                          <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">
+                            {formatVnd(it.price).replace(' ₫', '')}
                           </span>
-                          <span className="font-bold text-slate-900 font-mono text-right">
-                            {formatVnd(it.quantity * it.price)}
+                          <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
+                            {formatVnd(it.quantity * it.price).replace(' ₫', '')}
                           </span>
                         </div>
                       ))}
@@ -3048,12 +3173,12 @@ export function PortalDashboard({
                   </div>
 
                   <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                    <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                    <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
+                    <p className="font-medium text-slate-800">Chúc quý Thầy / Cô ngon miệng!</p>
+                    <p className="text-[9px] text-slate-400 italic font-mono no-print">JetBrains Mono · Courier New (Monospace)</p>
                   </div>
 
                   {idx < batchPrintOrders.length - 1 && (
-                    <div className="mt-4 pt-2 text-center text-[10px] text-slate-400 border-t border-dashed border-slate-400">
+                    <div className="no-print mt-4 pt-2 text-center text-[10px] text-slate-400 border-t border-dashed border-slate-400">
                       ✂ - - - - - - - - [ VẾT CẮT GIẤY IN NHIỆT POS ] - - - - - - - - ✂
                     </div>
                   )}

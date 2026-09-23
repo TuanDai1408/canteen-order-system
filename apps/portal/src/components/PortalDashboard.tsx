@@ -62,6 +62,7 @@ import {
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
 import { PaginationControls } from './PaginationControls';
+import { exportOrdersToExcel, exportUsersToExcel } from '../utils/exportExcel';
 
 interface Props {
   currentUser: UserProfile;
@@ -1520,7 +1521,7 @@ export function PortalDashboard({
                   ))}
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <select
                     value={orderDeliveryFilter}
                     onChange={(e: any) => setOrderDeliveryFilter(e.target.value)}
@@ -1541,6 +1542,15 @@ export function PortalDashboard({
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
                     />
                   </div>
+
+                  <button
+                    onClick={() => exportOrdersToExcel(filteredOrders)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[40px] whitespace-nowrap transition"
+                    title="Xuất danh sách đơn hàng đã lọc ra file Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Xuất Excel ({filteredOrders.length})</span>
+                  </button>
                 </div>
               </div>
 
@@ -1876,8 +1886,8 @@ export function PortalDashboard({
                   </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <div className="relative min-w-[200px] flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[180px] flex-1">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
@@ -1887,6 +1897,15 @@ export function PortalDashboard({
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px]"
                     />
                   </div>
+
+                  <button
+                    onClick={() => exportUsersToExcel(filteredUsers)}
+                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[38px] whitespace-nowrap transition"
+                    title="Xuất danh sách cán bộ và số dư ví ra file Excel (.xlsx)"
+                  >
+                    <FileSpreadsheet className="w-4 h-4" />
+                    <span>Xuất Excel ({filteredUsers.length})</span>
+                  </button>
 
                   <button
                     onClick={() => setIsAddUserOpen(true)}
@@ -2926,7 +2945,7 @@ export function PortalDashboard({
                 <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
                   <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
                   <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
-                  <p className="text-[10px] text-slate-500">
+                  <p className="text-[10px] text-slate-500 no-print">
                     Khổ in nhiệt K80 / K58
                   </p>
                 </div>
@@ -2965,32 +2984,32 @@ export function PortalDashboard({
                 {/* Monospace aligned column table */}
                 <div className="py-2.5 border-b border-dashed border-slate-400">
                   <div className="flex justify-between font-bold text-[11px] pb-1 border-b border-slate-200 mb-1.5">
-                    <span className="w-1/2">Tên món</span>
-                    <span className="w-10 text-center">SL</span>
-                    <span className="w-16 text-right">Đơn giá</span>
-                    <span className="w-18 text-right">T.Tiền</span>
+                    <span className="flex-1 pr-1">Tên món</span>
+                    <span className="w-7 text-center shrink-0">SL</span>
+                    <span className="w-14 text-right shrink-0">Đơn giá</span>
+                    <span className="w-16 text-right shrink-0">T.Tiền</span>
                   </div>
                   <div className="space-y-1.5 text-[11px]">
                     {(() => {
                       const printItems = getOrderDisplayItems(printReceiptOrder, menu);
                       if (printItems && printItems.length > 0) {
                         return printItems.map((it, idx) => (
-                          <div key={idx} className="flex justify-between items-start">
-                            <span className="w-1/2 pr-1 truncate font-medium">{it.name}</span>
-                            <span className="w-10 text-center font-bold">{it.quantity}</span>
-                            <span className="w-16 text-right text-slate-600">{formatVnd(it.price).replace(' ₫', '')}</span>
-                            <span className="w-18 text-right font-bold text-slate-900">
+                          <div key={idx} className="flex justify-between items-start leading-tight">
+                            <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words">{it.name}</span>
+                            <span className="w-7 text-center font-bold shrink-0">{it.quantity}</span>
+                            <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">{formatVnd(it.price).replace(' ₫', '')}</span>
+                            <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
                               {formatVnd(it.price * it.quantity).replace(' ₫', '')}
                             </span>
                           </div>
                         ));
                       }
                       return (
-                        <div className="flex justify-between items-start">
-                          <span className="w-1/2 pr-1 truncate font-medium">Suất ăn Căn tin</span>
-                          <span className="w-10 text-center font-bold">1</span>
-                          <span className="w-16 text-right text-slate-600">{formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}</span>
-                          <span className="w-18 text-right font-bold text-slate-900">
+                        <div className="flex justify-between items-start leading-tight">
+                          <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words">Suất ăn Căn tin</span>
+                          <span className="w-7 text-center font-bold shrink-0">1</span>
+                          <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">{formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}</span>
+                          <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
                             {formatVnd(printReceiptOrder.totalAmount).replace(' ₫', '')}
                           </span>
                         </div>
@@ -3017,8 +3036,8 @@ export function PortalDashboard({
                 </div>
 
                 <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                  <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                  <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
+                  <p className="font-medium text-slate-800">Chúc quý Thầy / Cô ngon miệng!</p>
+                  <p className="text-[9px] text-slate-400 italic font-mono no-print">JetBrains Mono · Courier New (Monospace)</p>
                 </div>
               </div>
             </div>
@@ -3068,14 +3087,14 @@ export function PortalDashboard({
                   key={ord.id}
                   className="bg-white p-5 rounded-xl border border-slate-300 shadow-sm font-mono text-xs leading-relaxed text-slate-900 pos-printable mx-auto max-w-[340px] relative break-after-page"
                 >
-                  <div className="absolute top-2 right-2 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 border border-slate-200">
+                  <div className="no-print absolute top-2 right-2 px-2 py-0.5 bg-slate-100 rounded text-[10px] font-bold text-slate-600 border border-slate-200">
                     #{idx + 1}/{batchPrintOrders.length}
                   </div>
 
                   <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
                     <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG</h4>
                     <p className="text-[11px] font-bold text-orange-600">A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN</p>
-                    <p className="text-[10px] text-slate-500">Khổ in nhiệt K80 / K58</p>
+                    <p className="text-[10px] text-slate-500 no-print">Khổ in nhiệt K80 / K58</p>
                   </div>
 
                   <div className="py-2.5 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
@@ -3109,19 +3128,21 @@ export function PortalDashboard({
 
                   <div className="py-2.5 border-b border-dashed border-slate-400">
                     <div className="flex justify-between text-[11px] font-bold text-slate-500 mb-1 border-b border-slate-200 pb-1">
-                      <span>Món</span>
-                      <span>SL × Giá</span>
-                      <span className="text-right">T.Tiền</span>
+                      <span className="flex-1 pr-1">Tên món</span>
+                      <span className="w-7 text-center shrink-0">SL</span>
+                      <span className="w-14 text-right shrink-0">Đơn giá</span>
+                      <span className="w-16 text-right shrink-0">T.Tiền</span>
                     </div>
-                    <div className="space-y-1 text-[11px]">
+                    <div className="space-y-1.5 text-[11px]">
                       {getOrderDisplayItems(ord, menu).map((it, i) => (
-                        <div key={i} className="flex justify-between items-center">
-                          <span className="truncate max-w-[140px] font-medium text-slate-800">{it.name}</span>
-                          <span className="text-slate-500 font-mono text-[10px]">
-                            {it.quantity}×{formatVnd(it.price).replace('₫', '')}
+                        <div key={i} className="flex justify-between items-start leading-tight">
+                          <span className="flex-1 pr-1.5 font-medium whitespace-normal break-words text-slate-800">{it.name}</span>
+                          <span className="w-7 text-center font-bold shrink-0">{it.quantity}</span>
+                          <span className="w-14 text-right text-slate-600 shrink-0 font-mono text-[10px]">
+                            {formatVnd(it.price).replace(' ₫', '')}
                           </span>
-                          <span className="font-bold text-slate-900 font-mono text-right">
-                            {formatVnd(it.quantity * it.price)}
+                          <span className="w-16 text-right font-bold text-slate-900 shrink-0 font-mono">
+                            {formatVnd(it.quantity * it.price).replace(' ₫', '')}
                           </span>
                         </div>
                       ))}
@@ -3152,12 +3173,12 @@ export function PortalDashboard({
                   </div>
 
                   <div className="text-center pt-3 text-[10px] text-slate-500 space-y-0.5">
-                    <p className="font-medium">Chúc quý Thầy / Cô ngon miệng!</p>
-                    <p className="text-[9px] text-slate-400 italic font-mono">JetBrains Mono · Courier New (Monospace)</p>
+                    <p className="font-medium text-slate-800">Chúc quý Thầy / Cô ngon miệng!</p>
+                    <p className="text-[9px] text-slate-400 italic font-mono no-print">JetBrains Mono · Courier New (Monospace)</p>
                   </div>
 
                   {idx < batchPrintOrders.length - 1 && (
-                    <div className="mt-4 pt-2 text-center text-[10px] text-slate-400 border-t border-dashed border-slate-400">
+                    <div className="no-print mt-4 pt-2 text-center text-[10px] text-slate-400 border-t border-dashed border-slate-400">
                       ✂ - - - - - - - - [ VẾT CẮT GIẤY IN NHIỆT POS ] - - - - - - - - ✂
                     </div>
                   )}
