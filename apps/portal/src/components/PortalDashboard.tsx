@@ -56,6 +56,7 @@ import {
   ShieldCheck,
   Wallet,
 } from 'lucide-react';
+import { ImageUploader } from './ImageUploader';
 
 interface Props {
   currentUser: UserProfile;
@@ -2005,48 +2006,17 @@ export function PortalDashboard({
                 />
               </div>
 
-              {/* Image selection: Local Computer File or URL */}
+              {/* Image selection via Supabase Storage ImageUploader */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Hình ảnh món ăn (Tải từ máy tính hoặc nhập URL)
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Hình ảnh món ăn (Tự động nén WebP & Lưu Supabase Storage)
                 </label>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <label
-                      htmlFor="new-dish-file"
-                      className="flex-1 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition min-h-[42px]"
-                    >
-                      <Upload className="w-4 h-4" />
-                      <span>Chọn ảnh từ máy tính cá nhân</span>
-                    </label>
-                    <input
-                      id="new-dish-file"
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => handleImageFileChange(e, 'new')}
-                      className="hidden"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="url"
-                      value={newDish.imageUrl}
-                      onChange={(e) => setNewDish({ ...newDish, imageUrl: e.target.value })}
-                      placeholder="Hoặc dán URL hình ảnh..."
-                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
-                    />
-                    {newDish.imageUrl && (
-                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-300 flex-shrink-0 bg-slate-100">
-                        <img
-                          src={newDish.imageUrl}
-                          alt="Xem trước"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ImageUploader
+                  itemId="temp"
+                  currentImageUrl={newDish.imageUrl}
+                  onUploaded={(url) => setNewDish({ ...newDish, imageUrl: url })}
+                  onRemoved={() => setNewDish({ ...newDish, imageUrl: '' })}
+                />
               </div>
 
               <div className="flex gap-2 pt-2">
@@ -2181,50 +2151,17 @@ export function PortalDashboard({
                 />
               </div>
 
-              {/* Image selection: Local Computer File or URL */}
+              {/* Image selection via Supabase Storage ImageUploader */}
               <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Hình ảnh món ăn (Tải từ máy tính hoặc nhập URL)
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Hình ảnh món ăn (Tự động nén WebP & Lưu Supabase Storage)
                 </label>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3">
-                    <label
-                      htmlFor="edit-dish-file"
-                      className="flex-1 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 border border-dashed border-indigo-300 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-2 cursor-pointer transition min-h-[42px]"
-                    >
-                      <Upload className="w-4 h-4" />
-                      <span>Chọn ảnh mới từ máy tính cá nhân</span>
-                    </label>
-                    <input
-                      id="edit-dish-file"
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => handleImageFileChange(e, 'edit')}
-                      className="hidden"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="url"
-                      value={editDishForm.imageUrl}
-                      onChange={(e) =>
-                        setEditDishForm({ ...editDishForm, imageUrl: e.target.value })
-                      }
-                      placeholder="Hoặc dán URL hình ảnh..."
-                      className="flex-1 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
-                    />
-                    {editDishForm.imageUrl && (
-                      <div className="w-10 h-10 rounded-lg overflow-hidden border border-slate-300 flex-shrink-0 bg-slate-100">
-                        <img
-                          src={editDishForm.imageUrl}
-                          alt="Xem trước"
-                          className="w-full h-full object-cover"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
+                <ImageUploader
+                  itemId={editingDish.id}
+                  currentImageUrl={editDishForm.imageUrl}
+                  onUploaded={(url) => setEditDishForm({ ...editDishForm, imageUrl: url })}
+                  onRemoved={() => setEditDishForm({ ...editDishForm, imageUrl: '' })}
+                />
               </div>
 
               <div className="flex items-center gap-2 pt-1">

@@ -64,3 +64,10 @@ export {
 export { detectCurrentDevice } from './utils/deviceDetector';
 export type { DeviceInfo } from './utils/deviceDetector';
 export { getTomorrowStr, getTodayStr, formatVnd } from './utils/date';
+export {
+  compressImage,
+  extractStoragePath,
+  formatBytes,
+  type CompressImageOptions,
+  type CompressResult,
+} from './utils/imageCompressor';
