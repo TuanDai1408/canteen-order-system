@@ -171,16 +171,22 @@ export default function App() {
       }
     };
 
+    const handleTimeGateUpdated = () => {
+      setTimeStatus(getTimeGateStatus());
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
+    window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
 
     const clock = setInterval(() => {
       setTimeStatus(getTimeGateStatus());
-    }, 30_000);
+    }, 15_000);
 
     return () => {
       mounted = false;
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
+      window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
       clearInterval(clock);
     };
   }, [refreshOrderData, refreshPortalData]);

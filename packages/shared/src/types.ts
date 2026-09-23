@@ -28,7 +28,7 @@ export interface MenuItem {
   preparedStock: number;
   currentStock: number;
   isActive: boolean;
-  forDate: string; // YYYY-MM-DD
+  forDate?: string; // YYYY-MM-DD
 }
 
 export type DeliveryMethod = 'dine_in' | 'room_delivery';

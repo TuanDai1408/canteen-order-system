@@ -35,6 +35,7 @@ export {
   DEFAULT_MENU_ITEMS,
   seedMenuToSupabase,
   createMenuItem,
+  bulkCreateMenuItems,
   updateMenuItem,
   placeOrder,
   cancelOrder,

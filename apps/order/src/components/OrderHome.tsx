@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   formatVnd,
   placeOrder,
@@ -76,6 +76,15 @@ export function OrderHome({
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Ticker cập nhật mỗi giây để đồng hồ đếm ngược 5 phút hủy món chạy chính xác
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -253,6 +262,23 @@ export function OrderHome({
   };
 
   const handleCancelOrder = async (orderId: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId);
+    if (targetOrder) {
+      const orderCreatedTime = new Date(targetOrder.createdAt).getTime();
+      const elapsed = Date.now() - orderCreatedTime;
+      // Nếu quá 5 phút (cho phép 10 giây độ trễ mạng)
+      if (elapsed > 5 * 60 * 1000 + 10000) {
+        setFeedbackModal({
+          title: 'Hết thời hạn hủy món',
+          message:
+            'Thời gian cho phép hủy món (5 phút sau khi đặt) đã hết. Suất ăn hiện đã được chuyển tới Bếp để chuẩn bị.',
+          type: 'warning',
+        });
+        setCancellingOrderId(null);
+        return;
+      }
+    }
+
     setSubmitting(true);
     try {
       const result = await cancelOrder(orderId, 'Hủy bởi người dùng');
@@ -831,7 +857,7 @@ export function OrderHome({
                     </div>
 
                     {/* Order Total & Cancel Action */}
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-3 border-t border-slate-100">
                       <div>
                         <span className="text-xs text-slate-500">Tổng thanh toán: </span>
                         <span className="text-sm font-bold text-teal-700">
@@ -839,14 +865,42 @@ export function OrderHome({
                         </span>
                       </div>
 
-                      {isConfirmed && (
-                        <button
-                          onClick={() => setCancellingOrderId(o.id)}
-                          className="text-xs font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl border border-red-200 transition cursor-pointer"
-                        >
-                          Hủy đơn & hoàn tiền
-                        </button>
-                      )}
+                      {isConfirmed && (() => {
+                        const orderCreatedTime = new Date(o.createdAt).getTime();
+                        const elapsedMs = nowMs - orderCreatedTime;
+                        const CANCEL_LIMIT_MS = 5 * 60 * 1000; // 5 phút
+                        const remainingMs = Math.max(0, CANCEL_LIMIT_MS - elapsedMs);
+                        const canCancel = remainingMs > 0;
+                        const remainingSec = Math.floor(remainingMs / 1000);
+                        const mins = Math.floor(remainingSec / 60);
+                        const secs = remainingSec % 60;
+                        const countdownStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+                        if (canCancel) {
+                          return (
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5 text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-xl shadow-2xs">
+                                <Clock className="w-3.5 h-3.5 text-amber-600 animate-pulse" />
+                                <span>Hủy trong <strong className="font-mono text-amber-900">{countdownStr}</strong></span>
+                              </div>
+
+                              <button
+                                onClick={() => setCancellingOrderId(o.id)}
+                                className="text-xs font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-xl border border-red-200 transition cursor-pointer shrink-0"
+                              >
+                                Hủy đơn & hoàn tiền
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div className="flex items-center gap-1.5 text-[11px] font-medium text-slate-400 bg-slate-100/90 border border-slate-200/60 px-2.5 py-1 rounded-xl">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" />
+                            <span>Hết hạn hủy (quá 5 phút)</span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 );
@@ -1126,43 +1180,58 @@ export function OrderHome({
       )}
 
       {/* Cancel Order Confirmation Modal */}
-      {cancellingOrderId && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4">
-            <div className="w-12 h-12 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
-              <AlertCircle className="w-6 h-6" />
-            </div>
-            <div className="text-center">
-              <h3 className="font-bold text-slate-800 text-base">Xác nhận hủy đơn hàng</h3>
-              <p className="text-xs text-slate-500 mt-1">
-                Bạn có chắc chắn muốn hủy đơn hàng này? Số tiền đã thanh toán sẽ được hoàn trả lại ngay vào ví suất ăn của bạn.
-              </p>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button
-                onClick={() => setCancellingOrderId(null)}
-                className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
-              >
-                Không, giữ đơn
-              </button>
-              <button
-                onClick={() => handleCancelOrder(cancellingOrderId)}
-                disabled={submitting}
-                className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
-              >
-                {submitting ? (
-                  <>
-                    <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
-                    <span>Đang hoàn tiền ví...</span>
-                  </>
-                ) : (
-                  'Xác nhận hủy'
-                )}
-              </button>
+      {cancellingOrderId && (() => {
+        const targetOrder = orders.find((o) => o.id === cancellingOrderId);
+        const orderCreatedTime = targetOrder ? new Date(targetOrder.createdAt).getTime() : 0;
+        const elapsedMs = nowMs - orderCreatedTime;
+        const remainingMs = Math.max(0, 5 * 60 * 1000 - elapsedMs);
+        const remainingSec = Math.floor(remainingMs / 1000);
+        const mins = Math.floor(remainingSec / 60);
+        const secs = remainingSec % 60;
+        const countdownStr = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+            <div className="w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-100 space-y-4">
+              <div className="w-12 h-12 bg-red-50 text-red-600 rounded-2xl flex items-center justify-center mx-auto">
+                <AlertCircle className="w-6 h-6" />
+              </div>
+              <div className="text-center">
+                <h3 className="font-bold text-slate-800 text-base">Xác nhận hủy đơn hàng</h3>
+                <p className="text-xs text-slate-500 mt-1">
+                  Bạn có chắc chắn muốn hủy đơn hàng này? Số tiền đã thanh toán sẽ được hoàn trả lại ngay vào ví suất ăn của bạn.
+                </p>
+                <div className="mt-3 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold text-amber-800">
+                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                  <span>Thời gian còn lại để hủy: <strong className="font-mono text-amber-900">{countdownStr}</strong></span>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={() => setCancellingOrderId(null)}
+                  className="flex-1 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-700 font-semibold text-xs rounded-xl cursor-pointer"
+                >
+                  Không, giữ đơn
+                </button>
+                <button
+                  onClick={() => handleCancelOrder(cancellingOrderId)}
+                  disabled={submitting || remainingMs <= 0}
+                  className="flex-1 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                      <span>Đang hoàn tiền ví...</span>
+                    </>
+                  ) : (
+                    'Xác nhận hủy'
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ================= MODAL: FEEDBACK / POPUP THÔNG BÁO ================= */}
       {feedbackModal && (
