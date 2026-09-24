@@ -419,11 +419,11 @@ export function OrderHome({
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">
-                  <span className="text-orange-500">A.</span>
-                  <span className="text-emerald-400">KITCHEN</span>
+                  <span className="text-red-500">Cơm Ngon </span>
+                  <span className="text-red-400 font-black">SIBA</span>
                 </span>
-                <span className="hidden xs:inline-block text-xs font-semibold text-slate-300">
-                  · Bếp ăn ĐH Hùng Vương
+                <span className="hidden xs:inline-block text-[11px] font-bold text-red-300 uppercase tracking-wider">
+                  · Ăn Sạch – Sống Khỏe
                 </span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />

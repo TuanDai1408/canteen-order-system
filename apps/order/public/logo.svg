@@ -1,112 +1,95 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 200" width="100%" height="100%">
   <defs>
-    <!-- Carrot Gradient -->
-    <linearGradient id="carrotGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FF6B35" />
+    <!-- Vibrant Siba Gradients -->
+    <linearGradient id="sibaRedGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#EF4444" />
+      <stop offset="50%" stop-color="#DC2626" />
+      <stop offset="100%" stop-color="#B91C1C" />
+    </linearGradient>
+
+    <linearGradient id="sibaOrangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F97316" />
       <stop offset="100%" stop-color="#EA580C" />
     </linearGradient>
 
-    <!-- Asparagus / Top Arch Gradient -->
-    <linearGradient id="asparagusGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2D7A47" />
-      <stop offset="50%" stop-color="#1E6535" />
-      <stop offset="100%" stop-color="#144D27" />
+    <linearGradient id="sibaGoldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FBBF24" />
+      <stop offset="100%" stop-color="#F59E0B" />
     </linearGradient>
 
-    <!-- Lettuce Right Leg Gradient -->
-    <linearGradient id="lettuceGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#238243" />
-      <stop offset="100%" stop-color="#14532D" />
-    </linearGradient>
-
-    <!-- Bowl Gradient -->
-    <linearGradient id="bowlGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#FF5D22" />
-      <stop offset="100%" stop-color="#DC2626" />
-    </linearGradient>
+    <filter id="softGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#DC2626" flood-opacity="0.18" />
+    </filter>
   </defs>
 
-  <g transform="translate(0, -10)">
-    <!-- Top Arch / Asparagus Spear Forming the 'A' Peak -->
-    <!-- Left top arch -->
-    <path d="M 175 220 C 185 150, 215 95, 250 95 C 285 95, 315 150, 325 220" 
-          fill="none" stroke="url(#asparagusGrad)" stroke-width="48" stroke-linecap="round" />
+  <!-- ICON GROUP: Rice Bowl + Heart Steam + Caring Hand -->
+  <g transform="translate(15, 10)" filter="url(#softGlow)">
+    <!-- Rice Fluff Clouds in Bowl -->
+    <path d="M 60 92 C 50 68, 80 50, 100 62 C 115 48, 145 48, 158 65 C 175 52, 205 68, 198 92 Z" 
+          fill="#FFF7ED" stroke="url(#sibaRedGrad)" stroke-width="4.5" stroke-linejoin="round" />
 
-    <!-- Asparagus Textures (Little V-shaped buds) -->
-    <g fill="#A3E635" opacity="0.85">
-      <ellipse cx="250" cy="100" rx="4" ry="7" transform="rotate(0 250 100)" />
-      <ellipse cx="232" cy="115" rx="3.5" ry="6" transform="rotate(-25 232 115)" />
-      <ellipse cx="268" cy="115" rx="3.5" ry="6" transform="rotate(25 268 115)" />
-      <ellipse cx="218" cy="138" rx="3.5" ry="6" transform="rotate(-35 218 138)" />
-      <ellipse cx="282" cy="138" rx="3.5" ry="6" transform="rotate(35 282 138)" />
-      <ellipse cx="205" cy="165" rx="3.5" ry="6" transform="rotate(-40 205 165)" />
-      <ellipse cx="295" cy="165" rx="3.5" ry="6" transform="rotate(40 295 165)" />
-      <ellipse cx="195" cy="195" rx="3.5" ry="6" transform="rotate(-45 195 195)" />
-      <ellipse cx="305" cy="195" rx="3.5" ry="6" transform="rotate(45 305 195)" />
-    </g>
+    <!-- Center Heart in Steam -->
+    <path d="M 130 38 C 130 38, 120 22, 108 28 C 96 34, 100 50, 130 72 C 160 50, 164 34, 152 28 C 140 22, 130 38, 130 38 Z" 
+          fill="url(#sibaRedGrad)" />
 
-    <!-- Left Leg: Carrot -->
-    <path d="M 180 200 L 140 320 C 130 350, 150 365, 175 355 L 205 240 Z" 
-          fill="url(#carrotGrad)" />
-    <!-- Carrot rounded tip -->
-    <circle cx="152" cy="340" r="24" fill="url(#carrotGrad)" />
+    <!-- Small Sparkles / Steam accents -->
+    <circle cx="92" cy="42" r="3.5" fill="url(#sibaGoldGrad)" />
+    <circle cx="168" cy="42" r="3.5" fill="url(#sibaGoldGrad)" />
 
-    <!-- Right Leg: Deep Forest Green Veggie / Lettuce -->
-    <path d="M 320 200 L 360 320 C 370 350, 350 365, 325 355 L 295 240 Z" 
-          fill="url(#lettuceGrad)" />
-    <!-- Right leg rounded base -->
-    <circle cx="348" cy="340" r="24" fill="url(#lettuceGrad)" />
+    <!-- Rice Bowl (Smooth curved bowl) -->
+    <path d="M 50 90 Q 130 90 210 90 C 205 145, 55 145, 50 90 Z" 
+          fill="url(#sibaRedGrad)" stroke="#FFFFFF" stroke-width="2.5" />
 
-    <!-- Left Inner Accent: Orange/Citrus slice -->
-    <g transform="translate(182, 260) rotate(-15)">
-      <circle cx="0" cy="0" r="26" fill="#FDBA74" stroke="#EA580C" stroke-width="4" />
-      <circle cx="0" cy="0" r="20" fill="#FFF7ED" />
-      <circle cx="0" cy="0" r="14" fill="#FB923C" />
-      <!-- Segments -->
-      <line x1="-14" y1="0" x2="14" y2="0" stroke="#FFF7ED" stroke-width="2.5" />
-      <line x1="0" y1="-14" x2="0" y2="14" stroke="#FFF7ED" stroke-width="2.5" />
-      <line x1="-10" y1="-10" x2="10" y2="10" stroke="#FFF7ED" stroke-width="2.5" />
-      <line x1="-10" y1="10" x2="10" y2="-10" stroke="#FFF7ED" stroke-width="2.5" />
-    </g>
+    <!-- Bowl Highlight Rim -->
+    <path d="M 58 98 Q 130 102 202 98" 
+          fill="none" stroke="#FEE2E2" stroke-width="3" stroke-linecap="round" opacity="0.85" />
+    <path d="M 75 116 C 85 130, 110 138, 130 138" 
+          fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" opacity="0.6" />
 
-    <!-- Right Inner Accent: Crispy Green Cabbage / Leaf -->
-    <g transform="translate(315, 245)">
-      <path d="M -10 -25 C 15 -35, 35 -10, 30 15 C 25 35, 0 40, -15 25 C -25 15, -20 -15, -10 -25 Z" 
-            fill="#4ADE80" stroke="#15803D" stroke-width="3" />
-      <path d="M -5 -20 C 5 0, 10 15, 5 30" fill="none" stroke="#DCFCE7" stroke-width="2" />
-      <path d="M 0 -5 C 12 -10, 20 -5, 22 5" fill="none" stroke="#DCFCE7" stroke-width="1.5" />
-      <path d="M 3 10 C 15 12, 20 18, 18 25" fill="none" stroke="#DCFCE7" stroke-width="1.5" />
-    </g>
-
-    <!-- Center: Rice Bowl -->
-    <!-- Fluffy White Rice on top of bowl -->
-    <path d="M 200 240 C 190 205, 230 190, 250 200 C 270 190, 310 205, 300 240 Z" 
-          fill="#FFFFFF" stroke="#F97316" stroke-width="3" />
-    <!-- Rice grains detail -->
-    <g fill="#F97316" opacity="0.8">
-      <ellipse cx="232" cy="225" rx="3.5" ry="2" transform="rotate(-15 232 225)" />
-      <ellipse cx="250" cy="216" rx="3.5" ry="2" />
-      <ellipse cx="268" cy="225" rx="3.5" ry="2" transform="rotate(15 268 225)" />
-      <ellipse cx="242" cy="235" rx="3" ry="1.8" transform="rotate(20 242 235)" />
-      <ellipse cx="258" cy="235" rx="3" ry="1.8" transform="rotate(-20 258 235)" />
-    </g>
-
-    <!-- Orange Bowl Body -->
-    <path d="M 185 240 Q 250 240 315 240 C 315 295, 185 295, 185 240 Z" 
-          fill="url(#bowlGrad)" stroke="#FFFFFF" stroke-width="2" />
-    <!-- Bowl Highlights & Shine -->
-    <path d="M 202 250 C 205 270, 215 278, 225 278" 
-          fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linecap="round" opacity="0.9" />
-    <circle cx="235" cy="281" r="2" fill="#FFFFFF" opacity="0.9" />
-
-    <!-- Bowl Base / Pedestal -->
-    <path d="M 220 295 L 280 295 L 286 308 L 214 308 Z" fill="#EA580C" />
+    <!-- Caring Gentle Hand Supporting the Bowl -->
+    <path d="M 45 135 C 50 165, 80 185, 125 185 C 165 185, 195 165, 212 142 C 218 135, 212 125, 202 130 C 180 148, 155 158, 125 158 C 95 158, 70 148, 55 125 C 48 115, 42 122, 45 135 Z" 
+          fill="url(#sibaRedGrad)" />
+    
+    <!-- Delicate hand wrist curve -->
+    <path d="M 45 135 C 32 155, 30 180, 52 190 C 75 200, 110 195, 135 190" 
+          fill="none" stroke="url(#sibaRedGrad)" stroke-width="3" stroke-linecap="round" opacity="0.5" />
   </g>
 
-  <!-- Brand Typography: A.KITCHEN -->
-  <g text-anchor="middle" font-family="'Nunito', 'Segoe UI', system-ui, -apple-system, sans-serif" font-weight="900">
-    <text x="250" y="420" font-size="44" letter-spacing="6">
-      <tspan fill="#EA580C">A.</tspan><tspan fill="#166534">KITCHEN</tspan>
-    </text>
+  <!-- TEXT GROUP: Cơm Ngon SIBA & Slogan -->
+  <g transform="translate(230, 0)">
+    <!-- "Cơm Ngon" Text -->
+    <text x="0" y="78" 
+          font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', sans-serif" 
+          font-size="44" 
+          font-weight="800" 
+          fill="url(#sibaRedGrad)" 
+          letter-spacing="-0.5">Cơm Ngon</text>
+
+    <!-- "SIBA" Text (Bold & Prominent) -->
+    <text x="235" y="80" 
+          font-family="'Be Vietnam Pro', 'Montserrat', 'Arial Black', sans-serif" 
+          font-size="62" 
+          font-weight="900" 
+          fill="url(#sibaRedGrad)" 
+          letter-spacing="2">SIBA</text>
+
+    <!-- Slogan Underline Bar / Accent -->
+    <rect x="2" y="98" width="345" height="3" rx="1.5" fill="url(#sibaGoldGrad)" opacity="0.8" />
+
+    <!-- Slogan: ĂN SẠCH – SỐNG KHỎE -->
+    <text x="4" y="132" 
+          font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', sans-serif" 
+          font-size="19" 
+          font-weight="800" 
+          fill="#DC2626" 
+          letter-spacing="5">ĂN SẠCH – SỐNG KHỎE</text>
+
+    <!-- Small Badge: Căn Tin / Suất Ăn Học Đường & Công Sở -->
+    <text x="4" y="158" 
+          font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', sans-serif" 
+          font-size="12" 
+          font-weight="600" 
+          fill="#78716C" 
+          letter-spacing="1">HỆ THỐNG SUẤT ĂN DINH DƯỠNG TIÊU CHUẨN</text>
   </g>
 </svg>

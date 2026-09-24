@@ -5,7 +5,7 @@ import { formatVnd, getOrderDisplayItems } from '@canteen/shared';
 /**
  * Xuất danh sách đơn hàng ra file Excel (.xlsx) chuẩn tiếng Việt có dấu
  */
-export function exportOrdersToExcel(orders: Order[], filenamePrefix = 'Danh_sach_don_hang_Canteen'): void {
+export function exportOrdersToExcel(orders: Order[], filenamePrefix = 'Danh_sach_don_hang_Com_ngon_Siba'): void {
   if (!orders || orders.length === 0) {
     alert('Không có dữ liệu đơn hàng để xuất Excel.');
     return;

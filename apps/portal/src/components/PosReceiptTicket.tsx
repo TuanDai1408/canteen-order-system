@@ -50,10 +50,10 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
       {/* Header */}
       <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
         <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">
-          BẾP ĂN ĐẠI HỌC HÙNG VƯƠNG
+          CƠM NGON SIBA
         </h4>
-        <p className="text-[11px] font-bold text-orange-600">
-          A.KITCHEN · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN
+        <p className="text-[11px] font-bold text-red-600">
+          ĂN SẠCH – SỐNG KHỎE · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN
         </p>
         {!isPrintMode && (
           <p className="text-[10px] text-slate-400 no-print">

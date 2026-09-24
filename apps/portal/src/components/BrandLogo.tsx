@@ -11,7 +11,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
   className = '',
   size = 40,
   showText = false,
-  subTitle = 'Bếp ăn Đại Học Hùng Vương',
+  subTitle = 'ĂN SẠCH – SỐNG KHỎE',
 }) => {
   const numSize = typeof size === 'number' ? size : parseInt(String(size), 10) || 40;
 
@@ -19,7 +19,7 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
     <div className={`inline-flex items-center gap-2.5 ${className}`}>
       <img
         src="/logo.svg"
-        alt="A.KITCHEN Logo"
+        alt="Cơm Ngon SIBA Logo"
         width={numSize}
         height={numSize}
         style={{ width: `${numSize}px`, height: `${numSize}px` }}
@@ -29,11 +29,11 @@ export const BrandLogo: React.FC<BrandLogoProps> = ({
       {showText && (
         <div className="flex flex-col">
           <span className="font-extrabold text-sm sm:text-base tracking-tight text-slate-900 leading-tight">
-            <span className="text-orange-600">A.</span>
-            <span className="text-emerald-700">KITCHEN</span>
+            <span className="text-red-600">Cơm Ngon </span>
+            <span className="text-red-700 font-black">SIBA</span>
           </span>
           {subTitle && (
-            <span className="text-[11px] font-semibold text-slate-500 leading-none mt-0.5">
+            <span className="text-[10px] sm:text-[11px] font-bold text-red-600/80 tracking-wider uppercase leading-none mt-0.5">
               {subTitle}
             </span>
           )}
