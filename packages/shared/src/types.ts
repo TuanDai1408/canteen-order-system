@@ -81,6 +81,7 @@ export interface QRExceptionToken {
   createdBy: string;
   createdByName: string;
   isUsed: boolean;
+  isDisabled?: boolean;
   usedBy?: string;
   usedAt?: string;
   note?: string;

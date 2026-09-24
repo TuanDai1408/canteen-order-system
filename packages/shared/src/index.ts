@@ -51,6 +51,8 @@ export {
   setCustomTimeGateConfig,
   type TimeGateConfig,
   createQRToken,
+  toggleQRTokenStatus,
+  deleteQRToken,
   getQRTokens,
   getCachedQRTokens,
   setCachedQRTokens,

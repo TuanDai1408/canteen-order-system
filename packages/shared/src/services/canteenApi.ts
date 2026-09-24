@@ -185,7 +185,7 @@ export function getCachedQRTokens(): QRExceptionToken[] {
     const saved = localStorage.getItem(QR_TOKENS_STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed)) return parsed;
     }
   } catch {}
   return [];
@@ -193,7 +193,7 @@ export function getCachedQRTokens(): QRExceptionToken[] {
 
 export function setCachedQRTokens(tokens: QRExceptionToken[]) {
   try {
-    if (Array.isArray(tokens) && tokens.length > 0) {
+    if (Array.isArray(tokens)) {
       localStorage.setItem(QR_TOKENS_STORAGE_KEY, JSON.stringify(tokens));
     }
   } catch {}
@@ -883,10 +883,9 @@ export async function placeOrder(params: {
     return { success: false, error: 'Giỏ hàng trống. Vui lòng chọn ít nhất 1 món ăn.' };
   }
 
-  // Kiểm tra mã QR ngoại lệ và giới hạn số suất đặt nếu đặt ngoài giờ
+  // Kiểm tra mã QR ngoại lệ và giới hạn số lượt đặt nếu đặt ngoài giờ
   const cleanToken = params.exceptionToken?.trim();
   let matchedToken: QRExceptionToken | null = null;
-  const totalRequestedMeals = params.items.reduce((s, it) => s + (Number(it.quantity) || 1), 0);
 
   if (params.isExceptionOrder || cleanToken) {
     if (!cleanToken) {
@@ -918,6 +917,13 @@ export async function placeOrder(params: {
       };
     }
 
+    if (matchedToken.isDisabled) {
+      return {
+        success: false,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã bị Quản trị viên vô hiệu hóa. Không thể sử dụng để đặt món.`,
+      };
+    }
+
     if (new Date(matchedToken.expiresAt).getTime() < Date.now()) {
       return {
         success: false,
@@ -925,27 +931,16 @@ export async function placeOrder(params: {
       };
     }
 
-    if (matchedToken.isUsed) {
-      return {
-        success: false,
-        error: `Mã QR ngoại lệ "${cleanToken}" đã hết hiệu lực do đã sử dụng đủ số suất cho phép.`,
-      };
-    }
-
-    const allowedQty = Number(matchedToken.quantity) || 1;
+    const allowedQty = Number(matchedToken.quantity) || 1; // Số LƯỢT ĐẶT đơn hàng cho phép
     const allCachedOrders = getCachedOrders();
     const tokenOrders = allCachedOrders.filter(
       (o) =>
         (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
         ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
     );
-    const ordersUsedMeals = tokenOrders.reduce((sum, o) => {
-      const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
-      return sum + orderMeals;
-    }, 0);
-    const usedMealsCount = Math.max(ordersUsedMeals, Number(matchedToken.usedCount || 0));
+    const usedOrdersCount = Math.max(tokenOrders.length, Number(matchedToken.usedCount || 0));
 
-    if (usedMealsCount >= allowedQty) {
+    if (matchedToken.isUsed || usedOrdersCount >= allowedQty) {
       matchedToken.isUsed = true;
       if (isSupabaseConfigured && supabase) {
         try {
@@ -954,15 +949,7 @@ export async function placeOrder(params: {
       }
       return {
         success: false,
-        error: `Mã QR ngoại lệ "${cleanToken}" đã hết lượt sử dụng (${usedMealsCount}/${allowedQty} suất). Không thể sử dụng mã này được nữa.`,
-      };
-    }
-
-    if (usedMealsCount + totalRequestedMeals > allowedQty) {
-      const remainingMeals = Math.max(0, allowedQty - usedMealsCount);
-      return {
-        success: false,
-        error: `Mã QR ngoại lệ chỉ còn lại ${remainingMeals} lượt đặt (bạn đang chọn ${totalRequestedMeals} suất). Vui lòng giảm số lượng suất ăn.`,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã hết số lượt đặt cho phép (đã dùng ${usedOrdersCount}/${allowedQty} lượt đặt). Không thể sử dụng mã này được nữa.`,
       };
     }
   }
@@ -1509,22 +1496,27 @@ export async function placeOrder(params: {
         (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
         ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
     );
-    const prevUsed = tokenOrders.reduce((sum, o) => {
-      const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
-      return sum + orderMeals;
-    }, 0);
-    const totalUsedMeals = Math.max(prevUsed + totalRequestedMeals, Number(matchedToken.usedCount || 0) + totalRequestedMeals);
-    const isFullyUsed = totalUsedMeals >= allowedQty;
+    // Mỗi đơn hàng đặt thành công = 1 LƯỢT ĐẶT
+    const prevUsedOrders = Math.max(tokenOrders.length, Number(matchedToken.usedCount || 0));
+    const totalUsedOrders = prevUsedOrders + 1;
+    const isFullyUsed = totalUsedOrders >= allowedQty;
+
+    const updatedNote = matchedToken.note
+      ? (matchedToken.note.includes('[Đã dùng:')
+          ? matchedToken.note.replace(/\[Đã dùng:\s*\d+\/\d+\s*lượt\]/i, `[Đã dùng: ${totalUsedOrders}/${allowedQty} lượt]`)
+          : `${matchedToken.note} [Đã dùng: ${totalUsedOrders}/${allowedQty} lượt]`)
+      : `[Đã dùng: ${totalUsedOrders}/${allowedQty} lượt]`;
 
     if (isSupabaseConfigured && supabase) {
       try {
         await supabase
           .from('qr_exception_tokens')
           .update({
-            used_count: totalUsedMeals,
+            used_count: totalUsedOrders,
             is_used: isFullyUsed,
             used_by: userData.name || authUser.email || 'Người dùng',
             used_at: new Date().toISOString(),
+            note: updatedNote,
           })
           .eq('token', matchedToken.token);
       } catch (e) {
@@ -1537,14 +1529,38 @@ export async function placeOrder(params: {
       t.token.toUpperCase() === cleanToken.toUpperCase()
         ? {
             ...t,
-            usedCount: totalUsedMeals,
+            usedCount: totalUsedOrders,
             isUsed: isFullyUsed,
             usedBy: userData.name || authUser.email || 'Người dùng',
             usedAt: new Date().toISOString(),
+            note: updatedNote,
           }
         : t
     );
     setCachedQRTokens(updatedTokens);
+
+    // Phát tín hiệu broadcast cập nhật mã QR
+    try {
+      if (broadcastSyncChannel) {
+        broadcastSyncChannel.postMessage({
+          type: 'qr_token_updated',
+          token: matchedToken.token,
+          usedCount: totalUsedOrders,
+          isUsed: isFullyUsed,
+        });
+      }
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('canteen_qr_token_updated', {
+            detail: { token: matchedToken.token, usedCount: totalUsedOrders, isUsed: isFullyUsed },
+          })
+        );
+        localStorage.setItem(
+          'canteen_last_qr_token_event',
+          JSON.stringify({ token: matchedToken.token, usedCount: totalUsedOrders, isUsed: isFullyUsed, time: Date.now() })
+        );
+      }
+    } catch {}
   }
 
   const userOrders = getCachedOrders(userData.id);
@@ -2280,19 +2296,155 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
       'Timeout fetch qr_exception_tokens'
     );
 
+    const allOrders = getCachedOrders();
+
     if (!error && data) {
-      const list = data.map(mapQRToken);
+      const list = data.map((row) => {
+        const tokenObj = mapQRToken(row);
+        const actualOrders = allOrders.filter(
+          (o) =>
+            (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === tokenObj.token.toUpperCase()) ||
+            ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === tokenObj.token.toUpperCase())
+        );
+        const dynamicUsed = Math.max(Number(tokenObj.usedCount) || 0, actualOrders.length);
+        const qty = Number(tokenObj.quantity) || 1;
+        tokenObj.usedCount = dynamicUsed;
+        tokenObj.isUsed = tokenObj.isUsed || dynamicUsed >= qty;
+        return tokenObj;
+      });
       setCachedQRTokens(list);
       return list;
     }
     if (error) {
       console.warn('[getQRTokens notice]:', error.message);
     }
-    return getCachedQRTokens();
+
+    const cached = getCachedQRTokens();
+    const recalculated = cached.map((t) => {
+      const actualOrders = allOrders.filter(
+        (o) =>
+          (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === t.token.toUpperCase()) ||
+          ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === t.token.toUpperCase())
+      );
+      const dynamicUsed = Math.max(Number(t.usedCount) || 0, actualOrders.length);
+      const qty = Number(t.quantity) || 1;
+      return {
+        ...t,
+        usedCount: dynamicUsed,
+        isUsed: t.isUsed || dynamicUsed >= qty,
+      };
+    });
+    setCachedQRTokens(recalculated);
+    return recalculated;
   } catch (err) {
     console.warn('[getQRTokens error]:', err);
     return getCachedQRTokens();
   }
+}
+
+/**
+ * Vô hiệu hóa hoặc kích hoạt lại mã QR ngoại lệ
+ */
+export async function toggleQRTokenStatus(
+  tokenString: string,
+  isDisabled: boolean
+): Promise<QRExceptionToken> {
+  checkSupabase();
+  const cleanToken = tokenString.trim();
+
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { error } = await supabase
+        .from('qr_exception_tokens')
+        .update({
+          is_disabled: isDisabled,
+        })
+        .eq('token', cleanToken);
+
+      if (error) {
+        // Fallback: update is_used flag if is_disabled column not in table
+        await supabase
+          .from('qr_exception_tokens')
+          .update({
+            is_used: isDisabled,
+          })
+          .eq('token', cleanToken);
+      }
+    } catch (e) {
+      console.warn('toggleQRTokenStatus err:', e);
+    }
+  }
+
+  const cached = getCachedQRTokens();
+  let updatedToken: QRExceptionToken | null = null;
+  const updatedList = cached.map((t) => {
+    if (t.token.toUpperCase() === cleanToken.toUpperCase()) {
+      updatedToken = {
+        ...t,
+        isDisabled,
+      };
+      return updatedToken;
+    }
+    return t;
+  });
+  setCachedQRTokens(updatedList);
+
+  // Broadcast QR update
+  try {
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({
+        type: 'qr_token_updated',
+        token: cleanToken,
+        isDisabled,
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('canteen_qr_token_updated', {
+          detail: { token: cleanToken, isDisabled },
+        })
+      );
+      localStorage.setItem(
+        'canteen_last_qr_token_event',
+        JSON.stringify({ token: cleanToken, isDisabled, time: Date.now() })
+      );
+    }
+  } catch {}
+
+  if (!updatedToken) {
+    throw new Error(`Không tìm thấy mã QR "${cleanToken}"`);
+  }
+  return updatedToken;
+}
+
+/**
+ * Xóa mã QR ngoại lệ
+ */
+export async function deleteQRToken(tokenString: string): Promise<boolean> {
+  checkSupabase();
+  const cleanToken = tokenString.trim();
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('qr_exception_tokens').delete().eq('token', cleanToken);
+    } catch (e) {
+      console.warn('deleteQRToken err:', e);
+    }
+  }
+
+  const cached = getCachedQRTokens();
+  const updatedList = cached.filter((t) => t.token.toUpperCase() !== cleanToken.toUpperCase());
+  setCachedQRTokens(updatedList);
+
+  try {
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({ type: 'qr_token_deleted', token: cleanToken });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('canteen_qr_token_updated', { detail: { token: cleanToken, deleted: true } }));
+    }
+  } catch {}
+
+  return true;
 }
 
 // ============================================================
@@ -2603,7 +2755,10 @@ export function subscribeRealtime(callback: () => void) {
       ev.data?.type === 'order_created' ||
       ev.data?.type === 'order_updated' ||
       ev.data?.type === 'order_cancelled' ||
-      ev.data?.type === 'wallet_updated'
+      ev.data?.type === 'wallet_updated' ||
+      ev.data?.type === 'qr_token_updated' ||
+      ev.data?.type === 'qr_token_created' ||
+      ev.data?.type === 'qr_token_deleted'
     ) {
       callback();
     }
@@ -2614,6 +2769,7 @@ export function subscribeRealtime(callback: () => void) {
     window.addEventListener('canteen_order_updated', localHandler);
     window.addEventListener('canteen_order_cancelled', localHandler);
     window.addEventListener('canteen_time_gate_updated', localHandler);
+    window.addEventListener('canteen_qr_token_updated', localHandler);
     window.addEventListener('storage', localHandler);
   }
 
@@ -2628,6 +2784,7 @@ export function subscribeRealtime(callback: () => void) {
         window.removeEventListener('canteen_order_updated', localHandler);
         window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
+        window.removeEventListener('canteen_qr_token_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }
       if (broadcastSyncChannel) {
@@ -2667,6 +2824,7 @@ export function subscribeRealtime(callback: () => void) {
         window.removeEventListener('canteen_order_updated', localHandler);
         window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
+        window.removeEventListener('canteen_qr_token_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }
       if (broadcastSyncChannel) {
@@ -2680,6 +2838,7 @@ export function subscribeRealtime(callback: () => void) {
         window.removeEventListener('canteen_order_updated', localHandler);
         window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
+        window.removeEventListener('canteen_qr_token_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }
       if (broadcastSyncChannel) {
@@ -2976,7 +3135,16 @@ function mapQRToken(row: any): QRExceptionToken {
     if (m) qty = parseInt(m[1], 10);
   }
 
-  const usedCount = Number(row.used_count || row.usedCount || 0);
+  let usedCount = Number(row.used_count || row.usedCount || 0);
+  if (usedCount === 0 && row.note) {
+    const mUsed = String(row.note).match(/\[Đã dùng:\s*(\d+)\/\d+\s*lượt\]/i);
+    if (mUsed) usedCount = parseInt(mUsed[1], 10);
+  }
+
+  const isDisabled = Boolean(
+    row.is_disabled ||
+    (row.isDisabled !== undefined ? row.isDisabled : false)
+  );
   const isUsed = Boolean(row.is_used || (usedCount >= qty && qty > 0));
 
   return {
@@ -2986,6 +3154,7 @@ function mapQRToken(row: any): QRExceptionToken {
     createdBy: row.created_by,
     createdByName: row.created_by_name || '',
     isUsed,
+    isDisabled,
     usedBy: row.used_by,
     usedAt: row.used_at,
     note: row.note,

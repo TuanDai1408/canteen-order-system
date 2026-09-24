@@ -6,6 +6,8 @@ import {
   createMenuItem,
   seedMenuToSupabase,
   createQRToken,
+  toggleQRTokenStatus,
+  deleteQRToken,
   updateOrderStatus,
   updateUserWallet,
   createUserByAdmin,
@@ -70,6 +72,12 @@ import {
   RotateCcw,
   Phone,
   Mail,
+  Ban,
+  Power,
+  Lock,
+  Unlock,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -547,6 +555,10 @@ export function PortalDashboard({
 
   const [qrPage, setQrPage] = useState(1);
   const [qrPageSize, setQrPageSize] = useState(10);
+  const [qrSearch, setQrSearch] = useState('');
+  const [qrStatusFilter, setQrStatusFilter] = useState<'all' | 'active' | 'disabled' | 'used' | 'expired'>('all');
+  const [togglingQRToken, setTogglingQRToken] = useState<string | null>(null);
+  const [deletingQRToken, setDeletingQRToken] = useState<string | null>(null);
 
   // Reset page numbers when search / filters change
   useEffect(() => {
@@ -560,6 +572,10 @@ export function PortalDashboard({
   useEffect(() => {
     setMenuPage(1);
   }, [menuSearch, menuFilterCat]);
+
+  useEffect(() => {
+    setQrPage(1);
+  }, [qrSearch, qrStatusFilter]);
 
   // Paginated Slices
   const sortedOverviewOrders = useMemo(() => {
@@ -588,10 +604,76 @@ export function PortalDashboard({
     return filteredMenu.slice(start, start + menuPageSize);
   }, [filteredMenu, menuPage, menuPageSize]);
 
+  // Enriched QR Tokens with real-time dynamic usage from Orders
+  const enrichedTokens = useMemo(() => {
+    return tokens.map((t) => {
+      const cleanToken = t.token.trim().toUpperCase();
+      const matchingOrders = orders.filter(
+        (o) =>
+          o.status !== 'cancelled' &&
+          ((o.exceptionTokenUsed && o.exceptionTokenUsed.trim().toUpperCase() === cleanToken) ||
+           ((o as any).used_qr_token && String((o as any).used_qr_token).trim().toUpperCase() === cleanToken) ||
+           (o.note && o.note.toUpperCase().includes(cleanToken)))
+      );
+
+      const actualOrdersCount = matchingOrders.length;
+      const effectiveUsed = Math.max(Number(t.usedCount) || 0, actualOrdersCount);
+      const qty = Number(t.quantity) || 1;
+      const remaining = Math.max(0, qty - effectiveUsed);
+      const isFullyUsed = t.isUsed || remaining <= 0;
+      const isExpired = new Date(t.expiresAt).getTime() < Date.now();
+      const isDisabled = Boolean(t.isDisabled);
+
+      const usedUserNames = Array.from(
+        new Set(matchingOrders.map((o) => o.userName || '').filter(Boolean))
+      );
+
+      return {
+        ...t,
+        quantity: qty,
+        usedCount: effectiveUsed,
+        remaining,
+        isFullyUsed,
+        isExpired,
+        isDisabled,
+        matchingOrdersCount: actualOrdersCount,
+        usedUserNames,
+        matchingOrders,
+      };
+    });
+  }, [tokens, orders]);
+
+  const filteredTokens = useMemo(() => {
+    return enrichedTokens.filter((t) => {
+      const matchSearch =
+        !qrSearch.trim() ||
+        t.token.toLowerCase().includes(qrSearch.toLowerCase()) ||
+        (t.note && t.note.toLowerCase().includes(qrSearch.toLowerCase())) ||
+        (t.createdByName && t.createdByName.toLowerCase().includes(qrSearch.toLowerCase())) ||
+        t.usedUserNames.some((u) => u.toLowerCase().includes(qrSearch.toLowerCase()));
+
+      if (!matchSearch) return false;
+
+      if (qrStatusFilter === 'active') {
+        return !t.isDisabled && !t.isExpired && !t.isFullyUsed;
+      }
+      if (qrStatusFilter === 'disabled') {
+        return t.isDisabled;
+      }
+      if (qrStatusFilter === 'used') {
+        return t.isFullyUsed;
+      }
+      if (qrStatusFilter === 'expired') {
+        return t.isExpired && !t.isFullyUsed && !t.isDisabled;
+      }
+      return true;
+    });
+  }, [enrichedTokens, qrSearch, qrStatusFilter]);
+
   const paginatedTokens = useMemo(() => {
     const start = (qrPage - 1) * qrPageSize;
-    return tokens.slice(start, start + qrPageSize);
-  }, [tokens, qrPage, qrPageSize]);
+    return filteredTokens.slice(start, start + qrPageSize);
+  }, [filteredTokens, qrPage, qrPageSize]);
 
   // Handle Approve User & Fund Initial Wallet
   const handleApproveUser = async (e: React.FormEvent) => {
@@ -640,7 +722,7 @@ export function PortalDashboard({
       const token = await createQRToken(currentUser, qrNote, qrExpiryMins, qrQuantity);
       setMsg({
         type: 'ok',
-        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượng: ${qrQuantity} suất)`,
+        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượt đặt: ${qrQuantity} lượt)`,
       });
       setIsCreateQROpen(false);
       onRefresh();
@@ -648,6 +730,43 @@ export function PortalDashboard({
       setMsg({ type: 'err', text: e.message || 'Lỗi khi tạo mã QR' });
     } finally {
       setIsCreatingQR(false);
+    }
+  };
+
+  // Toggle QR Disable / Enable
+  const handleToggleQRDisable = async (tokenString: string, currentIsDisabled: boolean) => {
+    const nextDisabled = !currentIsDisabled;
+    setTogglingQRToken(tokenString);
+    try {
+      await toggleQRTokenStatus(tokenString, nextDisabled);
+      setMsg({
+        type: 'ok',
+        text: nextDisabled
+          ? `Đã vô hiệu hóa mã QR "${tokenString}". Người dùng sẽ không thể sử dụng mã này để đặt món.`
+          : `Đã kích hoạt lại mã QR "${tokenString}". Mã hiện đã có thể sử dụng bình thường.`,
+      });
+      onRefresh();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Lỗi khi cập nhật trạng thái mã QR' });
+    } finally {
+      setTogglingQRToken(null);
+    }
+  };
+
+  // Delete QR
+  const handleDeleteQR = async (tokenString: string) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa vĩnh viễn mã QR "${tokenString}" không?`)) {
+      return;
+    }
+    setDeletingQRToken(tokenString);
+    try {
+      await deleteQRToken(tokenString);
+      setMsg({ type: 'ok', text: `Đã xóa mã QR "${tokenString}" thành công.` });
+      onRefresh();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Lỗi khi xóa mã QR' });
+    } finally {
+      setDeletingQRToken(null);
     }
   };
 
@@ -2814,124 +2933,305 @@ export function PortalDashboard({
           {/* ================= TAB: QR TOKENS ================= */}
           {tab === 'qr' && (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Mã QR Ngoại Lệ (Exception Tokens)</h3>
-                  <p className="text-xs text-slate-500">
-                    Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Cán bộ nhập mã này để được phép đặt suất ăn bổ sung.
-                  </p>
+              {/* Header & Quick Stats */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                      <QrCode className="w-5 h-5 text-indigo-600" />
+                      <span>Quản lý Mã QR Ngoại Lệ (Exception Tokens)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Quản trị viên cấp mã để cán bộ đặt suất ăn bổ sung ngoài giờ quy định.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsCreateQROpen(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0 transition"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Tạo mã mới</span>
+                  </button>
                 </div>
-                <button
-                  onClick={() => setIsCreateQROpen(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Tạo mã mới</span>
-                </button>
+
+                {/* Quick Summary Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <p className="text-[11px] text-slate-500 font-semibold">Tổng số mã</p>
+                    <p className="text-lg font-extrabold text-slate-900 mt-0.5">{enrichedTokens.length}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
+                    <p className="text-[11px] text-emerald-700 font-semibold">🟢 Còn hiệu lực</p>
+                    <p className="text-lg font-extrabold text-emerald-800 mt-0.5">
+                      {enrichedTokens.filter((t) => !t.isDisabled && !t.isExpired && !t.isFullyUsed).length}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-xl">
+                    <p className="text-[11px] text-rose-700 font-semibold">⛔ Đã vô hiệu hóa</p>
+                    <p className="text-lg font-extrabold text-rose-800 mt-0.5">
+                      {enrichedTokens.filter((t) => t.isDisabled).length}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl">
+                    <p className="text-[11px] text-amber-700 font-semibold">⚪ Đã dùng hết</p>
+                    <p className="text-lg font-extrabold text-amber-800 mt-0.5">
+                      {enrichedTokens.filter((t) => t.isFullyUsed).length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Search & Filter Toolbar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[220px]">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={qrSearch}
+                        onChange={(e) => setQrSearch(e.target.value)}
+                        placeholder="Tìm theo mã, người dùng, ghi chú..."
+                        className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                      {[
+                        { id: 'all', label: 'Tất cả' },
+                        { id: 'active', label: 'Còn hiệu lực' },
+                        { id: 'disabled', label: 'Đã vô hiệu hóa' },
+                        { id: 'used', label: 'Đã dùng hết' },
+                        { id: 'expired', label: 'Hết hạn' },
+                      ].map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setQrStatusFilter(f.id as any)}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                            qrStatusFilter === f.id
+                              ? 'bg-white text-indigo-700 shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-slate-500 font-medium self-end sm:self-center">
+                    Hiển thị <strong className="text-slate-900">{filteredTokens.length}</strong> mã QR
+                  </div>
+                </div>
               </div>
 
+              {/* Table List */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[600px]">
+                  <table className="w-full text-left text-xs min-w-[820px]">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4">Mã Token</th>
                         <th className="py-3 px-3 text-center">Số lượt cấp</th>
-                        <th className="py-3 px-3 text-center">Đã dùng / Còn lại</th>
-                        <th className="py-3 px-4">Ghi chú</th>
-                        <th className="py-3 px-4">Tạo bởi / Người dùng</th>
+                        <th className="py-3 px-3 text-center">Tiến độ sử dụng</th>
+                        <th className="py-3 px-4">Cán bộ đã sử dụng</th>
+                        <th className="py-3 px-4">Ghi chú / Mục đích</th>
                         <th className="py-3 px-4">Hạn sử dụng</th>
                         <th className="py-3 px-4 text-center">Trạng thái</th>
-                        <th className="py-3 px-4 text-center">Sao chép</th>
+                        <th className="py-3 px-4 text-center">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedTokens.map((t) => {
-                        const isExpired = new Date(t.expiresAt) < new Date();
-                        const qty = Number(t.quantity) || 1;
-                        const used = Number(t.usedCount) || 0;
-                        const remaining = Math.max(0, qty - used);
-                        const isFullyUsed = t.isUsed || remaining <= 0;
+                        const qty = t.quantity || 1;
+                        const used = t.usedCount || 0;
+                        const remaining = t.remaining;
+                        const isDisabled = t.isDisabled;
+                        const isFullyUsed = t.isFullyUsed;
+                        const isExpired = t.isExpired;
+                        const isToggling = togglingQRToken === t.token;
+                        const isDeleting = deletingQRToken === t.token;
 
                         return (
-                          <tr key={t.token} className="hover:bg-slate-50/70">
-                            <td className="py-3 px-4 font-mono font-extrabold text-indigo-700">
-                              {t.token}
-                            </td>
-                            <td className="py-3 px-3 text-center">
-                              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200">
-                                {qty} lượt
+                          <tr
+                            key={t.token}
+                            className={`hover:bg-slate-50/80 transition-colors ${
+                              isDisabled ? 'bg-rose-50/20' : ''
+                            }`}
+                          >
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-mono font-extrabold text-xs ${
+                                  isDisabled ? 'text-slate-400 line-through' : 'text-indigo-700'
+                                }`}>
+                                  {t.token}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyText(t.token)}
+                                  className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
+                                  title="Sao chép mã"
+                                >
+                                  {copiedToken === t.token ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                Tạo: {new Date(t.createdAt).toLocaleTimeString('vi-VN')} {new Date(t.createdAt).toLocaleDateString('vi-VN')} ({t.createdByName || 'Admin'})
                               </span>
                             </td>
+
                             <td className="py-3 px-3 text-center">
-                              <div className="inline-flex flex-col items-center gap-0.5">
+                              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 inline-flex items-center gap-1">
+                                <span>{qty} lượt đặt</span>
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-3 text-center">
+                              <div className="inline-flex flex-col items-center gap-1">
                                 <span className="font-bold text-slate-800 text-xs">
-                                  Đã dùng: <strong className="text-orange-600 font-mono">{used}</strong> / {qty}
+                                  Đã dùng: <strong className="text-orange-600 font-mono text-xs">{used}</strong> / {qty} lượt
                                 </span>
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                                    remaining > 0
+                                    isDisabled
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : remaining > 0
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                       : 'bg-slate-100 text-slate-500 border border-slate-200'
                                   }`}
                                 >
-                                  {remaining > 0 ? `Còn lại: ${remaining} lượt` : 'Hết lượt'}
+                                  {isDisabled
+                                    ? 'Đang bị khóa'
+                                    : remaining > 0
+                                    ? `Còn lại: ${remaining} lượt`
+                                    : 'Hết lượt đặt'}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-slate-700">{t.note || '—'}</td>
+
                             <td className="py-3 px-4 text-slate-700">
-                              <p className="font-bold text-slate-800">{t.createdByName || 'Admin'}</p>
-                              {t.usedBy && (
-                                <p className="text-[10px] text-indigo-600 mt-0.5 font-medium">
-                                  Đã dùng bởi: {t.usedBy}
-                                </p>
+                              {t.usedUserNames && t.usedUserNames.length > 0 ? (
+                                <div className="space-y-0.5">
+                                  {t.usedUserNames.map((name, idx) => (
+                                    <div key={idx} className="flex items-center gap-1 text-[11px] font-bold text-indigo-700">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                      <span>{name}</span>
+                                    </div>
+                                  ))}
+                                  {t.matchingOrdersCount > 0 && (
+                                    <span className="text-[10px] text-slate-400 block">
+                                      ({t.matchingOrdersCount} đơn hàng đã đặt)
+                                    </span>
+                                  )}
+                                </div>
+                              ) : t.usedBy ? (
+                                <p className="text-[11px] font-bold text-slate-800">{t.usedBy}</p>
+                              ) : (
+                                <span className="text-slate-400 italic text-[11px]">Chưa ai sử dụng</span>
                               )}
                             </td>
-                            <td className="py-3 px-4 text-slate-700">
-                              {new Date(t.expiresAt).toLocaleString('vi-VN')}
+
+                            <td className="py-3 px-4 text-slate-700 max-w-[180px]">
+                              <span className="text-xs line-clamp-2" title={t.note || ''}>
+                                {t.note || '—'}
+                              </span>
                             </td>
+
+                            <td className="py-3 px-4 text-slate-700">
+                              <span className="text-xs font-medium">
+                                {new Date(t.expiresAt).toLocaleTimeString('vi-VN')}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">
+                                {new Date(t.expiresAt).toLocaleDateString('vi-VN')}
+                              </span>
+                            </td>
+
                             <td className="py-3 px-4 text-center">
-                              {isFullyUsed ? (
+                              {isDisabled ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-rose-50 text-rose-700 border border-rose-300 shadow-xs">
+                                  <Ban className="w-3 h-3 text-rose-600" />
+                                  <span>Đã vô hiệu hóa</span>
+                                </span>
+                              ) : isFullyUsed ? (
                                 <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
                                   Đã dùng hết ({used}/{qty})
                                 </span>
                               ) : isExpired ? (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-50 text-rose-600 border border-rose-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                                   Hết hạn giờ
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                                   🟢 Còn hiệu lực ({remaining}/{qty} lượt)
                                 </span>
                               )}
                             </td>
+
                             <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => copyText(t.token)}
-                                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer min-h-[38px] min-w-[38px] inline-flex items-center justify-center"
-                                title="Sao chép Token"
-                              >
-                                {copiedToken === t.token ? (
-                                  <Check className="w-4 h-4 text-emerald-600" />
-                                ) : (
-                                  <Copy className="w-4 h-4" />
-                                )}
-                              </button>
+                              <div className="inline-flex items-center justify-center gap-1.5">
+                                {/* Toggle Disable / Enable Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleQRDisable(t.token, isDisabled)}
+                                  disabled={isToggling}
+                                  className={`px-2.5 py-1.5 rounded-xl font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border ${
+                                    isDisabled
+                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                                      : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                                  }`}
+                                  title={isDisabled ? 'Mở khóa / Kích hoạt lại mã QR' : 'Vô hiệu hóa mã QR (khóa không cho dùng nữa)'}
+                                >
+                                  {isToggling ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : isDisabled ? (
+                                    <>
+                                      <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>Mở khóa</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                                      <span>Vô hiệu hóa</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Delete Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteQR(t.token)}
+                                  disabled={isDeleting}
+                                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 transition cursor-pointer min-h-[32px] min-w-[32px] inline-flex items-center justify-center"
+                                  title="Xóa vĩnh viễn mã QR"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  {tokens.length === 0 && (
-                    <div className="p-8 text-center text-slate-400 text-xs">Chưa có mã QR ngoại lệ nào.</div>
+                  {filteredTokens.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      {qrSearch || qrStatusFilter !== 'all'
+                        ? 'Không tìm thấy mã QR nào phù hợp với bộ lọc.'
+                        : 'Chưa có mã QR ngoại lệ nào.'}
+                    </div>
                   )}
                 </div>
 
                 <PaginationControls
                   currentPage={qrPage}
-                  totalItems={tokens.length}
+                  totalItems={filteredTokens.length}
                   pageSize={qrPageSize}
                   pageSizeOptions={[10, 20, 50]}
                   onPageChange={setQrPage}
@@ -3519,8 +3819,11 @@ export function PortalDashboard({
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Số lượt đặt cho phép (Suất ăn)
+                  Số lượt đặt đơn hàng cho phép <span className="text-rose-500">*</span>
                 </label>
+                <p className="text-[11px] text-slate-500 mb-2 leading-relaxed">
+                  Ví dụ: Cấp <strong>2 lượt đặt</strong> thì cán bộ có thể thực hiện <strong>2 đơn hàng</strong> khác nhau. Trong mỗi đơn hàng, cán bộ có thể chọn đặt <strong>nhiều suất ăn/món ăn tùy ý</strong>.
+                </p>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"

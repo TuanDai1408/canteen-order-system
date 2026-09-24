@@ -165,6 +165,12 @@ export function OrderHome({
         text: 'Mã QR ngoại lệ (sẽ được đối chiếu và xác thực trên hệ thống khi đặt)',
       };
     }
+    if (found.isDisabled) {
+      return {
+        status: 'invalid' as const,
+        text: `Mã QR ngoại lệ "${raw}" đã bị Quản trị viên vô hiệu hóa. Không thể sử dụng để đặt món.`,
+      };
+    }
     const isExpired = new Date(found.expiresAt).getTime() < Date.now();
     const allowedQty = Number(found.quantity) || 1;
     const allOrders = getCachedOrders();
@@ -173,15 +179,13 @@ export function OrderHome({
         (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === raw) ||
         ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === raw)
     );
-    const usedMeals = tokenOrders.reduce((sum, o) => {
-      const cnt = o.items && o.items.length > 0 ? o.items.reduce((s, it) => s + (Number(it.quantity) || 1), 0) : 1;
-      return sum + cnt;
-    }, 0);
+    // Mỗi đơn hàng = 1 lượt đặt
+    const usedOrdersCount = Math.max(tokenOrders.length, Number(found.usedCount || 0));
 
-    if (found.isUsed || usedMeals >= allowedQty) {
+    if (found.isUsed || usedOrdersCount >= allowedQty) {
       return {
         status: 'invalid' as const,
-        text: `Mã QR ngoại lệ "${raw}" đã hết hiệu lực do đã sử dụng đủ/vượt số suất được cấp (${allowedQty} suất).`,
+        text: `Mã QR ngoại lệ "${raw}" đã hết số lượt đặt cho phép (đã dùng ${usedOrdersCount}/${allowedQty} lượt đặt).`,
       };
     }
     if (isExpired) {
@@ -190,12 +194,12 @@ export function OrderHome({
         text: `Mã QR ngoại lệ "${raw}" đã hết hạn lúc ${new Date(found.expiresAt).toLocaleTimeString('vi-VN')}.`,
       };
     }
-    const remaining = Math.max(0, allowedQty - usedMeals);
+    const remaining = Math.max(0, allowedQty - usedOrdersCount);
     return {
       status: 'valid' as const,
       remaining,
       allowed: allowedQty,
-      text: `Mã hợp lệ: Được đặt tối đa ${allowedQty} suất (Còn lại: ${remaining} suất).`,
+      text: `Mã hợp lệ: Cấp ${allowedQty} lượt đặt (Còn lại: ${remaining} lượt). Bạn có thể chọn đặt nhiều món/suất ăn tùy ý trong đơn hàng này.`,
     };
   }, [exceptionToken]);
 
@@ -267,20 +271,6 @@ export function OrderHome({
         title: 'Mã QR ngoại lệ không hợp lệ',
         message: tokenValidation.text,
         type: 'error',
-      });
-      return;
-    }
-
-    if (
-      tokenValidation &&
-      tokenValidation.status === 'valid' &&
-      tokenValidation.remaining !== undefined &&
-      totalItemsCount > tokenValidation.remaining
-    ) {
-      setFeedbackModal({
-        title: 'Vượt quá số suất được phép đặt',
-        message: `Mã QR ngoại lệ này chỉ còn lại ${tokenValidation.remaining} suất được phép đặt. Bạn đang chọn tổng cộng ${totalItemsCount} suất. Vui lòng giảm bớt số lượng món trong giỏ hàng.`,
-        type: 'warning',
       });
       return;
     }
@@ -1375,14 +1365,6 @@ export function OrderHome({
                       {tokenValidation.text}
                     </div>
                   )}
-
-                  {tokenValidation?.status === 'valid' &&
-                    tokenValidation.remaining !== undefined &&
-                    totalItemsCount > tokenValidation.remaining && (
-                      <div className="text-[11px] font-bold text-rose-700 bg-rose-100/80 p-2 rounded-xl border border-rose-300">
-                        ⚠️ Bạn đang chọn {totalItemsCount} suất ăn trong giỏ, vượt quá số suất cho phép của mã QR ({tokenValidation.remaining} suất còn lại). Vui lòng giảm số lượng suất ăn để đặt món.
-                      </div>
-                    )}
                 </div>
               )}
             </div>
@@ -1407,7 +1389,7 @@ export function OrderHome({
                   Boolean(
                     tokenValidation?.status === 'valid' &&
                       tokenValidation.remaining !== undefined &&
-                      totalItemsCount > tokenValidation.remaining
+                      tokenValidation.remaining <= 0
                   )
                 }
                 className="flex-1 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-md shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
