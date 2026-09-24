@@ -68,6 +68,8 @@ import {
   Inbox,
   ArrowRight,
   RotateCcw,
+  Phone,
+  Mail,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -151,7 +153,7 @@ interface Props {
   onSwitchToOrder?: () => void;
 }
 
-type Tab = 'overview' | 'menu' | 'orders' | 'users' | 'qr';
+type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr';
 
 export function PortalDashboard({
   currentUser,
@@ -179,7 +181,6 @@ export function PortalDashboard({
   const [orderSearch, setOrderSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
-  const [ordersViewMode, setOrdersViewMode] = useState<'all' | 'table' | 'kds'>('all');
 
   // Modals state
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
@@ -521,7 +522,20 @@ export function PortalDashboard({
     });
   }, [users, userSearch, userStatusFilter]);
 
+  // User map for quick profile lookup in orders and overview
+  const userMap = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    users.forEach((u) => {
+      if (u.id) map.set(u.id, u);
+      if (u.phoneNumber) map.set(u.phoneNumber, u);
+    });
+    return map;
+  }, [users]);
+
   // Pagination states for all table tabs
+  const [overviewOrderPage, setOverviewOrderPage] = useState(1);
+  const [overviewOrderPageSize, setOverviewOrderPageSize] = useState(20);
+
   const [orderPage, setOrderPage] = useState(1);
   const [orderPageSize, setOrderPageSize] = useState(10);
 
@@ -548,6 +562,17 @@ export function PortalDashboard({
   }, [menuSearch, menuFilterCat]);
 
   // Paginated Slices
+  const sortedOverviewOrders = useMemo(() => {
+    return [...orders].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [orders]);
+
+  const paginatedOverviewOrders = useMemo(() => {
+    const start = (overviewOrderPage - 1) * overviewOrderPageSize;
+    return sortedOverviewOrders.slice(start, start + overviewOrderPageSize);
+  }, [sortedOverviewOrders, overviewOrderPage, overviewOrderPageSize]);
+
   const paginatedOrders = useMemo(() => {
     const start = (orderPage - 1) * orderPageSize;
     return filteredOrders.slice(start, start + orderPageSize);
@@ -851,8 +876,14 @@ export function PortalDashboard({
     { id: 'menu' as Tab, label: 'Thực đơn ngày mai', icon: UtensilsCrossed, badge: menu.length },
     {
       id: 'orders' as Tab,
-      label: 'Đơn hàng & Bếp',
+      label: 'Bảng Đơn hàng',
       icon: Receipt,
+      badge: orders.length,
+    },
+    {
+      id: 'kitchen' as Tab,
+      label: 'Màn hình Nhà Bếp (KDS)',
+      icon: ChefHat,
       badge: ordersByStatus.confirmed + ordersByStatus.preparing,
     },
     {
@@ -1069,6 +1100,17 @@ export function PortalDashboard({
               <span>Làm mới dữ liệu</span>
             </button>
 
+            {tab === 'kitchen' && (
+              <button
+                onClick={() => window.print()}
+                className="px-3.5 py-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-bold rounded-xl border border-orange-200 flex items-center gap-1.5 transition cursor-pointer shadow-2xs min-h-[40px]"
+                title="In bảng danh sách món cần nấu cho nhà bếp"
+              >
+                <Printer className="w-4 h-4 text-orange-600" />
+                <span>In Bảng Bếp</span>
+              </button>
+            )}
+
             {tab === 'menu' && (
               <button
                 onClick={() => setIsAddDishOpen(true)}
@@ -1236,87 +1278,185 @@ export function PortalDashboard({
               </div>
 
               {/* Recent Orders Overview */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold text-slate-900">Đơn hàng mới nhận</h3>
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                      Đơn hàng mới nhận
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      Tổng {sortedOverviewOrders.length} đơn
+                    </span>
+                    <span className="text-xs text-slate-400">· Mặc định 20 dòng / trang</span>
+                  </div>
                   <button
                     onClick={() => setTab('orders')}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1 min-h-[44px]"
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition"
                   >
-                    <span>Xem tất cả</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
+                    <span>Xem toàn bộ Bảng đơn hàng</span>
+                    <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
 
-                <div className="overflow-x-auto -mx-4 sm:mx-0">
-                  <table className="w-full text-left text-xs min-w-[550px]">
+                <div className="w-full overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
-                        <th className="py-2.5 px-3">Mã đơn</th>
-                        <th className="py-2.5 px-3">Người đặt</th>
-                        <th className="py-2.5 px-3">Địa điểm nhận</th>
-                        <th className="py-2.5 px-3">Giờ ăn</th>
-                        <th className="py-2.5 px-3 text-right">Tổng tiền</th>
-                        <th className="py-2.5 px-3 text-center">Trạng thái</th>
+                        <th className="py-2.5 px-3 w-[18%]">Mã đơn & Thời gian đặt</th>
+                        <th className="py-2.5 px-3 w-[26%]">Thông tin Cán bộ / Khách hàng</th>
+                        <th className="py-2.5 px-2.5 w-[18%]">Nơi nhận & Giờ ăn</th>
+                        <th className="py-2.5 px-3 w-[24%]">Món ăn & Suất ăn</th>
+                        <th className="py-2.5 px-2.5 w-[14%] text-right">Tổng tiền</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {orders.slice(0, 6).map((o) => (
-                        <tr key={o.id} className="hover:bg-slate-50/70">
-                          <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{o.orderCode}</td>
-                          <td className="py-2.5 px-3">
-                            <span className="font-semibold text-slate-900">{o.userName}</span>
-                            <span className="text-slate-400 block text-[11px]">{o.userDepartment}</span>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            {o.deliveryMethod === 'room_delivery' ? (
-                              <span className="inline-flex items-center gap-1 text-teal-700 font-bold">
-                                <MapPin className="w-3 h-3" />
-                                {o.roomNumber || 'Giao phòng'}
+                      {paginatedOverviewOrders.map((o) => {
+                        const orderItems = getOrderDisplayItems(o, menu);
+                        const matchedUser = userMap.get(o.userId) || (o.userPhone ? userMap.get(o.userPhone) : undefined);
+                        const totalMealsCount = orderItems && orderItems.length > 0
+                          ? orderItems.reduce((acc, it) => acc + (it.quantity || 1), 0)
+                          : 1;
+
+                        return (
+                          <tr key={o.id} className="hover:bg-slate-50/70 transition">
+                            {/* Mã đơn & Thời gian đặt kèm Live Timer */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <p className="font-mono font-bold text-slate-900 text-xs tracking-tight">
+                                {o.orderCode}
+                              </p>
+                              <div>
+                                <OrderLiveElapsedTimer
+                                  createdAt={o.createdAt}
+                                  isCompleted={o.status === 'completed' || o.status === 'cancelled'}
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                {o.createdAt
+                                  ? `${new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${new Date(o.createdAt).toLocaleDateString('vi-VN')}`
+                                  : '11:30'}
+                              </p>
+                              {o.isExceptionOrder && (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  ⚡ QR Ngoại lệ
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Cán bộ & Thông tin khách hàng chi tiết */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-900 text-xs leading-snug">{o.userName}</span>
+                                {matchedUser?.roleTitle && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {matchedUser.roleTitle}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-tight">
+                                🏢 {o.userDepartment || matchedUser?.department || 'Cán bộ cơ quan'}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5 text-[10px] text-slate-600">
+                                {o.userPhone && (
+                                  <span className="flex items-center gap-1 font-mono">
+                                    <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span>{o.userPhone}</span>
+                                  </span>
+                                )}
+                                {matchedUser?.email && (
+                                  <span className="flex items-center gap-1 text-slate-500">
+                                    <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span className="truncate max-w-[140px]">{matchedUser.email}</span>
+                                  </span>
+                                )}
+                              </div>
+                              {matchedUser?.walletBalance != null && (
+                                <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
+                                  <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  <span>Số dư ví: {formatVnd(matchedUser.walletBalance)}</span>
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Nơi nhận & Giờ ăn */}
+                            <td className="py-3 px-2.5 align-top space-y-1">
+                              <div>
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600 shrink-0" />
+                                    <span>Giao {o.roomNumber || 'phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Tại Căn tin
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-col text-[11px] space-y-0.5">
+                                <span className="font-bold text-slate-700">
+                                  ⏰ Giờ ăn: {o.pickupTime || '11:30'}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  📅 Phục vụ: {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Chi tiết món & Số lượng */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <div className="space-y-0.5">
+                                {orderItems && orderItems.length > 0 ? (
+                                  orderItems.map((it, idx) => (
+                                    <p key={idx} className="text-slate-800 text-[11px] font-medium leading-tight">
+                                      <strong className="text-indigo-600 font-bold">{it.quantity}×</strong> {it.name}
+                                    </p>
+                                  ))
+                                ) : (
+                                  <p className="text-slate-500 text-[11px] italic">
+                                    1× Suất ăn Căn tin
+                                  </p>
+                                )}
+                              </div>
+                              <div className="pt-0.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                                  Tổng: {totalMealsCount} suất
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Tổng tiền */}
+                            <td className="py-3 px-2.5 text-right align-top whitespace-nowrap">
+                              <span className="font-black text-indigo-600 text-xs block">
+                                {formatVnd(o.totalAmount)}
                               </span>
-                            ) : (
-                              <span className="text-slate-500">Tại Căn tin</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-700">{o.pickupTime}</td>
-                          <td className="py-2.5 px-3 text-right font-extrabold text-indigo-600">
-                            {formatVnd(o.totalAmount)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  o.status === 'confirmed'
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : o.status === 'preparing'
-                                      ? 'bg-indigo-100 text-indigo-800'
-                                      : o.status === 'completed'
-                                        ? 'bg-emerald-100 text-emerald-800'
-                                        : 'bg-slate-100 text-slate-500'
-                                }`}
-                              >
-                                {o.status === 'confirmed'
-                                  ? 'Chờ nấu'
-                                  : o.status === 'preparing'
-                                    ? 'Đang nấu'
-                                    : o.status === 'completed'
-                                      ? 'Xong'
-                                      : 'Hủy'}
+                              <span className="text-[10px] text-slate-400">
+                                {o.deliveryMethod === 'room_delivery' ? 'Giao tận phòng' : 'Ăn tại chỗ'}
                               </span>
-                              <button
-                                onClick={() => setPrintReceiptOrder(o)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-slate-100 cursor-pointer"
-                                title="In Bill POS nhiệt (K80 / K58)"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
+
+                  {sortedOverviewOrders.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      Chưa có đơn hàng nào được ghi nhận.
+                    </div>
+                  )}
                 </div>
+
+                <PaginationControls
+                  currentPage={overviewOrderPage}
+                  totalItems={sortedOverviewOrders.length}
+                  pageSize={overviewOrderPageSize}
+                  pageSizeOptions={[10, 20, 50, 100]}
+                  onPageChange={setOverviewOrderPage}
+                  onPageSizeChange={(sz) => {
+                    setOverviewOrderPageSize(sz);
+                    setOverviewOrderPage(1);
+                  }}
+                  itemName="đơn hàng"
+                />
               </div>
             </div>
           )}
@@ -1667,41 +1807,16 @@ export function PortalDashboard({
                   </div>
                 </div>
 
-                {/* Row 3: View Mode Switcher & Realtime Sync Status */}
+                {/* Row 3: Quick KDS Link & Realtime Sync Status */}
                 <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100">
-                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setOrdersViewMode('table')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'table'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                      onClick={() => setTab('kitchen')}
+                      className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[36px] bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 shadow-2xs"
                     >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Bảng danh sách đơn</span>
-                    </button>
-                    <button
-                      onClick={() => setOrdersViewMode('kds')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'kds'
-                          ? 'bg-white text-orange-600 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <ChefHat className="w-3.5 h-3.5" />
-                      <span>Màn hình Bếp (KDS 3 Cột)</span>
-                    </button>
-                    <button
-                      onClick={() => setOrdersViewMode('all')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'all'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Xem kết hợp cả hai</span>
+                      <ChefHat className="w-4 h-4 text-orange-600" />
+                      <span>Chuyển sang Màn hình Nhà Bếp (KDS 3 Cột)</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
@@ -1715,17 +1830,16 @@ export function PortalDashboard({
               </div>
 
               {/* Batch Action Bar */}
-              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
-                <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-                  <div className="flex items-center gap-2">
-                    <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
-                    <span className="text-xs font-bold text-slate-800">
-                      In Bill Hàng Loạt Máy POS (K80 / K58):
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium">
-                      Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
-                    </span>
-                  </div>
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                  <span className="text-xs font-bold text-slate-800">
+                    In Bill Hàng Loạt Máy POS (K80 / K58):
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
+                  </span>
+                </div>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-0.5">
@@ -1786,10 +1900,8 @@ export function PortalDashboard({
                     )}
                   </div>
                 </div>
-              )}
 
-              {/* ================= BẢNG DANH SÁCH ĐƠN HÀNG FULL KHÔNG CẦN SCROLL ================= */}
-              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
+                {/* ================= BẢNG DANH SÁCH ĐƠN HÀNG FULL KHÔNG CẦN SCROLL ================= */}
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                   <div className="w-full">
                     <table className="w-full text-left text-xs border-collapse">
@@ -1996,10 +2108,12 @@ export function PortalDashboard({
                     itemName="đơn hàng"
                   />
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* ================= MÀN HÌNH NHÀ BẾP (KDS) - 3 CỘT ĐIỀU HÀNH CHẾ BIẾN ================= */}
-              {(ordersViewMode === 'kds' || ordersViewMode === 'all') && (
+            {/* ================= TAB: KITCHEN (KDS) ================= */}
+            {tab === 'kitchen' && (
+              <div className="space-y-4">
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
                   {/* Header bar */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -2015,6 +2129,10 @@ export function PortalDashboard({
                           <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-50 text-orange-700 border border-orange-200">
                             {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
                           </span>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>Tự động tải lại tức thì khi có order</span>
+                          </span>
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
                           Theo dõi thời gian thực từng món ăn & đếm thời gian từ lúc order qua 3 giai đoạn chế biến
@@ -2022,10 +2140,38 @@ export function PortalDashboard({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <select
+                        value={orderDateFilter}
+                        onChange={(e) => setOrderDateFilter(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px] cursor-pointer shadow-2xs"
+                      >
+                        {availableOrderDates.length > 0 ? (
+                          <>
+                            {availableOrderDates.map((dateStr, idx) => (
+                              <option key={dateStr} value={dateStr}>
+                                {idx === 0 ? `📅 ${dateStr} (Mới nhất)` : `📅 ${dateStr}`}
+                              </option>
+                            ))}
+                            <option value="all">🌐 Toàn bộ các ngày</option>
+                          </>
+                        ) : (
+                          <option value="all">Tất cả các ngày</option>
+                        )}
+                      </select>
+
+                      <button
+                        onClick={selectPendingKitchenOrders}
+                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                        title="Chọn và In hàng loạt bill POS cho toàn bộ đơn bếp"
+                      >
+                        <Printer className="w-4 h-4 text-indigo-600" />
+                        <span>In Bill Đơn Bếp POS</span>
+                      </button>
+
                       <button
                         onClick={() => window.print()}
-                        className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                        className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
                         title="In bảng thống kê món cần nấu cho nhà bếp"
                       >
                         <Printer className="w-4 h-4 text-orange-600" />
@@ -2441,9 +2587,8 @@ export function PortalDashboard({
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
           {/* ================= TAB: USERS ================= */}
           {tab === 'users' && (

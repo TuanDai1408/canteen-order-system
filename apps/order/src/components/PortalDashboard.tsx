@@ -68,6 +68,7 @@ import {
   Inbox,
   ArrowRight,
   RotateCcw,
+  Phone,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -522,6 +523,9 @@ export function PortalDashboard({
   }, [users, userSearch, userStatusFilter]);
 
   // Pagination states for all table tabs
+  const [overviewOrderPage, setOverviewOrderPage] = useState(1);
+  const [overviewOrderPageSize, setOverviewOrderPageSize] = useState(20);
+
   const [orderPage, setOrderPage] = useState(1);
   const [orderPageSize, setOrderPageSize] = useState(10);
 
@@ -548,6 +552,17 @@ export function PortalDashboard({
   }, [menuSearch, menuFilterCat]);
 
   // Paginated Slices
+  const sortedOverviewOrders = useMemo(() => {
+    return [...orders].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+  }, [orders]);
+
+  const paginatedOverviewOrders = useMemo(() => {
+    const start = (overviewOrderPage - 1) * overviewOrderPageSize;
+    return sortedOverviewOrders.slice(start, start + overviewOrderPageSize);
+  }, [sortedOverviewOrders, overviewOrderPage, overviewOrderPageSize]);
+
   const paginatedOrders = useMemo(() => {
     const start = (orderPage - 1) * orderPageSize;
     return filteredOrders.slice(start, start + orderPageSize);
@@ -1236,87 +1251,209 @@ export function PortalDashboard({
               </div>
 
               {/* Recent Orders Overview */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="text-sm font-bold text-slate-900">Đơn hàng mới nhận</h3>
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5">
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                      Đơn hàng mới nhận
+                    </h3>
+                    <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      Tổng {sortedOverviewOrders.length} đơn
+                    </span>
+                  </div>
                   <button
                     onClick={() => setTab('orders')}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1 min-h-[44px]"
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition"
                   >
-                    <span>Xem tất cả</span>
-                    <ChevronRight className="w-3.5 h-3.5" />
+                    <span>Xem toàn bộ & Màn hình Bếp</span>
+                    <ChevronRight className="w-4 h-4" />
                   </button>
                 </div>
 
-                <div className="overflow-x-auto -mx-4 sm:mx-0">
-                  <table className="w-full text-left text-xs min-w-[550px]">
+                <div className="w-full">
+                  <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
-                        <th className="py-2.5 px-3">Mã đơn</th>
-                        <th className="py-2.5 px-3">Người đặt</th>
-                        <th className="py-2.5 px-3">Địa điểm nhận</th>
-                        <th className="py-2.5 px-3">Giờ ăn</th>
-                        <th className="py-2.5 px-3 text-right">Tổng tiền</th>
-                        <th className="py-2.5 px-3 text-center">Trạng thái</th>
+                        <th className="py-2.5 px-3 w-[16%]">Đơn hàng & Thời gian</th>
+                        <th className="py-2.5 px-3 w-[22%]">Cán bộ / Khách hàng</th>
+                        <th className="py-2.5 px-2.5 w-[18%]">Nơi nhận & Giờ ăn</th>
+                        <th className="py-2.5 px-3 w-[23%]">Món ăn & Ghi chú</th>
+                        <th className="py-2.5 px-2.5 w-[10%] text-right">Tổng tiền</th>
+                        <th className="py-2.5 px-2.5 w-[11%] text-center">Trạng thái & Xử lý</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {orders.slice(0, 6).map((o) => (
-                        <tr key={o.id} className="hover:bg-slate-50/70">
-                          <td className="py-2.5 px-3 font-mono font-bold text-slate-900">{o.orderCode}</td>
-                          <td className="py-2.5 px-3">
-                            <span className="font-semibold text-slate-900">{o.userName}</span>
-                            <span className="text-slate-400 block text-[11px]">{o.userDepartment}</span>
-                          </td>
-                          <td className="py-2.5 px-3">
-                            {o.deliveryMethod === 'room_delivery' ? (
-                              <span className="inline-flex items-center gap-1 text-teal-700 font-bold">
-                                <MapPin className="w-3 h-3" />
-                                {o.roomNumber || 'Giao phòng'}
-                              </span>
-                            ) : (
-                              <span className="text-slate-500">Tại Căn tin</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-700">{o.pickupTime}</td>
-                          <td className="py-2.5 px-3 text-right font-extrabold text-indigo-600">
-                            {formatVnd(o.totalAmount)}
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  o.status === 'confirmed'
-                                    ? 'bg-amber-100 text-amber-800'
+                      {paginatedOverviewOrders.map((o) => {
+                        const orderItems = getOrderDisplayItems(o, menu);
+                        return (
+                          <tr key={o.id} className="hover:bg-slate-50/70 transition">
+                            {/* Mã đơn & Thời gian đặt kèm Live Timer */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <p className="font-mono font-bold text-slate-900 text-xs tracking-tight">
+                                {o.orderCode}
+                              </p>
+                              <div>
+                                <OrderLiveElapsedTimer
+                                  createdAt={o.createdAt}
+                                  isCompleted={o.status === 'completed' || o.status === 'cancelled'}
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-400">
+                                {o.createdAt
+                                  ? `${new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${new Date(o.createdAt).toLocaleDateString('vi-VN')}`
+                                  : '11:30'}
+                              </p>
+                            </td>
+
+                            {/* Cán bộ & Liên hệ */}
+                            <td className="py-3 px-3 align-top space-y-0.5">
+                              <p className="font-bold text-slate-900 leading-snug">{o.userName}</p>
+                              <p className="text-[11px] text-slate-500 leading-tight">{o.userDepartment}</p>
+                              {o.userPhone && (
+                                <p className="text-[10px] text-slate-600 flex items-center gap-1 font-mono pt-0.5">
+                                  <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                                  <span>{o.userPhone}</span>
+                                </p>
+                              )}
+                            </td>
+
+                            {/* Nơi nhận & Giờ ăn */}
+                            <td className="py-3 px-2.5 align-top space-y-1">
+                              <div>
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600 shrink-0" />
+                                    <span>Giao {o.roomNumber || 'phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Tại Căn tin
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex flex-col text-[11px] space-y-0.5">
+                                <span className="font-bold text-slate-700">
+                                  ⏰ {o.pickupTime || '11:30'}
+                                </span>
+                                <span className="text-[10px] text-slate-500">
+                                  📅 {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Chi tiết món & Ghi chú */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <div className="space-y-0.5">
+                                {orderItems && orderItems.length > 0 ? (
+                                  orderItems.map((it, idx) => (
+                                    <p key={idx} className="text-slate-800 text-[11px] font-medium leading-tight">
+                                      <strong className="text-indigo-600 font-bold">{it.quantity}×</strong> {it.name}
+                                    </p>
+                                  ))
+                                ) : (
+                                  <p className="text-slate-500 text-[11px] italic">
+                                    1× Suất ăn Căn tin
+                                  </p>
+                                )}
+                              </div>
+                              {(o.note || o.notes) && (
+                                <div className="mt-1 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1 shadow-2xs">
+                                  <StickyNote className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                  <span className="break-words font-medium">{o.note || o.notes}</span>
+                                </div>
+                              )}
+                              {o.isExceptionOrder && (
+                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  ⚡ Đơn QR Ngoại lệ
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Tổng tiền */}
+                            <td className="py-3 px-2.5 text-right align-top font-extrabold text-indigo-600 text-xs whitespace-nowrap">
+                              {formatVnd(o.totalAmount)}
+                            </td>
+
+                            {/* Trạng thái & Thao tác */}
+                            <td className="py-3 px-2.5 text-center align-top space-y-1.5">
+                              <div>
+                                <span
+                                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                    o.status === 'confirmed'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : o.status === 'preparing'
+                                        ? 'bg-orange-100 text-orange-800'
+                                        : o.status === 'completed'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                >
+                                  {o.status === 'confirmed'
+                                    ? '⏳ Chờ nấu'
                                     : o.status === 'preparing'
-                                      ? 'bg-indigo-100 text-indigo-800'
+                                      ? '🔥 Đang nấu'
                                       : o.status === 'completed'
-                                        ? 'bg-emerald-100 text-emerald-800'
-                                        : 'bg-slate-100 text-slate-500'
-                                }`}
-                              >
-                                {o.status === 'confirmed'
-                                  ? 'Chờ nấu'
-                                  : o.status === 'preparing'
-                                    ? 'Đang nấu'
-                                    : o.status === 'completed'
-                                      ? 'Xong'
-                                      : 'Hủy'}
-                              </span>
-                              <button
-                                onClick={() => setPrintReceiptOrder(o)}
-                                className="p-1 text-slate-400 hover:text-indigo-600 rounded-md hover:bg-slate-100 cursor-pointer"
-                                title="In Bill POS nhiệt (K80 / K58)"
-                              >
-                                <Printer className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
+                                        ? '✅ Xong'
+                                        : 'Đã hủy'}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-center gap-1 flex-wrap">
+                                <button
+                                  onClick={() => setPrintReceiptOrder(o)}
+                                  className="p-1.5 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs transition cursor-pointer border border-slate-200"
+                                  title="In Bill POS"
+                                >
+                                  <Printer className="w-3.5 h-3.5" />
+                                </button>
+                                {o.status === 'confirmed' && (
+                                  <button
+                                    disabled={updatingOrderId === o.id}
+                                    onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
+                                    className="px-2 py-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-0.5 shadow-2xs"
+                                    title="Chuyển sang Bếp đang nấu"
+                                  >
+                                    <Flame className="w-3 h-3" />
+                                    <span>Nấu</span>
+                                  </button>
+                                )}
+                                {o.status === 'preparing' && (
+                                  <button
+                                    disabled={updatingOrderId === o.id}
+                                    onClick={() => handleUpdateOrderStatus(o.id, 'completed')}
+                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-0.5 shadow-2xs"
+                                    title="Xác nhận hoàn thành món"
+                                  >
+                                    <Check className="w-3 h-3" />
+                                    <span>Xong</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
+
+                  {sortedOverviewOrders.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      Chưa có đơn hàng nào được ghi nhận.
+                    </div>
+                  )}
                 </div>
+
+                <PaginationControls
+                  currentPage={overviewOrderPage}
+                  totalItems={sortedOverviewOrders.length}
+                  pageSize={overviewOrderPageSize}
+                  pageSizeOptions={[10, 20, 50, 100]}
+                  onPageChange={setOverviewOrderPage}
+                  onPageSizeChange={(sz) => {
+                    setOverviewOrderPageSize(sz);
+                    setOverviewOrderPage(1);
+                  }}
+                  itemName="đơn hàng"
+                />
               </div>
             </div>
           )}
