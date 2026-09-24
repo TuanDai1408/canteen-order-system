@@ -40,33 +40,9 @@ interface ParsedDish {
   error?: string;
 }
 
-const normalizeCategory = (cat?: string): 'Cơm trưa' | 'Bún / Phở' | 'Món Chay' | 'Đồ uống / Tráng miệng' => {
-  if (!cat) return 'Cơm trưa';
-  const lower = cat.toLowerCase();
-  if (
-    lower.includes('bún') ||
-    lower.includes('phở') ||
-    lower.includes('mì') ||
-    lower.includes('hủ tiếu') ||
-    lower.includes('miến')
-  ) {
-    return 'Bún / Phở';
-  }
-  if (lower.includes('chay') || lower.includes('rau') || lower.includes('đậu')) {
-    return 'Món Chay';
-  }
-  if (
-    lower.includes('uống') ||
-    lower.includes('nước') ||
-    lower.includes('sữa') ||
-    lower.includes('chè') ||
-    lower.includes('tráng miệng') ||
-    lower.includes('trà') ||
-    lower.includes('cà phê')
-  ) {
-    return 'Đồ uống / Tráng miệng';
-  }
-  return 'Cơm trưa';
+const normalizeCategory = (cat?: string): string => {
+  if (!cat || !cat.trim()) return 'Cơm trưa';
+  return cat.trim();
 };
 
 export function BulkMenuUploadModal({

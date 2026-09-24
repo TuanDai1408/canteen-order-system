@@ -859,6 +859,7 @@ export async function placeOrder(params: {
   deliveryMethod: DeliveryMethod;
   roomNumber?: string;
   pickupTime: string;
+  note?: string;
   isExceptionOrder?: boolean;
   exceptionToken?: string;
 }): Promise<{
@@ -874,6 +875,89 @@ export async function placeOrder(params: {
 
   if (!params.items || params.items.length === 0) {
     return { success: false, error: 'Giỏ hàng trống. Vui lòng chọn ít nhất 1 món ăn.' };
+  }
+
+  // Kiểm tra mã QR ngoại lệ và giới hạn số suất đặt nếu đặt ngoài giờ
+  const cleanToken = params.exceptionToken?.trim();
+  let matchedToken: QRExceptionToken | null = null;
+  const totalRequestedMeals = params.items.reduce((s, it) => s + (Number(it.quantity) || 1), 0);
+
+  if (params.isExceptionOrder || cleanToken) {
+    if (!cleanToken) {
+      return { success: false, error: 'Vui lòng nhập mã QR ngoại lệ để đặt suất ăn ngoài khung giờ.' };
+    }
+
+    const cachedTokens = getCachedQRTokens();
+    matchedToken = cachedTokens.find((t) => t.token.toUpperCase() === cleanToken.toUpperCase()) || null;
+
+    if (!matchedToken && isSupabaseConfigured && supabase) {
+      try {
+        const { data: dbToken } = await supabase
+          .from('qr_exception_tokens')
+          .select('*')
+          .eq('token', cleanToken)
+          .maybeSingle();
+        if (dbToken) {
+          matchedToken = mapQRToken(dbToken);
+        }
+      } catch (tErr) {
+        console.warn('QR token query note:', tErr);
+      }
+    }
+
+    if (!matchedToken) {
+      return {
+        success: false,
+        error: `Mã QR ngoại lệ "${cleanToken}" không tồn tại trên hệ thống. Vui lòng kiểm tra lại.`,
+      };
+    }
+
+    if (new Date(matchedToken.expiresAt).getTime() < Date.now()) {
+      return {
+        success: false,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã hết hạn sử dụng lúc ${new Date(matchedToken.expiresAt).toLocaleTimeString('vi-VN')}.`,
+      };
+    }
+
+    if (matchedToken.isUsed) {
+      return {
+        success: false,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã hết hiệu lực do đã sử dụng đủ số suất cho phép.`,
+      };
+    }
+
+    const allowedQty = Number(matchedToken.quantity) || 1;
+    const allCachedOrders = getCachedOrders();
+    const tokenOrders = allCachedOrders.filter(
+      (o) =>
+        (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
+        ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
+    );
+    const usedMealsCount = tokenOrders.reduce((sum, o) => {
+      const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
+      return sum + orderMeals;
+    }, 0);
+
+    if (usedMealsCount >= allowedQty) {
+      matchedToken.isUsed = true;
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase.from('qr_exception_tokens').update({ is_used: true }).eq('token', matchedToken.token);
+        } catch {}
+      }
+      return {
+        success: false,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã hết hiệu lực do đã sử dụng đủ/vượt số suất cho phép (${allowedQty} suất). Không thể sử dụng mã này được nữa.`,
+      };
+    }
+
+    if (usedMealsCount + totalRequestedMeals > allowedQty) {
+      const remainingMeals = Math.max(0, allowedQty - usedMealsCount);
+      return {
+        success: false,
+        error: `Vượt quá số suất được phép đặt của mã QR ngoại lệ! Mã chỉ cho phép tối đa ${allowedQty} suất (đã dùng ${usedMealsCount} suất, còn lại ${remainingMeals} suất). Bạn đang đặt ${totalRequestedMeals} suất. Vui lòng giảm bớt số lượng suất ăn.`,
+      };
+    }
   }
 
   // 1. Xác thực người dùng hiện tại qua Supabase Auth
@@ -1072,6 +1156,7 @@ export async function placeOrder(params: {
     .join(', ');
 
   const orderUuid = generateUUID();
+  const userCustomNote = params.note?.trim() || '';
 
   // 6. Chèn đơn hàng vào bảng orders trên Supabase (Adaptive Schema Insertion)
   let newOrder: any = null;
@@ -1097,9 +1182,9 @@ export async function placeOrder(params: {
     is_exception_order: Boolean(params.isExceptionOrder),
     exception_token_used: params.exceptionToken || null,
     device_info: device,
-    note: params.isExceptionOrder
-      ? `[Ngoại lệ: ${params.exceptionToken}] ${itemsSummaryText}`
-      : itemsSummaryText,
+    note: userCustomNote
+      ? (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${userCustomNote}` : userCustomNote)
+      : (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
   };
 
   // Vòng lặp thích ứng schema: Tự động loại bỏ bất kỳ cột nào mà bảng orders trên DB chưa hỗ trợ
@@ -1343,10 +1428,57 @@ export async function placeOrder(params: {
     createdAt: new Date().toISOString(),
     status: 'confirmed',
     cancellationDeadline: '16:00',
+    note: userCustomNote || (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
     isExceptionOrder: Boolean(params.isExceptionOrder),
     exceptionTokenUsed: params.exceptionToken || undefined,
     deviceInfo: device,
   };
+
+  // Cập nhật trạng thái mã QR ngoại lệ nếu đạt hoặc vượt định mức suất ăn
+  if (matchedToken && cleanToken) {
+    const allowedQty = Number(matchedToken.quantity) || 1;
+    const allCachedOrders = getCachedOrders();
+    const tokenOrders = allCachedOrders.filter(
+      (o) =>
+        (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
+        ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
+    );
+    const totalUsedMeals = tokenOrders.reduce((sum, o) => {
+      const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
+      return sum + orderMeals;
+    }, 0) + totalRequestedMeals;
+
+    if (totalUsedMeals >= allowedQty) {
+      if (isSupabaseConfigured && supabase) {
+        try {
+          await supabase
+            .from('qr_exception_tokens')
+            .update({
+              is_used: true,
+              used_by: userData.name || authUser.email || 'Người dùng',
+              used_at: new Date().toISOString(),
+            })
+            .eq('token', matchedToken.token);
+        } catch (e) {
+          console.warn('Update qr token status note:', e);
+        }
+      }
+
+      const cachedTokens = getCachedQRTokens();
+      const updatedTokens = cachedTokens.map((t) =>
+        t.token.toUpperCase() === cleanToken.toUpperCase()
+          ? {
+              ...t,
+              isUsed: true,
+              usedBy: userData.name || authUser.email || 'Người dùng',
+              usedAt: new Date().toISOString(),
+              usedCount: totalUsedMeals,
+            }
+          : t
+      );
+      setCachedQRTokens(updatedTokens);
+    }
+  }
 
   const userOrders = getCachedOrders(userData.id);
   const updatedUserOrders = [
@@ -1962,21 +2094,46 @@ export async function createQRToken(
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
   const formattedNote = note ? `[Số lượng: ${quantity} suất] ${note}` : `[Số lượng: ${quantity} suất]`;
 
-  const { data, error } = await supabase
-    .from('qr_exception_tokens')
-    .insert({
-      token,
-      expires_at: expiresAt,
-      created_by: actor.id,
-      created_by_name: actor.name,
-      note: formattedNote,
-    })
-    .select()
-    .single();
+  let insertedData: any = null;
+  // Try inserting with quantity first
+  try {
+    const { data, error } = await supabase
+      .from('qr_exception_tokens')
+      .insert({
+        token,
+        expires_at: expiresAt,
+        created_by: actor.id,
+        created_by_name: actor.name,
+        note: formattedNote,
+        quantity,
+      })
+      .select()
+      .single();
 
-  if (error) throw new Error(`Lỗi tạo mã QR ngoại lệ: ${error.message}`);
+    if (!error && data) {
+      insertedData = data;
+    } else if (error) {
+      // Retry without quantity column if schema does not have it yet
+      const { data: retryData, error: retryErr } = await supabase
+        .from('qr_exception_tokens')
+        .insert({
+          token,
+          expires_at: expiresAt,
+          created_by: actor.id,
+          created_by_name: actor.name,
+          note: formattedNote,
+        })
+        .select()
+        .single();
+      if (retryErr) throw new Error(`Lỗi tạo mã QR ngoại lệ: ${retryErr.message}`);
+      insertedData = retryData;
+    }
+  } catch (err: any) {
+    throw new Error(`Lỗi tạo mã QR ngoại lệ: ${err.message}`);
+  }
 
-  const newToken = mapQRToken(data);
+  const newToken = mapQRToken(insertedData);
+  newToken.quantity = quantity;
   const cached = getCachedQRTokens();
   setCachedQRTokens([newToken, ...cached.filter((t) => t.token !== newToken.token)]);
   return newToken;
@@ -2075,7 +2232,7 @@ export function getCustomTimeGateConfig(): TimeGateConfig {
   } catch {
     // fallback
   }
-  return { openTime: '06:00', closeTime: '22:00', isForceOpen: false };
+  return { openTime: '13:00', closeTime: '17:00', isForceOpen: false };
 }
 
 export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
@@ -2122,10 +2279,10 @@ export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
         }
         const openTime =
           val.openTime ||
-          (val.open_hour !== undefined ? `${String(val.open_hour).padStart(2, '0')}:00` : '06:00');
+          (val.open_hour !== undefined ? `${String(val.open_hour).padStart(2, '0')}:00` : '13:00');
         const closeTime =
           val.closeTime ||
-          (val.close_hour !== undefined ? `${String(val.close_hour).padStart(2, '0')}:00` : '22:00');
+          (val.close_hour !== undefined ? `${String(val.close_hour).padStart(2, '0')}:00` : '17:00');
         const isForceOpen = Boolean(val.isForceOpen || val.is_force_open || val.forceOpen);
 
         const cfg: TimeGateConfig = { openTime, closeTime, isForceOpen };
@@ -2175,8 +2332,8 @@ export async function setCustomTimeGateConfig(
     const payload = {
       openTime,
       closeTime,
-      open_hour: isNaN(openHour) ? 6 : openHour,
-      close_hour: isNaN(closeHour) ? 22 : closeHour,
+      open_hour: isNaN(openHour) ? 13 : openHour,
+      close_hour: isNaN(closeHour) ? 17 : closeHour,
       isForceOpen: Boolean(isForceOpen),
       timezone: 'Asia/Ho_Chi_Minh',
       updated_by: actor?.name || 'Admin',
@@ -2241,9 +2398,9 @@ export function getTimeGateStatus(customOpenHour?: number, customCloseHour?: num
   const [cfgOpenH, cfgOpenM] = cfg.openTime.split(':').map(Number);
   const [cfgCloseH, cfgCloseM] = cfg.closeTime.split(':').map(Number);
 
-  const openH = customOpenHour ?? (isNaN(cfgOpenH) ? 6 : cfgOpenH);
+  const openH = customOpenHour ?? (isNaN(cfgOpenH) ? 13 : cfgOpenH);
   const openM = isNaN(cfgOpenM) ? 0 : cfgOpenM;
-  const closeH = customCloseHour ?? (isNaN(cfgCloseH) ? 22 : cfgCloseH);
+  const closeH = customCloseHour ?? (isNaN(cfgCloseH) ? 17 : cfgCloseH);
   const closeM = isNaN(cfgCloseM) ? 0 : cfgCloseM;
 
   const vnTime = getVietnamTime();

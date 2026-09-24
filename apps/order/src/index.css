@@ -31,55 +31,102 @@
   margin: 0;
 }
 
+#pos-print-root {
+  display: none !important;
+}
+
 @media print {
-  html, body, #root {
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #fff !important;
-    min-height: 0 !important;
-    height: auto !important;
-    width: 100% !important;
-    overflow: visible !important;
-  }
-
-  body * {
-    visibility: hidden;
-  }
-
-  .pos-printable,
-  .pos-printable * {
-    visibility: visible;
-  }
-
+  /* 1. Hide the entire interactive app UI and modal overlays */
+  #root,
   .no-print,
   .no-print * {
     display: none !important;
-    visibility: hidden !important;
   }
 
-  .pos-printable {
+  /* 2. Global html & body resets for thermal continuous / paged printing */
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* 3. Dedicated print root rendered directly into document.body */
+  #pos-print-root {
+    display: block !important;
+    position: static !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    background: #ffffff !important;
+    overflow: visible !important;
+  }
+
+  /* 4. Thermal ticket page layout rules */
+  .pos-receipt-ticket {
+    display: block !important;
     position: relative !important;
-    left: 0 !important;
-    top: 0 !important;
-    width: 72mm !important;
-    max-width: 72mm !important;
     margin: 0 auto !important;
-    padding: 2mm 1mm !important;
     box-shadow: none !important;
     border: none !important;
     border-radius: 0 !important;
     page-break-inside: avoid !important;
     break-inside: avoid !important;
-    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace !important;
-    font-size: 11px;
-    line-height: 1.35;
-    color: #000 !important;
-    background: #fff !important;
-  }
-
-  .pos-printable.break-after-page {
     page-break-after: always !important;
     break-after: page !important;
+    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace !important;
+    color: #000000 !important;
+    background: #ffffff !important;
+    box-sizing: border-box !important;
+  }
+
+  /* K80 Roll (80mm width, 72mm printable width) */
+  .pos-receipt-ticket.pos-k80 {
+    width: 72mm !important;
+    max-width: 72mm !important;
+    padding: 4mm 2mm 3mm 2mm !important;
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+
+  /* K58 Roll (58mm width, 48mm printable width) */
+  .pos-receipt-ticket.pos-k58 {
+    width: 48mm !important;
+    max-width: 48mm !important;
+    padding: 3mm 1.5mm 2mm 1.5mm !important;
+    font-size: 10px !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Prevent trailing empty page on the final ticket */
+  .pos-receipt-ticket.is-last,
+  .pos-receipt-ticket:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
+  }
+
+  /* Fallback in case in-modal elements are printed */
+  .pos-printable {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    page-break-after: always !important;
+    break-after: page !important;
+    display: block !important;
+    box-shadow: none !important;
+    border: none !important;
+    width: 72mm !important;
+    max-width: 72mm !important;
+    margin: 0 auto !important;
+    padding: 2mm 1mm !important;
+  }
+
+  .pos-printable:last-child {
+    page-break-after: auto !important;
+    break-after: auto !important;
   }
 }
 

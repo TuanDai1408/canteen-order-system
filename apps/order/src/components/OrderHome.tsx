@@ -5,6 +5,8 @@ import {
   cancelOrder,
   parseItemsFromNote,
   getOrderDisplayItems,
+  getCachedQRTokens,
+  getCachedOrders,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -70,6 +72,8 @@ export function OrderHome({
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('dine_in');
   const [roomNumber, setRoomNumber] = useState(currentUser.defaultRoom || '');
   const [pickupTime, setPickupTime] = useState('11:30');
+  const [isCustomTimeMode, setIsCustomTimeMode] = useState(false);
+  const [orderNote, setOrderNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [isCartOpen, setIsCartOpen] = useState(false);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -139,6 +143,52 @@ export function OrderHome({
   const remainingWallet = currentUser.walletBalance - cartSubtotal;
   const isBalanceSufficient = remainingWallet >= 0;
 
+  // Real-time verification of exception QR token & quota
+  const tokenValidation = useMemo(() => {
+    const raw = exceptionToken.trim().toUpperCase();
+    if (!raw) return null;
+    const allTokens = getCachedQRTokens();
+    const found = allTokens.find((t) => t.token.toUpperCase() === raw);
+    if (!found) {
+      return {
+        status: 'unknown' as const,
+        text: 'Mã QR ngoại lệ (sẽ được đối chiếu và xác thực trên hệ thống khi đặt)',
+      };
+    }
+    const isExpired = new Date(found.expiresAt).getTime() < Date.now();
+    const allowedQty = Number(found.quantity) || 1;
+    const allOrders = getCachedOrders();
+    const tokenOrders = allOrders.filter(
+      (o) =>
+        (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === raw) ||
+        ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === raw)
+    );
+    const usedMeals = tokenOrders.reduce((sum, o) => {
+      const cnt = o.items && o.items.length > 0 ? o.items.reduce((s, it) => s + (Number(it.quantity) || 1), 0) : 1;
+      return sum + cnt;
+    }, 0);
+
+    if (found.isUsed || usedMeals >= allowedQty) {
+      return {
+        status: 'invalid' as const,
+        text: `Mã QR ngoại lệ "${raw}" đã hết hiệu lực do đã sử dụng đủ/vượt số suất được cấp (${allowedQty} suất).`,
+      };
+    }
+    if (isExpired) {
+      return {
+        status: 'invalid' as const,
+        text: `Mã QR ngoại lệ "${raw}" đã hết hạn lúc ${new Date(found.expiresAt).toLocaleTimeString('vi-VN')}.`,
+      };
+    }
+    const remaining = Math.max(0, allowedQty - usedMeals);
+    return {
+      status: 'valid' as const,
+      remaining,
+      allowed: allowedQty,
+      text: `Mã hợp lệ: Được đặt tối đa ${allowedQty} suất (Còn lại: ${remaining} suất).`,
+    };
+  }, [exceptionToken]);
+
   const addToCart = (id: string) => {
     const item = menu.find((m) => m.id === id);
     if (!item) return;
@@ -202,6 +252,29 @@ export function OrderHome({
       return;
     }
 
+    if (tokenValidation && tokenValidation.status === 'invalid') {
+      setFeedbackModal({
+        title: 'Mã QR ngoại lệ không hợp lệ',
+        message: tokenValidation.text,
+        type: 'error',
+      });
+      return;
+    }
+
+    if (
+      tokenValidation &&
+      tokenValidation.status === 'valid' &&
+      tokenValidation.remaining !== undefined &&
+      totalItemsCount > tokenValidation.remaining
+    ) {
+      setFeedbackModal({
+        title: 'Vượt quá số suất được phép đặt',
+        message: `Mã QR ngoại lệ này chỉ còn lại ${tokenValidation.remaining} suất được phép đặt. Bạn đang chọn tổng cộng ${totalItemsCount} suất. Vui lòng giảm bớt số lượng món trong giỏ hàng.`,
+        type: 'warning',
+      });
+      return;
+    }
+
     if (currentUser.walletBalance < cartSubtotal) {
       setFeedbackModal({
         title: 'Số dư ví không đủ',
@@ -210,6 +283,12 @@ export function OrderHome({
       });
       return;
     }
+
+    // Kết hợp giờ dùng bữa mong muốn và ghi chú dặn dò để admin và bill POS in đầy đủ
+    const finalNote = [
+      pickupTime ? `Giờ dùng bữa: ${pickupTime}` : '',
+      orderNote.trim(),
+    ].filter(Boolean).join(' | ');
 
     setSubmitting(true);
     setMessage(null);
@@ -225,6 +304,7 @@ export function OrderHome({
         deliveryMethod,
         roomNumber: deliveryMethod === 'room_delivery' ? roomNumber.trim() : undefined,
         pickupTime,
+        note: finalNote || undefined,
         isExceptionOrder: !timeStatus.isOpen && Boolean(exceptionToken.trim()),
         exceptionToken: exceptionToken.trim() || undefined,
       });
@@ -242,11 +322,12 @@ export function OrderHome({
         }
         setFeedbackModal({
           title: 'Đặt món thành công! 🎉',
-          message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}`,
+          message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}${orderNote.trim() ? `\nGhi chú: ${orderNote.trim()}` : ''}`,
           type: 'success',
         });
         setCart({});
         setIsCartOpen(false);
+        setOrderNote('');
         setExceptionToken('');
         setShowExceptionField(false);
         await onRefresh();
@@ -1086,25 +1167,91 @@ export function OrderHome({
 
               {/* Pickup Time Choice */}
               <div className="space-y-2">
-                <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  Khung giờ dùng bữa mong muốn
-                </label>
-                <div className="grid grid-cols-4 gap-2">
-                  {['11:15', '11:30', '11:45', '12:00'].map((time) => (
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                    Giờ dùng bữa mong muốn
+                  </label>
+                  <span className="text-xs font-bold text-teal-700 font-mono bg-teal-50 px-2.5 py-0.5 rounded-lg border border-teal-200">
+                    {pickupTime || '11:30'}
+                  </span>
+                </div>
+
+                {/* Preset Options from 9h30 to 13h */}
+                <div className="grid grid-cols-4 gap-1.5">
+                  {['09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00'].map((time) => (
                     <button
                       key={time}
                       type="button"
-                      onClick={() => setPickupTime(time)}
-                      className={`py-2 rounded-xl text-xs font-semibold transition cursor-pointer ${
-                        pickupTime === time
+                      onClick={() => {
+                        setPickupTime(time);
+                        setIsCustomTimeMode(false);
+                      }}
+                      className={`py-2 rounded-xl text-xs font-semibold transition cursor-pointer font-mono ${
+                        pickupTime === time && !isCustomTimeMode
                           ? 'bg-slate-900 text-white shadow-xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                          : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
                       }`}
                     >
                       {time}
                     </button>
                   ))}
                 </div>
+
+                {/* Custom Time Input */}
+                <div className="pt-0.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsCustomTimeMode(!isCustomTimeMode)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition cursor-pointer flex items-center gap-1.5 ${
+                        isCustomTimeMode
+                          ? 'bg-teal-50 border-teal-300 text-teal-800 font-bold'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>{isCustomTimeMode ? 'Đang tự nhập giờ:' : 'Tự nhập giờ mong muốn'}</span>
+                    </button>
+                    {isCustomTimeMode && (
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="time"
+                          min="09:00"
+                          max="14:00"
+                          value={pickupTime}
+                          onChange={(e) => setPickupTime(e.target.value)}
+                          className="px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Hoặc gõ VD: 11h20..."
+                          value={pickupTime}
+                          onChange={(e) => setPickupTime(e.target.value)}
+                          className="w-28 px-2.5 py-1.5 bg-white border border-teal-300 rounded-xl text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Dish Note for Kitchen & POS Bill */}
+              <div className="space-y-1.5 pt-1">
+                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider">
+                  Ghi chú về món ăn / Dặn dò bếp (In ra bill POS)
+                </label>
+                <div className="relative">
+                  <textarea
+                    rows={2}
+                    value={orderNote}
+                    onChange={(e) => setOrderNote(e.target.value)}
+                    placeholder="Ghi chú cho bếp (VD: ít cơm, không hành ớt, canh nóng, lấy lúc 11h20...)"
+                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:bg-white resize-none"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Thông tin giờ dùng bữa và ghi chú sẽ được chuyển tới Bếp ăn và in ở phần <strong>"Ghi chú"</strong> trên phiếu POS.
+                </p>
               </div>
 
               {/* Wallet Deduction Preview */}
@@ -1139,15 +1286,37 @@ export function OrderHome({
                     <span>Mã Ngoại lệ Đặt khẩn cấp (Emergency Token)</span>
                   </div>
                   <p className="text-[11px] text-amber-700">
-                    Cổng đặt suất ăn tiêu chuẩn đã đóng lúc {timeStatus.closesAt || '16:00'}. Để đặt bổ sung, vui lòng nhập mã QR ngoại lệ do Quản trị viên cấp.
+                    Cổng đặt suất ăn tiêu chuẩn đã đóng lúc {timeStatus.closesAt || '17:00'}. Để đặt bổ sung, vui lòng nhập mã QR ngoại lệ do Quản trị viên cấp.
                   </p>
                   <input
                     type="text"
                     value={exceptionToken}
                     onChange={(e) => setExceptionToken(e.target.value)}
-                    placeholder="Nhập mã token (VD: QR-EXC-...)"
+                    placeholder="Nhập mã token (VD: QR-...)"
                     className="w-full px-3 py-2 bg-white border border-amber-300 rounded-xl text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
+
+                  {tokenValidation && (
+                    <div
+                      className={`text-[11px] px-2.5 py-2 rounded-xl border leading-relaxed ${
+                        tokenValidation.status === 'valid'
+                          ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                          : tokenValidation.status === 'invalid'
+                          ? 'bg-rose-50 text-rose-800 border-rose-200 font-bold'
+                          : 'bg-amber-100/70 text-amber-900 border-amber-300'
+                      }`}
+                    >
+                      {tokenValidation.text}
+                    </div>
+                  )}
+
+                  {tokenValidation?.status === 'valid' &&
+                    tokenValidation.remaining !== undefined &&
+                    totalItemsCount > tokenValidation.remaining && (
+                      <div className="text-[11px] font-bold text-rose-700 bg-rose-100/80 p-2 rounded-xl border border-rose-300">
+                        ⚠️ Bạn đang chọn {totalItemsCount} suất ăn trong giỏ, vượt quá số suất cho phép của mã QR ({tokenValidation.remaining} suất còn lại). Vui lòng giảm số lượng suất ăn để đặt món.
+                      </div>
+                    )}
                 </div>
               )}
             </div>
@@ -1165,7 +1334,16 @@ export function OrderHome({
               <button
                 type="button"
                 onClick={handlePlaceOrder}
-                disabled={submitting || (!timeStatus.isOpen && !exceptionToken.trim())}
+                disabled={
+                  submitting ||
+                  (!timeStatus.isOpen && !exceptionToken.trim()) ||
+                  tokenValidation?.status === 'invalid' ||
+                  Boolean(
+                    tokenValidation?.status === 'valid' &&
+                      tokenValidation.remaining !== undefined &&
+                      totalItemsCount > tokenValidation.remaining
+                  )
+                }
                 className="flex-1 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-md shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
               >
                 {submitting ? (

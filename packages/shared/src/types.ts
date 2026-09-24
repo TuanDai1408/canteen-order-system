@@ -21,7 +21,7 @@ export interface UserProfile {
 export interface MenuItem {
   id: string;
   name: string;
-  category: 'Cơm trưa' | 'Bún / Phở' | 'Món Chay' | 'Đồ uống / Tráng miệng';
+  category: string;
   description: string;
   price: number;
   imageUrl: string;
@@ -85,6 +85,7 @@ export interface QRExceptionToken {
   usedAt?: string;
   note?: string;
   quantity?: number;
+  usedCount?: number;
 }
 
 export interface TimeGateStatus {

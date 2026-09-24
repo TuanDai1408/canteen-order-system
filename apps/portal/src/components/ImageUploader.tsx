@@ -15,7 +15,10 @@ import {
   Sparkles,
   RefreshCw,
   X,
+  FolderOpen,
 } from 'lucide-react';
+import { StorageImagePickerModal } from './StorageImagePickerModal';
+import type { MenuItem } from '@canteen/shared';
 
 export interface ImageUploaderProps {
   /**
@@ -47,6 +50,14 @@ export interface ImageUploaderProps {
    * Supabase Storage bucket name (default: 'menu-images')
    */
   bucketName?: string;
+  /**
+   * Optional category for filtering library images
+   */
+  category?: string;
+  /**
+   * Optional menu items for library cross-referencing
+   */
+  menu?: MenuItem[];
 }
 
 type UploadStep = 'idle' | 'compressing' | 'uploading' | 'deleting' | 'success' | 'error';
@@ -59,6 +70,8 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
   className = '',
   disabled = false,
   bucketName = 'menu-images',
+  category,
+  menu = [],
 }) => {
   const [step, setStep] = useState<UploadStep>('idle');
   const [previewUrl, setPreviewUrl] = useState<string>(currentImageUrl || '');
@@ -70,6 +83,7 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
     dimensions: string;
   } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -372,6 +386,49 @@ export const ImageUploader: React.FC<ImageUploaderProps> = ({
           </div>
         )}
       </div>
+
+      {/* Storage Library & Management Actions */}
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <button
+          type="button"
+          onClick={() => setIsGalleryOpen(true)}
+          disabled={disabled || isBusy}
+          className="flex-1 min-w-[200px] py-2 px-3 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 min-h-[38px] shadow-2xs"
+        >
+          <FolderOpen className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+          <span>Kho ảnh Supabase (Storage menu-images)</span>
+        </button>
+
+        {previewUrl && (
+          <button
+            type="button"
+            onClick={handleRemoveImage}
+            disabled={disabled || isBusy}
+            className="py-2 px-3 bg-slate-100 hover:bg-rose-50 hover:text-rose-600 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl flex items-center justify-center gap-1.5 transition cursor-pointer disabled:opacity-50 min-h-[38px]"
+            title="Gỡ bỏ hình ảnh hiện tại"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            <span>Xóa ảnh</span>
+          </button>
+        )}
+      </div>
+
+      {/* Storage Image Picker Modal */}
+      <StorageImagePickerModal
+        isOpen={isGalleryOpen}
+        onClose={() => setIsGalleryOpen(false)}
+        onSelectImage={(newUrl) => {
+          setPreviewUrl(newUrl);
+          setStep('idle');
+          setStatusMessage('');
+          setErrorMessage(null);
+          onUploaded(newUrl);
+        }}
+        currentImageUrl={previewUrl}
+        bucketName={bucketName}
+        menu={menu}
+        initialCategory={category}
+      />
 
       {/* Compression statistics badge */}
       {compressionInfo && step !== 'error' && (
