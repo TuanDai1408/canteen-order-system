@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { supabase, formatBytes, type MenuItem } from '@canteen/shared';
+import { supabase, formatBytes, compressImage, type MenuItem } from '@canteen/shared';
 import {
   X,
   Search,
@@ -10,6 +10,9 @@ import {
   UploadCloud,
   FolderOpen,
   Filter,
+  Sparkles,
+  SlidersHorizontal,
+  CheckCircle2,
 } from 'lucide-react';
 
 export interface StorageImageItem {
@@ -32,6 +35,8 @@ export interface StorageImagePickerModalProps {
   initialCategory?: string;
 }
 
+type ResizeMode = 'auto_1200' | 'small_800' | 'hd_1600' | 'original';
+
 export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = ({
   isOpen,
   onClose,
@@ -47,8 +52,18 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCat, setSelectedCat] = useState<string>('all');
   const [chosenUrl, setChosenUrl] = useState<string>(currentImageUrl || '');
-  const [uploadingQuick, setUploadingQuick] = useState(false);
-  const quickUploadRef = useRef<HTMLInputElement | null>(null);
+  const [uploadingMulti, setUploadingMulti] = useState(false);
+  const [resizeMode, setResizeMode] = useState<ResizeMode>('auto_1200');
+  const [uploadProgress, setUploadProgress] = useState<{
+    current: number;
+    total: number;
+    currentFileName: string;
+    originalTotal: number;
+    compressedTotal: number;
+  } | null>(null);
+  const [uploadSuccessMsg, setUploadSuccessMsg] = useState<string | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync selected URL with currentImageUrl when modal opens
   useEffect(() => {
@@ -57,6 +72,8 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
       if (initialCategory) {
         setSelectedCat(initialCategory);
       }
+      setUploadSuccessMsg(null);
+      setErrorMsg(null);
       loadStorageImages();
     }
   }, [isOpen, currentImageUrl, initialCategory]);
@@ -79,16 +96,12 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
 
       // Map dishes from menu for quick lookup by ID or image URL
       const dishMapByUrl = new Map<string, MenuItem>();
-      const dishMapByName = new Map<string, MenuItem>();
       menu.forEach((m) => {
         if (m.imageUrl) {
           dishMapByUrl.set(m.imageUrl, m);
           const parts = m.imageUrl.split('/');
           const filename = parts[parts.length - 1];
           if (filename) dishMapByUrl.set(filename, m);
-        }
-        if (m.id) {
-          dishMapByName.set(m.id, m);
         }
       });
 
@@ -104,10 +117,9 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
           const publicUrl = urlData.publicUrl;
           seenUrls.add(publicUrl);
 
-          // Check if file matches any dish in menu (e.g. prefix is dish.id)
+          // Check if file matches any dish in menu
           let matchedDish: MenuItem | undefined = dishMapByUrl.get(publicUrl) || dishMapByUrl.get(file.name);
           if (!matchedDish) {
-            // Check prefix of file name (e.g. dishId-timestamp.webp)
             const prefix = file.name.split('-')[0];
             if (prefix) {
               matchedDish = menu.find((d) => d.id === prefix || d.id?.startsWith(prefix));
@@ -126,7 +138,7 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
         }
       }
 
-      // B. Also include images from existing menu items (even if hosted via full URL or CDN)
+      // B. Also include images from existing menu items
       for (const m of menu) {
         if (m.imageUrl && !seenUrls.has(m.imageUrl)) {
           seenUrls.add(m.imageUrl);
@@ -179,39 +191,133 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
     });
   }, [images, searchTerm, selectedCat]);
 
-  // Quick upload right from inside modal
-  const handleQuickUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Multiple Image Upload with Client-Side Resize before importing to Supabase Storage
+  const handleMultipleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-    setUploadingQuick(true);
+    setUploadingMulti(true);
     setErrorMsg(null);
+    setUploadSuccessMsg(null);
+
+    let originalSum = 0;
+    let compressedSum = 0;
+    const newItems: StorageImageItem[] = [];
+    let firstUploadedUrl = '';
+
     try {
-      const fileName = `custom-${Date.now()}.${file.name.split('.').pop() || 'jpg'}`;
-      const { error: upErr } = await supabase.storage.from(bucketName).upload(fileName, file, {
-        upsert: true,
-      });
-      if (upErr) throw upErr;
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        originalSum += file.size;
 
-      const { data: urlData } = supabase.storage.from(bucketName).getPublicUrl(fileName);
-      const newUrl = urlData.publicUrl;
+        setUploadProgress({
+          current: i + 1,
+          total: files.length,
+          currentFileName: file.name,
+          originalTotal: originalSum,
+          compressedTotal: compressedSum,
+        });
 
-      // Add to list and select immediately
-      const newItem: StorageImageItem = {
-        id: fileName,
-        name: fileName,
-        publicUrl: newUrl,
-        size: file.size,
-        createdAt: new Date().toISOString(),
-        category: selectedCat !== 'all' ? selectedCat : 'Cơm trưa',
-      };
-      setImages((prev) => [newItem, ...prev]);
-      setChosenUrl(newUrl);
+        let fileToUpload: Blob = file;
+        let extension = file.name.split('.').pop() || 'jpg';
+        let mimeType = file.type || 'image/jpeg';
+
+        // 1. Client-side Resize & Compression if enabled
+        if (resizeMode !== 'original') {
+          try {
+            let maxWidth = 1200;
+            let maxHeight = 1200;
+            let quality = 0.85;
+
+            if (resizeMode === 'small_800') {
+              maxWidth = 800;
+              maxHeight = 800;
+              quality = 0.80;
+            } else if (resizeMode === 'hd_1600') {
+              maxWidth = 1600;
+              maxHeight = 1600;
+              quality = 0.90;
+            }
+
+            const compRes = await compressImage(file, {
+              maxWidth,
+              maxHeight,
+              quality,
+              mimeType: 'image/webp',
+            });
+
+            fileToUpload = compRes.blob;
+            compressedSum += compRes.compressedSize;
+            extension = 'webp';
+            mimeType = 'image/webp';
+          } catch (compressErr) {
+            console.warn('[StorageImagePicker] Resize fallback for:', file.name, compressErr);
+            fileToUpload = file;
+            compressedSum += file.size;
+          }
+        } else {
+          compressedSum += file.size;
+        }
+
+        // 2. Clean filename for Supabase Storage
+        const cleanName = file.name
+          .replace(/\.[^/.]+$/, '')
+          .toLowerCase()
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^a-z0-9_-]/g, '_')
+          .slice(0, 32);
+        const fileName = `${cleanName}-${Date.now()}-${i + 1}.${extension}`;
+
+        // 3. Upload to Supabase Storage
+        const { error: upErr } = await supabase.storage.from(bucketName).upload(fileName, fileToUpload, {
+          contentType: mimeType,
+          upsert: true,
+        });
+
+        if (upErr) {
+          console.error('[Storage Upload Error]:', upErr);
+          throw new Error(`Lỗi tải ảnh "${file.name}": ${upErr.message}`);
+        }
+
+        const { data: urlData } = supabase.storage.from(bucketName).getPublicUrl(fileName);
+        const publicUrl = urlData.publicUrl;
+
+        if (!firstUploadedUrl) {
+          firstUploadedUrl = publicUrl;
+        }
+
+        newItems.push({
+          id: fileName,
+          name: fileName,
+          publicUrl,
+          size: fileToUpload.size,
+          createdAt: new Date().toISOString(),
+          category: selectedCat !== 'all' ? selectedCat : 'Món ăn',
+        });
+      }
+
+      setImages((prev) => [...newItems, ...prev]);
+      if (firstUploadedUrl) {
+        setChosenUrl(firstUploadedUrl);
+      }
+
+      const savedPercent =
+        originalSum > 0 ? Math.round(((originalSum - compressedSum) / originalSum) * 100) : 0;
+
+      setUploadSuccessMsg(
+        `Đã tải lên thành công ${files.length} ảnh vào bucket '${bucketName}'! ${
+          resizeMode !== 'original' && savedPercent > 0
+            ? `(Resize tối ưu: ${formatBytes(originalSum)} → ${formatBytes(compressedSum)}, tiết kiệm ${savedPercent}% dung lượng)`
+            : `(Tổng dung lượng: ${formatBytes(compressedSum)})`
+        }`
+      );
     } catch (err: any) {
       setErrorMsg(err.message || 'Lỗi khi tải ảnh lên Storage');
     } finally {
-      setUploadingQuick(false);
-      if (quickUploadRef.current) quickUploadRef.current.value = '';
+      setUploadingMulti(false);
+      setUploadProgress(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -226,7 +332,7 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
-      <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-3xl max-w-4xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[92vh] overflow-hidden">
         {/* Header */}
         <div className="p-4 sm:p-5 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
           <div className="flex items-center gap-2.5">
@@ -236,7 +342,7 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
             <div>
               <h3 className="font-bold text-sm sm:text-base">Kho Ảnh Supabase Storage</h3>
               <p className="text-[11px] text-slate-400">
-                Thư mục: <code className="text-indigo-300 font-mono">storage/{bucketName}</code> · Lọc theo danh mục & tìm theo tên
+                Thư mục: <code className="text-indigo-300 font-mono">storage/{bucketName}</code> · Chọn nhiều ảnh & Tự động Resize chống chặn
               </p>
             </div>
           </div>
@@ -248,8 +354,107 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
           </button>
         </div>
 
+        {/* Upload & Multi-file Toolbar */}
+        <div className="p-3 sm:p-4 bg-indigo-50/70 border-b border-indigo-100 space-y-2.5">
+          <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
+            {/* Multi-upload Trigger Button */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleMultipleUpload}
+                className="hidden"
+              />
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingMulti}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-sm transition cursor-pointer min-h-[38px]"
+                title="Chọn một hoặc nhiều file ảnh từ máy tính để tải lên cùng lúc"
+              >
+                {uploadingMulti ? (
+                  <Loader2 className="w-4 h-4 animate-spin text-white" />
+                ) : (
+                  <UploadCloud className="w-4 h-4 text-white" />
+                )}
+                <span>Tải ảnh mới (Chọn nhiều ảnh cùng lúc)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={loadStorageImages}
+                disabled={loading}
+                className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition cursor-pointer min-h-[38px]"
+                title="Làm mới danh sách ảnh từ Supabase Storage"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
+                <span className="hidden sm:inline">Làm mới</span>
+              </button>
+            </div>
+
+            {/* Resize Mode Selector */}
+            <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 shadow-2xs text-xs">
+              <SlidersHorizontal className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+              <span className="text-slate-500 font-semibold shrink-0">Chế độ Resize:</span>
+              <select
+                value={resizeMode}
+                onChange={(e) => setResizeMode(e.target.value as ResizeMode)}
+                className="bg-transparent font-bold text-slate-800 focus:outline-none cursor-pointer text-xs"
+                title="Tùy chọn tự động thu nhỏ kích thước ảnh trước khi tải lên Supabase để tránh lỗi file quá nặng"
+              >
+                <option value="auto_1200">⚡ Tự động Resize WebP (Max 1200px - Khuyên dùng)</option>
+                <option value="small_800">🚀 Nén siêu nhẹ WebP (Max 800px - Tải cực nhanh)</option>
+                <option value="hd_1600">🎨 Độ nét cao WebP (Max 1600px)</option>
+                <option value="original">📁 Giữ nguyên ảnh gốc (Không nén)</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Upload Progress Bar */}
+          {uploadProgress && (
+            <div className="p-3 bg-white border border-indigo-200 rounded-xl space-y-1.5 shadow-2xs animate-fadeIn">
+              <div className="flex justify-between text-xs font-semibold text-indigo-900">
+                <span className="flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                  Đang xử lý & tải lên {uploadProgress.current} / {uploadProgress.total} ảnh:
+                  <span className="font-mono text-indigo-600 truncate max-w-[200px]">
+                    {uploadProgress.currentFileName}
+                  </span>
+                </span>
+                <span>{Math.round((uploadProgress.current / uploadProgress.total) * 100)}%</span>
+              </div>
+              <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                <div
+                  className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${(uploadProgress.current / uploadProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Upload Success Banner */}
+          {uploadSuccessMsg && (
+            <div className="p-2.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 font-medium">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{uploadSuccessMsg}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setUploadSuccessMsg(null)}
+                className="text-emerald-700 hover:text-emerald-900 cursor-pointer p-0.5"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
+
         {/* Filter & Search Bar */}
-        <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 space-y-3">
+        <div className="p-3 sm:p-4 bg-slate-50 border-b border-slate-200 space-y-2.5">
           <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
             {/* Search Input */}
             <div className="relative flex-1">
@@ -271,46 +476,14 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
               )}
             </div>
 
-            {/* Quick Actions */}
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={loadStorageImages}
-                disabled={loading}
-                className="px-3 py-2 bg-white border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-2xs transition cursor-pointer disabled:opacity-50"
-                title="Làm mới danh sách ảnh từ Supabase"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-indigo-600' : ''}`} />
-                <span className="hidden sm:inline">Làm mới</span>
-              </button>
-
-              <input
-                ref={quickUploadRef}
-                type="file"
-                accept="image/*"
-                onChange={handleQuickUpload}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => quickUploadRef.current?.click()}
-                disabled={uploadingQuick}
-                className="px-3 py-2 bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-2xs transition cursor-pointer disabled:opacity-50"
-                title="Tải ảnh mới từ máy lên Storage"
-              >
-                {uploadingQuick ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
-                ) : (
-                  <UploadCloud className="w-3.5 h-3.5 text-indigo-600" />
-                )}
-                <span>Tải ảnh mới</span>
-              </button>
+            <div className="text-xs text-slate-500 font-medium whitespace-nowrap">
+              Tìm thấy <strong className="text-slate-900">{filteredImages.length}</strong> ảnh
             </div>
           </div>
 
           {/* Category Filter Pills */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1 flex-shrink-0">
+            <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1 mr-1 shrink-0">
               <Filter className="w-3 h-3" /> Danh mục:
             </span>
             {availableCategories.map((cat) => (
@@ -351,7 +524,7 @@ export const StorageImagePickerModal: React.FC<StorageImagePickerModalProps> = (
               <div>
                 <p className="text-xs font-bold text-slate-700">Không tìm thấy hình ảnh phù hợp</p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Thử đổi từ khóa tìm kiếm hoặc bấm "Tải ảnh mới" để tải lên ảnh món ăn.
+                  Thử đổi từ khóa tìm kiếm hoặc bấm nút "Tải ảnh mới" để tải lên ảnh món ăn.
                 </p>
               </div>
             </div>

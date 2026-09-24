@@ -1185,6 +1185,9 @@ export async function placeOrder(params: {
     note: userCustomNote
       ? (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${userCustomNote}` : userCustomNote)
       : (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
+    notes: userCustomNote
+      ? (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${userCustomNote}` : userCustomNote)
+      : (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
   };
 
   // Vòng lặp thích ứng schema: Tự động loại bỏ bất kỳ cột nào mà bảng orders trên DB chưa hỗ trợ
@@ -1429,6 +1432,7 @@ export async function placeOrder(params: {
     status: 'confirmed',
     cancellationDeadline: '16:00',
     note: userCustomNote || (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
+    notes: userCustomNote || (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
     isExceptionOrder: Boolean(params.isExceptionOrder),
     exceptionTokenUsed: params.exceptionToken || undefined,
     deviceInfo: device,
@@ -2794,6 +2798,17 @@ function mapOrder(row: any): Order {
     return it;
   });
 
+  // Trích xuất ghi chú của khách hàng (từ DB hoặc cache nếu cột trên DB chưa có)
+  const rawNote = row.note || row.notes || row.customer_note || '';
+  let finalNote = rawNote;
+  if (!finalNote && (row.id || row.order_code)) {
+    const cached = getCachedOrders();
+    const matched = cached.find((c) => c.id === row.id || c.orderCode === row.order_code);
+    if (matched?.note) {
+      finalNote = matched.note;
+    }
+  }
+
   return {
     id: row.id,
     orderCode: row.order_code,
@@ -2812,6 +2827,8 @@ function mapOrder(row: any): Order {
     cancellationDeadline: row.cancellation_deadline || '16:00',
     cancelledAt: row.cancelled_at,
     cancelReason: row.cancel_reason,
+    note: finalNote,
+    notes: finalNote,
     isExceptionOrder: Boolean(row.is_exception_order || row.used_qr_token),
     exceptionTokenUsed: row.exception_token_used || row.used_qr_token || '',
     deviceInfo: row.device_info,

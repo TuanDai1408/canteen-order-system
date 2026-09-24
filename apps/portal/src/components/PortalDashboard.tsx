@@ -64,6 +64,8 @@ import {
   ShieldCheck,
   Wallet,
   FileSpreadsheet,
+  Calendar,
+  StickyNote,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -106,6 +108,7 @@ export function PortalDashboard({
   const [menuFilterCat, setMenuFilterCat] = useState('all');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | OrderStatus>('all');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<'all' | 'dine_in' | 'room_delivery'>('all');
+  const [orderDateFilter, setOrderDateFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
@@ -287,20 +290,41 @@ export function PortalDashboard({
     });
   }, [menu, menuFilterCat, menuSearch]);
 
+  // Danh sách các ngày có đơn hàng trong hệ thống (sắp xếp ngày mới nhất lên đầu)
+  const availableOrderDates = useMemo(() => {
+    const set = new Set<string>();
+    for (const o of orders) {
+      const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
+      if (d) set.add(d);
+    }
+    return Array.from(set).sort().reverse();
+  }, [orders]);
+
+  // Mặc định chọn ngày mới nhất có đơn hàng khi mở portal
+  useEffect(() => {
+    if (!orderDateFilter && availableOrderDates.length > 0) {
+      setOrderDateFilter(availableOrderDates[0]);
+    }
+  }, [availableOrderDates, orderDateFilter]);
+
   // Filtered Orders (Sorted newest first)
   const filteredOrders = useMemo(() => {
     return orders
       .filter((o) => {
         const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
         const matchDelivery = orderDeliveryFilter === 'all' || o.deliveryMethod === orderDeliveryFilter;
+        const orderDate = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
+        const matchDate = !orderDateFilter || orderDateFilter === 'all' || orderDate === orderDateFilter;
         const matchSearch =
           o.orderCode.toLowerCase().includes(orderSearch.toLowerCase()) ||
           o.userName.toLowerCase().includes(orderSearch.toLowerCase()) ||
-          (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase()));
-        return matchStatus && matchDelivery && matchSearch;
+          (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase())) ||
+          (o.note && o.note.toLowerCase().includes(orderSearch.toLowerCase())) ||
+          (o.notes && o.notes.toLowerCase().includes(orderSearch.toLowerCase()));
+        return matchStatus && matchDelivery && matchDate && matchSearch;
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [orders, orderStatusFilter, orderDeliveryFilter, orderSearch]);
+  }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
 
   // Pending users count for approval
   const pendingUsersCount = useMemo(() => {
@@ -340,7 +364,7 @@ export function PortalDashboard({
   // Reset page numbers when search / filters change
   useEffect(() => {
     setOrderPage(1);
-  }, [orderStatusFilter, orderDeliveryFilter, orderSearch]);
+  }, [orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
 
   useEffect(() => {
     setUserPage(1);
@@ -1536,65 +1560,139 @@ export function PortalDashboard({
           {tab === 'orders' && (
             <div className="space-y-4">
               {/* Filter controls */}
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 flex flex-col md:flex-row gap-3 items-stretch md:items-center justify-between shadow-xs">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
-                  <span className="text-xs text-slate-500 font-semibold flex items-center gap-1 mr-1">
-                    <Filter className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Lọc:</span>
-                  </span>
-                  {(['all', 'confirmed', 'preparing', 'completed', 'cancelled'] as const).map((st) => (
-                    <button
-                      key={st}
-                      onClick={() => setOrderStatusFilter(st)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
-                        orderStatusFilter === st
-                          ? 'bg-indigo-600 text-white shadow-2xs'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      {st === 'all'
-                        ? 'Tất cả'
-                        : st === 'confirmed'
-                          ? 'Chờ nấu'
-                          : st === 'preparing'
-                            ? 'Đang nấu'
-                            : st === 'completed'
-                              ? 'Xong'
-                              : 'Đã hủy'}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <select
-                    value={orderDeliveryFilter}
-                    onChange={(e: any) => setOrderDeliveryFilter(e.target.value)}
-                    className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
-                  >
-                    <option value="all">Tất cả hình thức</option>
-                    <option value="dine_in">Tại Căn tin</option>
-                    <option value="room_delivery">Giao tận phòng</option>
-                  </select>
-
-                  <div className="relative min-w-[180px] flex-1">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={orderSearch}
-                      onChange={(e) => setOrderSearch(e.target.value)}
-                      placeholder="Mã đơn, cán bộ, phòng..."
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
-                    />
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
+                {/* Row 1: Status & Date Filter */}
+                <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between pb-1 border-b border-slate-100">
+                  {/* Status Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
+                    <span className="text-xs text-slate-500 font-semibold flex items-center gap-1 mr-1 shrink-0">
+                      <Filter className="w-3.5 h-3.5" />
+                      <span>Trạng thái:</span>
+                    </span>
+                    {(['all', 'confirmed', 'preparing', 'completed', 'cancelled'] as const).map((st) => (
+                      <button
+                        key={st}
+                        onClick={() => setOrderStatusFilter(st)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
+                          orderStatusFilter === st
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {st === 'all'
+                          ? 'Tất cả'
+                          : st === 'confirmed'
+                            ? 'Chờ nấu'
+                            : st === 'preparing'
+                              ? 'Đang nấu'
+                              : st === 'completed'
+                                ? 'Xong'
+                                : 'Đã hủy'}
+                      </button>
+                    ))}
                   </div>
 
-                  <button
-                    onClick={() => exportOrdersToExcel(filteredOrders)}
-                    className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[40px] whitespace-nowrap transition"
-                    title="Xuất danh sách đơn hàng đã lọc ra file Excel (.xlsx)"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Xuất Excel ({filteredOrders.length})</span>
-                  </button>
+                  {/* Date Filter */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-slate-500 font-semibold flex items-center gap-1 shrink-0">
+                      <Calendar className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Lọc ngày:</span>
+                    </span>
+
+                    {/* Quick Date Select Dropdown */}
+                    <select
+                      value={orderDateFilter}
+                      onChange={(e) => setOrderDateFilter(e.target.value)}
+                      className="px-3 py-1.5 bg-slate-50 hover:bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px] cursor-pointer shadow-2xs"
+                    >
+                      {availableOrderDates.length > 0 ? (
+                        <>
+                          {availableOrderDates.map((dateStr, idx) => (
+                            <option key={dateStr} value={dateStr}>
+                              {idx === 0 ? `📅 ${dateStr} (Ngày mới nhất)` : `📅 ${dateStr}`}
+                            </option>
+                          ))}
+                          <option value="all">🌐 Tất cả các ngày (Toàn bộ)</option>
+                        </>
+                      ) : (
+                        <option value="all">Tất cả các ngày</option>
+                      )}
+                    </select>
+
+                    {/* Date Picker Input for Custom Date */}
+                    <input
+                      type="date"
+                      value={orderDateFilter === 'all' ? '' : orderDateFilter}
+                      onChange={(e) => setOrderDateFilter(e.target.value || 'all')}
+                      className="px-2.5 py-1.5 bg-slate-50 hover:bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px] shadow-2xs"
+                      title="Chọn ngày cụ thể bất kỳ"
+                    />
+
+                    {/* Reset to Newest Date or Show All */}
+                    {availableOrderDates.length > 0 && orderDateFilter !== availableOrderDates[0] && (
+                      <button
+                        type="button"
+                        onClick={() => setOrderDateFilter(availableOrderDates[0])}
+                        className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold transition cursor-pointer min-h-[38px]"
+                        title="Quay lại ngày mới nhất"
+                      >
+                        Về ngày mới nhất
+                      </button>
+                    )}
+
+                    {orderDateFilter !== 'all' && (
+                      <button
+                        type="button"
+                        onClick={() => setOrderDateFilter('all')}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl text-xs font-medium transition cursor-pointer min-h-[38px]"
+                        title="Xem toàn bộ không giới hạn ngày"
+                      >
+                        Xem tất cả
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Row 2: Delivery, Search & Export */}
+                <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={orderDeliveryFilter}
+                      onChange={(e: any) => setOrderDeliveryFilter(e.target.value)}
+                      className="px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
+                    >
+                      <option value="all">Tất cả hình thức</option>
+                      <option value="dine_in">Tại Căn tin</option>
+                      <option value="room_delivery">Giao tận phòng</option>
+                    </select>
+
+                    <span className="text-xs text-slate-500 font-medium whitespace-nowrap">
+                      Hiển thị <strong className="text-slate-900">{filteredOrders.length}</strong> đơn hàng
+                      {orderDateFilter && orderDateFilter !== 'all' ? ` (${orderDateFilter})` : ''}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2 flex-1 sm:justify-end">
+                    <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={orderSearch}
+                        onChange={(e) => setOrderSearch(e.target.value)}
+                        placeholder="Mã đơn, tên cán bộ, phòng, ghi chú..."
+                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[40px]"
+                      />
+                    </div>
+
+                    <button
+                      onClick={() => exportOrdersToExcel(filteredOrders)}
+                      className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer shadow-xs min-h-[40px] whitespace-nowrap transition"
+                      title="Xuất danh sách đơn hàng đã lọc ra file Excel (.xlsx) bao gồm cả cột Ghi chú"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>Xuất Excel ({filteredOrders.length})</span>
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -1778,8 +1876,11 @@ export function PortalDashboard({
                               <span className="text-slate-500 font-medium">Ăn tại chỗ</span>
                             )}
                           </td>
-                          <td className="py-3 px-4 font-bold text-slate-800 whitespace-nowrap">
-                            {o.pickupTime}
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <p className="text-xs font-bold text-slate-900">{o.pickupTime}</p>
+                            <p className="text-[10px] text-slate-400 font-normal">
+                              {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '')}
+                            </p>
                           </td>
                           <td className="py-3 px-4 max-w-xs">
                             <div className="space-y-0.5">
@@ -1799,6 +1900,15 @@ export function PortalDashboard({
                                 );
                               })()}
                             </div>
+                            {(o.note || o.notes) && (
+                              <div className="mt-1.5 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1">
+                                <StickyNote className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                <div className="min-w-0">
+                                  <span className="font-bold text-amber-800">Ghi chú: </span>
+                                  <span className="break-words font-medium">{o.note || o.notes}</span>
+                                </div>
+                              </div>
+                            )}
                           </td>
                           <td className="py-3 px-4 text-right font-extrabold text-indigo-600 whitespace-nowrap">
                             {formatVnd(o.totalAmount)}

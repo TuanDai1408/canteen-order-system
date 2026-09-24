@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import {
   formatVnd,
   placeOrder,
@@ -24,6 +24,7 @@ import {
   CheckCircle2,
   AlertCircle,
   XCircle,
+  ChevronLeft,
   ChevronRight,
   LogOut,
   Sparkles,
@@ -68,6 +69,15 @@ export function OrderHome({
   const [tab, setTab] = useState<'menu' | 'orders'>('menu');
   const [cart, setCart] = useState<Record<string, number>>({});
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [isCategoryWrap, setIsCategoryWrap] = useState(false);
+  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollCategory = (direction: 'left' | 'right') => {
+    if (categoryScrollRef.current) {
+      const scrollAmount = direction === 'left' ? -240 : 240;
+      categoryScrollRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
   const [searchQuery, setSearchQuery] = useState('');
   const [deliveryMethod, setDeliveryMethod] = useState<DeliveryMethod>('dine_in');
   const [roomNumber, setRoomNumber] = useState(currentUser.defaultRoom || '');
@@ -628,42 +638,98 @@ export function OrderHome({
         {tab === 'menu' && (
           <div className="space-y-5">
             {/* Search & Category Filter Toolbar */}
-            <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
-              {/* Category Pills */}
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-                {categories.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer ${
-                      selectedCategory === cat
-                        ? 'bg-slate-900 text-white shadow-sm'
-                        : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-                    }`}
-                  >
-                    {cat === 'all' ? 'Tất cả món' : cat}
-                  </button>
-                ))}
-              </div>
+            <div className="bg-white p-3 sm:p-4 rounded-2xl border border-slate-200/90 shadow-2xs">
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                {/* Category Pills Container */}
+                <div className="flex-1 min-w-0 flex items-center gap-1.5 relative">
+                  {/* Left Scroll Arrow for PC */}
+                  {!isCategoryWrap && (
+                    <button
+                      type="button"
+                      onClick={() => scrollCategory('left')}
+                      className="hidden sm:flex p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer shrink-0 items-center justify-center border border-slate-200 shadow-2xs"
+                      title="Cuộn danh mục sang trái"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                  )}
 
-              {/* Search input */}
-              <div className="relative min-w-[220px]">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Tìm món ăn, cơm, bún..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-xl text-xs placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-sm"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  {/* Scrollable / Wrappable Category List */}
+                  <div
+                    ref={categoryScrollRef}
+                    onWheel={(e) => {
+                      if (!isCategoryWrap && e.deltaY !== 0 && !e.shiftKey) {
+                        e.currentTarget.scrollLeft += e.deltaY;
+                      }
+                    }}
+                    className={`flex-1 min-w-0 flex items-center gap-1.5 transition-all ${
+                      isCategoryWrap
+                        ? 'flex-wrap py-1'
+                        : 'overflow-x-auto py-1 scroll-smooth'
+                    }`}
+                    style={{
+                      scrollbarWidth: 'thin',
+                    }}
                   >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                    {categories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setSelectedCategory(cat)}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition cursor-pointer shrink-0 ${
+                          selectedCategory === cat
+                            ? 'bg-slate-900 text-white shadow-sm'
+                            : 'bg-slate-100/90 text-slate-700 hover:bg-slate-200/80 border border-slate-200'
+                        }`}
+                      >
+                        {cat === 'all' ? 'Tất cả món' : cat}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Right Scroll Arrow for PC */}
+                  {!isCategoryWrap && (
+                    <button
+                      type="button"
+                      onClick={() => scrollCategory('right')}
+                      className="hidden sm:flex p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition cursor-pointer shrink-0 items-center justify-center border border-slate-200 shadow-2xs"
+                      title="Cuộn danh mục sang phải"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  )}
+
+                  {/* Toggle Wrap on PC if categories are plentiful */}
+                  {categories.length > 4 && (
+                    <button
+                      type="button"
+                      onClick={() => setIsCategoryWrap((prev) => !prev)}
+                      className="hidden sm:inline-flex items-center gap-1 px-2.5 py-2 rounded-xl text-[11px] font-bold text-teal-800 bg-teal-50 hover:bg-teal-100 border border-teal-200 transition cursor-pointer shrink-0 ml-1 shadow-2xs"
+                      title={isCategoryWrap ? 'Chuyển sang dạng cuộn 1 dòng' : 'Mở rộng tất cả danh mục'}
+                    >
+                      {isCategoryWrap ? 'Thu gọn' : `Tất cả (${categories.length})`}
+                    </button>
+                  )}
+                </div>
+
+                {/* Search input */}
+                <div className="relative w-full sm:w-64 sm:shrink-0">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Tìm món ăn, cơm, bún..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-8 py-2 bg-slate-50 hover:bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-teal-500 shadow-2xs transition"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
