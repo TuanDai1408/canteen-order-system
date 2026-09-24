@@ -412,20 +412,20 @@ export function OrderHome({
   return (
     <div className="min-h-dvh bg-slate-50 flex flex-col font-sans text-slate-800 pb-28 sm:pb-24">
       {/* Top Navigation Bar */}
-      <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 text-white shadow-md">
+      <header className="sticky top-0 z-30 bg-white border-b border-slate-200/90 text-slate-800 shadow-2xs">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-2.5 min-h-[64px] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-white/95 px-2 py-1 rounded-xl shadow-xs border border-white/20">
-              <BrandLogo height={44} />
+            <div className="py-0.5">
+              <BrandLogo height={46} />
             </div>
-            <div className="hidden sm:block">
+            <div className="hidden sm:block border-l border-slate-200 pl-3">
               <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Live Sync
                 </span>
               </div>
-              <p className="text-xs text-slate-300 font-medium mt-0.5">
+              <p className="text-xs text-slate-600 font-medium mt-0.5">
                 {currentUser.name} · {currentUser.department || 'Cán bộ'}
               </p>
             </div>
@@ -435,26 +435,26 @@ export function OrderHome({
             <button
               onClick={handleManualRefresh}
               disabled={isRefreshing}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              className="p-2 text-slate-500 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition cursor-pointer"
               title="Làm mới thực đơn và ví tiền"
             >
-              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-teal-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin text-teal-600' : ''}`} />
             </button>
 
             {onSwitchToPortal && ['admin', 'data_entry', 'executive'].includes(currentUser.role) && (
               <button
                 onClick={onSwitchToPortal}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium rounded-lg transition flex items-center gap-1.5 cursor-pointer"
+                className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
                 title="Chuyển sang Quản trị & Bếp Căn tin"
               >
-                <Building2 className="w-3.5 h-3.5 text-teal-400" />
+                <Building2 className="w-3.5 h-3.5 text-teal-600" />
                 <span className="hidden md:inline">Portal Quản trị</span>
               </button>
             )}
 
             <button
               onClick={onLogout}
-              className="p-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              className="p-2 text-slate-500 hover:text-red-600 rounded-xl hover:bg-red-50 transition cursor-pointer"
               title="Đăng xuất"
             >
               <LogOut className="w-4 h-4" />
