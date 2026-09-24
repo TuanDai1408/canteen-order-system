@@ -1,45 +1,45 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 220" width="100%" height="100%">
   <defs>
     <style>
-      .siba-brand-red { fill: #ED1C24; }
-      .siba-brand-red-stroke { stroke: #ED1C24; fill: none; }
-      .siba-brand-maroon { fill: #5C1D2E; }
+      .siba-red { fill: #ED1C24; }
+      .siba-red-stroke { stroke: #ED1C24; fill: none; }
+      .siba-dark { fill: #4A1525; }
     </style>
   </defs>
 
-  <!-- ==================== LEFT ICON: EXACT MATCH ==================== -->
-  <g transform="translate(10, 5)">
-    <!-- Base line of steam / top rim -->
-    <path d="M 28 85 L 182 85" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" />
+  <!-- ==================== LEFT ICON: BOWL + HEART STEAM + HAND ==================== -->
+  <g transform="translate(15, 10)">
+    <!-- Base line of steam / top rim of bowl -->
+    <line x1="20" y1="84" x2="188" y2="84" stroke="#ED1C24" stroke-width="7" stroke-linecap="round" />
 
     <!-- Steam Cloud Outline (Left to Right) -->
-    <path d="M 33 83 C 28 72, 35 55, 52 54 C 56 40, 74 38, 90 47 C 93 51, 95 56, 95 63" 
-          fill="none" stroke="#ED1C24" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 28 82 C 22 68, 30 48, 52 46 C 58 30, 78 28, 94 38 C 98 42, 100 48, 100 56" 
+          fill="none" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
     
-    <path d="M 115 63 C 115 56, 117 51, 120 47 C 136 38, 154 40, 158 54 C 175 55, 182 72, 177 83" 
-          fill="none" stroke="#ED1C24" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 108 56 C 108 48, 110 42, 114 38 C 130 28, 150 30, 156 46 C 178 48, 186 68, 180 82" 
+          fill="none" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
 
-    <!-- Solid Heart in center of steam -->
-    <path d="M 105 48 C 105 48, 97 34, 87 39 C 77 44, 80 57, 105 76 C 130 57, 133 44, 123 39 C 113 34, 105 48, 105 48 Z" 
+    <!-- Solid Red Heart in center of steam -->
+    <path d="M 104 38 C 104 38, 95 22, 83 28 C 71 34, 75 50, 104 72 C 133 50, 137 34, 125 28 C 113 22, 104 38, 104 38 Z" 
           fill="#ED1C24" />
 
     <!-- Solid Red Bowl -->
-    <path d="M 20 92 L 190 92 C 190 118, 180 138, 162 148 C 140 160, 108 164, 84 160 C 50 152, 26 126, 20 92 Z" 
+    <path d="M 12 92 L 196 92 C 196 122, 184 144, 164 156 C 140 170, 104 174, 80 170 C 44 162, 18 132, 12 92 Z" 
           fill="#ED1C24" />
 
     <!-- Caring Gentle Hand -->
-    <path d="M 185 138 C 190 142, 188 150, 182 155 C 166 172, 142 190, 108 200 C 80 208, 55 204, 38 224 C 36 210, 41 192, 54 180 C 70 164, 94 158, 118 158 C 142 158, 152 166, 148 172 C 144 178, 130 178, 110 175 C 98 173, 92 177, 98 181 C 108 187, 128 187, 146 177 C 162 168, 176 153, 180 141 C 181 138, 184 136, 185 138 Z" 
+    <path d="M 190 142 C 196 148, 194 158, 186 164 C 168 184, 142 202, 104 212 C 72 220, 44 216, 26 238 C 24 222, 30 202, 45 188 C 62 170, 88 164, 114 164 C 140 164, 152 172, 146 180 C 140 186, 124 186, 104 182 C 90 180, 84 184, 90 189 C 102 196, 124 196, 144 185 C 162 174, 178 158, 182 144 C 184 140, 188 138, 190 142 Z" 
           fill="#ED1C24" />
   </g>
 
   <!-- ==================== RIGHT TEXT: CƠM NGON SIBA ==================== -->
-  <g transform="translate(225, 0)">
+  <g transform="translate(232, 0)">
     <!-- Stacked "Cơm" (Top) -->
     <text x="0" y="80" 
           font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', Arial, sans-serif" 
           font-size="44" 
           font-weight="800" 
-          fill="#5C1D2E" 
+          fill="#4A1525" 
           letter-spacing="-0.5">Cơm</text>
 
     <!-- Stacked "Ngon" (Bottom) -->
@@ -47,22 +47,22 @@
           font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', Arial, sans-serif" 
           font-size="44" 
           font-weight="800" 
-          fill="#5C1D2E" 
+          fill="#4A1525" 
           letter-spacing="-0.5">Ngon</text>
 
     <!-- Big Bold "SIBA" -->
-    <text x="128" y="126" 
+    <text x="130" y="126" 
           font-family="'Be Vietnam Pro', 'Montserrat', 'Arial Black', sans-serif" 
-          font-size="84" 
+          font-size="85" 
           font-weight="900" 
-          fill="#5C1D2E" 
+          fill="#4A1525" 
           letter-spacing="1.5">SIBA</text>
 
     <!-- Red Banner for Slogan -->
-    <rect x="0" y="150" width="305" height="35" rx="9" fill="#ED1C24" />
+    <rect x="0" y="148" width="300" height="36" rx="9" fill="#ED1C24" />
 
     <!-- Slogan: ĂN SẠCH – SỐNG KHỎE -->
-    <text x="152" y="174" 
+    <text x="150" y="173" 
           text-anchor="middle"
           font-family="'Be Vietnam Pro', 'Montserrat', 'Arial Black', sans-serif" 
           font-size="16.5" 
