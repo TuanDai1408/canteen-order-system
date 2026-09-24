@@ -18,6 +18,12 @@ const checkSupabase = () => {
   }
 };
 
+// BroadcastChannel for cross-tab and cross-iframe zero-latency communication
+export const broadcastSyncChannel: BroadcastChannel | null =
+  typeof window !== 'undefined' && 'BroadcastChannel' in window
+    ? new BroadcastChannel('canteen_system_sync_bus')
+    : null;
+
 /**
  * Giới hạn thời gian truy vấn Supabase, ngăn chặn browser treo do statement_timeout
  */
@@ -1564,12 +1570,26 @@ export async function placeOrder(params: {
 
   // Phát tín hiệu broadcast cho tab hoặc window khác cập nhật ví và đơn hàng
   try {
-    window.dispatchEvent(new CustomEvent('canteen_order_created', { detail: localOrder }));
-    window.dispatchEvent(
-      new CustomEvent('canteen_wallet_updated', {
-        detail: { walletBalance: newBalance, userId: userData.id },
-      })
-    );
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({ type: 'order_created', order: localOrder });
+      broadcastSyncChannel.postMessage({
+        type: 'wallet_updated',
+        walletBalance: newBalance,
+        userId: userData.id,
+      });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('canteen_order_created', { detail: localOrder }));
+      window.dispatchEvent(
+        new CustomEvent('canteen_wallet_updated', {
+          detail: { walletBalance: newBalance, userId: userData.id },
+        })
+      );
+      localStorage.setItem(
+        'canteen_last_order_event',
+        JSON.stringify({ type: 'order_created', id: generatedId, time: Date.now() })
+      );
+    }
   } catch {}
 
   return {
@@ -2161,6 +2181,22 @@ export async function updateOrderStatus(
     const updatedAll = all.map((o) => (o.id === orderId ? { ...o, status: status as any } : o));
     setCachedOrders(updatedAll);
   } catch {}
+
+  // Phát tín hiệu broadcast cập nhật trạng thái đơn
+  try {
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({ type: 'order_updated', orderId, status });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('canteen_order_updated', { detail: { orderId, status } })
+      );
+      localStorage.setItem(
+        'canteen_last_order_event',
+        JSON.stringify({ type: 'order_updated', orderId, status, time: Date.now() })
+      );
+    }
+  } catch {}
 }
 
 // ============================================================
@@ -2293,12 +2329,6 @@ export async function seedMenuToSupabase(): Promise<{ success: boolean; count: n
 // ============================================================
 
 const TIME_GATE_STORAGE_KEY = 'canteen_time_gate_config';
-
-// BroadcastChannel for cross-tab and cross-iframe zero-latency communication
-const broadcastSyncChannel: BroadcastChannel | null =
-  typeof window !== 'undefined' && 'BroadcastChannel' in window
-    ? new BroadcastChannel('canteen_system_sync_bus')
-    : null;
 
 export interface TimeGateConfig {
   openTime: string;
@@ -2560,13 +2590,21 @@ export function subscribeRealtime(callback: () => void) {
   };
 
   const broadcastHandler = (ev: MessageEvent) => {
-    if (ev.data?.type === 'time_gate_updated' || ev.data?.type === 'order_created' || ev.data?.type === 'wallet_updated') {
+    if (
+      ev.data?.type === 'time_gate_updated' ||
+      ev.data?.type === 'order_created' ||
+      ev.data?.type === 'order_updated' ||
+      ev.data?.type === 'order_cancelled' ||
+      ev.data?.type === 'wallet_updated'
+    ) {
       callback();
     }
   };
 
   if (typeof window !== 'undefined') {
     window.addEventListener('canteen_order_created', localHandler);
+    window.addEventListener('canteen_order_updated', localHandler);
+    window.addEventListener('canteen_order_cancelled', localHandler);
     window.addEventListener('canteen_time_gate_updated', localHandler);
     window.addEventListener('storage', localHandler);
   }
@@ -2579,6 +2617,8 @@ export function subscribeRealtime(callback: () => void) {
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_order_updated', localHandler);
+        window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }
@@ -2597,7 +2637,7 @@ export function subscribeRealtime(callback: () => void) {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         callback();
-      }, 300);
+      }, 200);
     };
 
     const channel = supabase
@@ -2616,6 +2656,8 @@ export function subscribeRealtime(callback: () => void) {
       supabase.removeChannel(channel);
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_order_updated', localHandler);
+        window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }
@@ -2627,6 +2669,8 @@ export function subscribeRealtime(callback: () => void) {
     return () => {
       if (typeof window !== 'undefined') {
         window.removeEventListener('canteen_order_created', localHandler);
+        window.removeEventListener('canteen_order_updated', localHandler);
+        window.removeEventListener('canteen_order_cancelled', localHandler);
         window.removeEventListener('canteen_time_gate_updated', localHandler);
         window.removeEventListener('storage', localHandler);
       }

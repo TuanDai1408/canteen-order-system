@@ -66,11 +66,80 @@ import {
   FileSpreadsheet,
   Calendar,
   StickyNote,
+  Flame,
+  Inbox,
+  ArrowRight,
+  RotateCcw,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
 import { PaginationControls } from './PaginationControls';
 import { exportOrdersToExcel, exportUsersToExcel } from '../utils/exportExcel';
+
+/**
+ * Bộ đếm thời gian thực từ lúc khách đặt món (Order Live Elapsed Timer)
+ */
+function OrderLiveElapsedTimer({
+  createdAt,
+  isCompleted = false,
+}: {
+  createdAt?: string;
+  isCompleted?: boolean;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (isCompleted) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isCompleted]);
+
+  if (!createdAt) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono bg-slate-100 text-slate-600 border border-slate-200">
+        <Clock className="w-3 h-3 text-slate-400 shrink-0" />
+        <span>Vừa xong</span>
+      </span>
+    );
+  }
+
+  const orderTime = new Date(createdAt).getTime();
+  const elapsedSec = Math.max(0, Math.floor((now - orderTime) / 1000));
+  const elapsedMin = Math.floor(elapsedSec / 60);
+  const secRem = elapsedSec % 60;
+
+  let badgeColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  let timeText = '';
+
+  if (elapsedMin < 1) {
+    timeText = `${secRem}s trước`;
+    badgeColor = 'bg-teal-50 text-teal-700 border-teal-200 font-semibold';
+  } else if (elapsedMin < 60) {
+    timeText = `${String(elapsedMin).padStart(2, '0')}:${String(secRem).padStart(2, '0')} trước`;
+    if (elapsedMin >= 30) {
+      badgeColor = 'bg-rose-50 text-rose-700 border-rose-300 font-bold animate-pulse';
+    } else if (elapsedMin >= 15) {
+      badgeColor = 'bg-amber-50 text-amber-800 border-amber-300 font-bold';
+    } else {
+      badgeColor = 'bg-indigo-50 text-indigo-700 border-indigo-200 font-semibold';
+    }
+  } else {
+    const hours = Math.floor(elapsedMin / 60);
+    const mins = elapsedMin % 60;
+    timeText = `${hours}h ${mins}p trước`;
+    badgeColor = 'bg-slate-100 text-slate-700 border-slate-300';
+  }
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono border shadow-2xs whitespace-nowrap ${badgeColor}`}
+      title={`Khách đặt lúc ${new Date(createdAt).toLocaleTimeString('vi-VN')} (${timeText})`}
+    >
+      <Clock className="w-3 h-3 shrink-0" />
+      <span>{timeText}</span>
+    </span>
+  );
+}
 
 interface Props {
   currentUser: UserProfile;
@@ -112,6 +181,7 @@ export function PortalDashboard({
   const [orderSearch, setOrderSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [ordersViewMode, setOrdersViewMode] = useState<'all' | 'table' | 'kds'>('all');
 
   // Modals state
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
@@ -376,6 +446,56 @@ export function PortalDashboard({
       setOrderDateFilter(availableOrderDates[0]);
     }
   }, [availableOrderDates, orderDateFilter]);
+
+  // Tự động tải lại dữ liệu tức thì (Realtime auto-refresh) khi khách đặt món hoặc thay đổi trạng thái
+  useEffect(() => {
+    // 1. Polling nhẹ 3 giây một lần khi đang mở ứng dụng quản lý
+    const pollInterval = setInterval(() => {
+      onRefresh();
+    }, 3000);
+
+    // 2. Lắng nghe sự kiện tức thì (Custom Event & Storage)
+    const handleImmediateOrderSync = () => {
+      onRefresh();
+    };
+
+    window.addEventListener('canteen_order_created', handleImmediateOrderSync);
+    window.addEventListener('canteen_order_updated', handleImmediateOrderSync);
+    window.addEventListener('canteen_order_cancelled', handleImmediateOrderSync);
+    window.addEventListener('storage', handleImmediateOrderSync);
+
+    return () => {
+      clearInterval(pollInterval);
+      window.removeEventListener('canteen_order_created', handleImmediateOrderSync);
+      window.removeEventListener('canteen_order_updated', handleImmediateOrderSync);
+      window.removeEventListener('canteen_order_cancelled', handleImmediateOrderSync);
+      window.removeEventListener('storage', handleImmediateOrderSync);
+    };
+  }, [onRefresh]);
+
+  // Phân bổ đơn hàng cho Màn hình Nhà Bếp (KDS) theo 3 trạng thái
+  const targetKdsOrders = useMemo(() => {
+    return (orderDateFilter && orderDateFilter !== 'all'
+      ? orders.filter((o) => {
+          const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
+          return d === orderDateFilter && o.status !== 'cancelled';
+        })
+      : orders.filter((o) => o.status !== 'cancelled')
+    ).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // Cũ nhất nấu trước (FIFO)
+  }, [orders, orderDateFilter]);
+
+  const kdsConfirmedOrders = useMemo(
+    () => targetKdsOrders.filter((o) => o.status === 'confirmed'),
+    [targetKdsOrders]
+  );
+  const kdsPreparingOrders = useMemo(
+    () => targetKdsOrders.filter((o) => o.status === 'preparing'),
+    [targetKdsOrders]
+  );
+  const kdsCompletedOrders = useMemo(
+    () => targetKdsOrders.filter((o) => o.status === 'completed'),
+    [targetKdsOrders]
+  );
 
   // Filtered Orders (Sorted newest first)
   const filteredOrders = useMemo(() => {
@@ -1570,7 +1690,7 @@ export function PortalDashboard({
           {/* ================= TAB: ORDERS ================= */}
           {tab === 'orders' && (
             <div className="space-y-4">
-              {/* Filter controls */}
+              {/* Filter controls & View Switcher */}
               <div className="bg-white border border-slate-200 rounded-2xl p-4 space-y-3 shadow-xs">
                 {/* Row 1: Status & Date Filter */}
                 <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center justify-between pb-1 border-b border-slate-100">
@@ -1705,419 +1825,782 @@ export function PortalDashboard({
                     </button>
                   </div>
                 </div>
-              </div>
 
-              {/* Batch Action Bar */}
-              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-                <div className="flex items-center gap-2">
-                  <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
-                  <span className="text-xs font-bold text-slate-800">
-                    In Bill Hàng Loạt Máy POS (K80 / K58):
-                  </span>
-                  <span className="text-xs text-slate-500 font-medium">
-                    Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
-                  </span>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-0.5">
+                {/* Row 3: View Mode Switcher & Realtime Sync Status */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100">
+                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
                     <button
-                      type="button"
-                      onClick={() => setSelectedOrderIds(filteredOrders.slice(0, 2).map((o) => o.id))}
-                      className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                      title="Chọn nhanh 2 đơn đầu tiên"
+                      onClick={() => setOrdersViewMode('table')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                        ordersViewMode === 'table'
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      2 đơn
+                      <Receipt className="w-3.5 h-3.5" />
+                      <span>Bảng danh sách đơn</span>
                     </button>
                     <button
-                      type="button"
-                      onClick={() => setSelectedOrderIds(filteredOrders.slice(0, 10).map((o) => o.id))}
-                      className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                      title="Chọn nhanh 10 đơn đầu tiên"
+                      onClick={() => setOrdersViewMode('kds')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                        ordersViewMode === 'kds'
+                          ? 'bg-white text-orange-600 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      10 đơn
+                      <ChefHat className="w-3.5 h-3.5" />
+                      <span>Màn hình Bếp (KDS 3 Cột)</span>
                     </button>
                     <button
-                      type="button"
-                      onClick={() => setSelectedOrderIds(filteredOrders.map((o) => o.id))}
-                      className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
-                      title="Chọn toàn bộ đơn hiển thị"
+                      onClick={() => setOrdersViewMode('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                        ordersViewMode === 'all'
+                          ? 'bg-white text-indigo-700 shadow-2xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
                     >
-                      Tất cả ({filteredOrders.length})
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Xem kết hợp cả hai</span>
                     </button>
-                  </div>
-
-                  <button
-                    onClick={selectPendingKitchenOrders}
-                    className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
-                  >
-                    <ChefHat className="w-4 h-4 text-indigo-600" />
-                    <span>Chọn & In Đơn Bếp ({orders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
-                  </button>
-
-                  {selectedOrderIds.length > 0 && (
-                    <>
-                      <button
-                        onClick={() => setSelectedOrderIds([])}
-                        className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-xl transition cursor-pointer min-h-[36px]"
-                      >
-                        Bỏ chọn
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          setBatchTestCount(null);
-                          setBatchPrintOrders(orders.filter((o) => selectedOrderIds.includes(o.id)));
-                        }}
-                        className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
-                      >
-                        <Printer className="w-4 h-4" />
-                        <span>In {selectedOrderIds.length} Phiếu POS</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Orders Table */}
-              <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[900px]">
-                    <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
-                      <tr>
-                        <th className="py-3 px-3 w-10 text-center">
-                          <input
-                            type="checkbox"
-                            checked={
-                              filteredOrders.length > 0 &&
-                              selectedOrderIds.length === filteredOrders.length
-                            }
-                            onChange={toggleSelectAllOrders}
-                            className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                            title="Chọn / Bỏ chọn tất cả"
-                          />
-                        </th>
-                        <th className="py-3 px-3">Mã đơn</th>
-                        <th className="py-3 px-3 whitespace-nowrap">Thời gian khách đặt</th>
-                        <th className="py-3 px-3">Cán bộ / Giáo viên</th>
-                        <th className="py-3 px-3 text-center whitespace-nowrap">Ngày phục vụ</th>
-                        <th className="py-3 px-3 whitespace-nowrap">Giờ ăn & Nhận</th>
-                        <th className="py-3 px-4">Chi tiết món & Ghi chú</th>
-                        <th className="py-3 px-3 text-right">Tổng tiền</th>
-                        <th className="py-3 px-3 text-center">Trạng thái</th>
-                        <th className="py-3 px-3 text-center">Thao tác bếp</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {paginatedOrders.map((o) => (
-                        <tr key={o.id} className="hover:bg-slate-50/70">
-                          <td className="py-3 px-3 text-center">
-                            <input
-                              type="checkbox"
-                              checked={selectedOrderIds.includes(o.id)}
-                              onChange={() => toggleSelectOrder(o.id)}
-                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
-                            />
-                          </td>
-                          <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                            {o.orderCode}
-                          </td>
-                          {/* Thời gian khách hàng đặt đơn */}
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <div className="flex items-center gap-1.5 text-slate-900 font-bold text-xs">
-                              <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                              <span>
-                                {o.createdAt
-                                  ? new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
-                                  : '11:30'}
-                              </span>
-                            </div>
-                            <p className="text-[10px] text-slate-400 font-normal pl-5">
-                              {o.createdAt
-                                ? new Date(o.createdAt).toLocaleDateString('vi-VN')
-                                : ''}
-                            </p>
-                          </td>
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <p className="font-bold text-slate-900">{o.userName}</p>
-                            <p className="text-[11px] text-slate-500">{o.userDepartment}</p>
-                          </td>
-                          {/* Ngày phục vụ của món đặt trước */}
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold text-xs border border-indigo-200 shadow-2xs">
-                              <Calendar className="w-3 h-3 text-indigo-500" />
-                              {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
-                            </span>
-                          </td>
-                          {/* Giờ ăn & Phòng nhận */}
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            <p className="text-xs font-bold text-slate-900">⏰ {o.pickupTime || '11:30'}</p>
-                            <div className="mt-0.5">
-                              {o.deliveryMethod === 'room_delivery' ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
-                                  <Building2 className="w-3 h-3" />
-                                  {o.roomNumber || 'Giao phòng'}
-                                </span>
-                              ) : (
-                                <span className="text-slate-500 font-medium text-[10px]">🍽️ Ăn tại căn tin</span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 max-w-xs">
-                            <div className="space-y-0.5">
-                              {(() => {
-                                const orderItems = getOrderDisplayItems(o, menu);
-                                if (orderItems && orderItems.length > 0) {
-                                  return orderItems.map((it, i) => (
-                                    <p key={i} className="text-slate-700 text-[11px] truncate font-medium">
-                                      <strong className="text-indigo-600 font-bold">{it.quantity}×</strong> {it.name}
-                                    </p>
-                                  ));
-                                }
-                                return (
-                                  <p className="text-slate-500 text-[11px] italic">
-                                    1× Suất ăn Căn tin
-                                  </p>
-                                );
-                              })()}
-                            </div>
-                            {(o.note || o.notes) && (
-                              <div className="mt-1.5 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1 shadow-2xs">
-                                <StickyNote className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
-                                <div className="min-w-0">
-                                  <span className="font-bold text-amber-800">Ghi chú: </span>
-                                  <span className="break-words font-medium">{o.note || o.notes}</span>
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="py-3 px-3 text-right font-extrabold text-indigo-600 whitespace-nowrap">
-                            {formatVnd(o.totalAmount)}
-                          </td>
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <span
-                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
-                                o.status === 'confirmed'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : o.status === 'preparing'
-                                    ? 'bg-indigo-100 text-indigo-800'
-                                    : o.status === 'completed'
-                                      ? 'bg-emerald-100 text-emerald-800'
-                                      : 'bg-slate-100 text-slate-500'
-                              }`}
-                            >
-                              {o.status === 'confirmed'
-                                ? 'Đã xác nhận'
-                                : o.status === 'preparing'
-                                  ? 'Bếp đang nấu'
-                                  : o.status === 'completed'
-                                    ? 'Đã hoàn thành'
-                                    : 'Đã hủy'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1.5">
-                              <button
-                                onClick={() => setPrintReceiptOrder(o)}
-                                className="px-2.5 py-1.5 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-xl text-xs transition cursor-pointer min-h-[36px] flex items-center gap-1 border border-slate-200"
-                                title="In Bill POS nhiệt (K80 / K58)"
-                              >
-                                <Printer className="w-3.5 h-3.5 text-indigo-600" />
-                                <span className="font-mono text-[11px] font-bold">In Bill</span>
-                              </button>
-                              {o.status === 'confirmed' && (
-                                <button
-                                  disabled={updatingOrderId === o.id}
-                                  onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
-                                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px] flex items-center gap-1.5"
-                                >
-                                  {updatingOrderId === o.id ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  ) : null}
-                                  <span>{updatingOrderId === o.id ? 'Đang chuyển...' : 'Nấu món'}</span>
-                                </button>
-                              )}
-                              {o.status === 'preparing' && (
-                                <button
-                                  disabled={updatingOrderId === o.id}
-                                  onClick={() => handleUpdateOrderStatus(o.id, 'completed')}
-                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition cursor-pointer min-h-[36px] flex items-center gap-1.5"
-                                >
-                                  {updatingOrderId === o.id ? (
-                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  ) : null}
-                                  <span>{updatingOrderId === o.id ? 'Đang cập nhật...' : 'Hoàn tất'}</span>
-                                </button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {filteredOrders.length === 0 && (
-                    <div className="p-8 text-center text-slate-400 text-xs">
-                      Không có đơn hàng nào khớp với bộ lọc.
-                    </div>
-                  )}
-                </div>
-
-                <PaginationControls
-                  currentPage={orderPage}
-                  totalItems={filteredOrders.length}
-                  pageSize={orderPageSize}
-                  pageSizeOptions={[10, 20, 50, 100]}
-                  onPageChange={setOrderPage}
-                  onPageSizeChange={(sz) => {
-                    setOrderPageSize(sz);
-                    setOrderPage(1);
-                  }}
-                  itemName="đơn hàng"
-                />
-              </div>
-
-              {/* ================= MÀN HÌNH NHÀ BẾP (KDS) - ĐIỀU HÀNH CHẾ BIẾN ================= */}
-              <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg space-y-4">
-                {/* Header bar */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400 flex items-center justify-center shrink-0 shadow-inner">
-                      <ChefHat className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-extrabold text-white text-sm sm:text-base tracking-tight">
-                          MÀN HÌNH NHÀ BẾP (KDS) — TỔNG HỢP MÓN CẦN NẤU
-                        </h3>
-                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-500/20 text-orange-300 border border-orange-500/30">
-                          {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        Bảng phân bổ trực quan số lượng suất ăn nhà bếp cần chuẩn bị theo đơn đặt trước
-                      </p>
-                    </div>
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => window.print()}
-                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold border border-slate-700 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
-                      title="In bảng thống kê món cần nấu cho nhà bếp"
-                    >
-                      <Printer className="w-4 h-4 text-orange-400" />
-                      <span>In Bảng Bếp</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Kitchen Metrics Row */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-                    <span className="text-[11px] font-medium text-slate-400 block">Số loại món nấu</span>
-                    <span className="text-xl sm:text-2xl font-black text-white mt-1 block">
-                      {kitchenDishSummary.length} <span className="text-xs font-normal text-slate-400">món</span>
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-                    <span className="text-[11px] font-medium text-slate-400 block">Tổng số suất ăn</span>
-                    <span className="text-xl sm:text-2xl font-black text-amber-400 mt-1 block">
-                      {kitchenDishSummary.reduce((s, d) => s + d.quantity, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-                    <span className="text-[11px] font-medium text-slate-400 block">Ăn tại Căn tin</span>
-                    <span className="text-xl sm:text-2xl font-black text-emerald-400 mt-1 block">
-                      {kitchenDishSummary.reduce((s, d) => s + d.dineInQty, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
-                    </span>
-                  </div>
-                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
-                    <span className="text-[11px] font-medium text-slate-400 block">Giao tận phòng</span>
-                    <span className="text-xl sm:text-2xl font-black text-teal-400 mt-1 block">
-                      {kitchenDishSummary.reduce((s, d) => s + d.roomDeliveryQty, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
+                    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                      <span>Tự động cập nhật tức thì khi có order</span>
                     </span>
                   </div>
                 </div>
-
-                {/* Kitchen Dish Cards */}
-                {kitchenDishSummary.length > 0 ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-                    {kitchenDishSummary.map((dish, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3.5 bg-slate-800/90 hover:bg-slate-800 rounded-xl border border-slate-700/80 flex flex-col justify-between transition group hover:border-orange-500/50 shadow-xs"
-                      >
-                        <div>
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0 flex-1">
-                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700 text-slate-300 inline-block mb-1">
-                                {dish.category}
-                              </span>
-                              <h4 className="font-bold text-sm text-white leading-snug group-hover:text-orange-300 transition">
-                                {dish.name}
-                              </h4>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <span className="px-3 py-1.5 rounded-xl bg-orange-500 text-white font-black text-sm sm:text-base font-mono inline-block shadow-sm">
-                                {dish.quantity} suất
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Service Type Breakdown */}
-                          <div className="mt-3 pt-2.5 border-t border-slate-700/60 flex items-center justify-between text-xs">
-                            <span className="text-slate-300 flex items-center gap-1 text-[11px]">
-                              🍽️ Tại chỗ: <strong className="text-emerald-400">{dish.dineInQty}</strong>
-                            </span>
-                            <span className="text-slate-300 flex items-center gap-1 text-[11px]">
-                              🚪 Giao phòng: <strong className="text-teal-400">{dish.roomDeliveryQty}</strong>
-                            </span>
-                          </div>
-
-                          {/* Cooking status progress in Kitchen */}
-                          <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px]">
-                            {dish.confirmedCount > 0 && (
-                              <span className="px-2 py-0.5 rounded-md bg-amber-900/60 text-amber-200 border border-amber-700/60 font-semibold">
-                                ⏳ Chờ nấu: {dish.confirmedCount}
-                              </span>
-                            )}
-                            {dish.preparingCount > 0 && (
-                              <span className="px-2 py-0.5 rounded-md bg-indigo-900/60 text-indigo-200 border border-indigo-700/60 font-semibold">
-                                🔥 Đang nấu: {dish.preparingCount}
-                              </span>
-                            )}
-                            {dish.completedCount > 0 && (
-                              <span className="px-2 py-0.5 rounded-md bg-emerald-900/60 text-emerald-200 border border-emerald-700/60 font-semibold">
-                                ✅ Đã xong: {dish.completedCount}
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Customer Special Notes for this Dish */}
-                          {dish.notes && dish.notes.length > 0 && (
-                            <div className="mt-2.5 p-2 rounded-lg bg-slate-900/90 border border-amber-500/30 text-[11px] text-amber-300 space-y-1">
-                              <span className="font-bold flex items-center gap-1 text-[10px] text-amber-400 uppercase tracking-wider">
-                                <StickyNote className="w-3 h-3 text-amber-400 shrink-0" />
-                                Ghi chú từ khách hàng:
-                              </span>
-                              {dish.notes.slice(0, 3).map((n, i) => (
-                                <p key={i} className="line-clamp-1 italic text-[11px] text-amber-200/90">
-                                  • {n}
-                                </p>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="p-8 text-center bg-slate-800/40 rounded-xl border border-slate-800 text-slate-400 text-xs">
-                    <ChefHat className="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-50" />
-                    <span>Không có món ăn nào cần nấu cho ngày đang chọn.</span>
-                  </div>
-                )}
               </div>
+
+              {/* Batch Action Bar */}
+              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
+                <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                  <div className="flex items-center gap-2">
+                    <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                    <span className="text-xs font-bold text-slate-800">
+                      In Bill Hàng Loạt Máy POS (K80 / K58):
+                    </span>
+                    <span className="text-xs text-slate-500 font-medium">
+                      Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrderIds(filteredOrders.slice(0, 2).map((o) => o.id))}
+                        className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                        title="Chọn nhanh 2 đơn đầu tiên"
+                      >
+                        2 đơn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrderIds(filteredOrders.slice(0, 10).map((o) => o.id))}
+                        className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                        title="Chọn nhanh 10 đơn đầu tiên"
+                      >
+                        10 đơn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedOrderIds(filteredOrders.map((o) => o.id))}
+                        className="px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-100 rounded-lg transition cursor-pointer"
+                        title="Chọn toàn bộ đơn hiển thị"
+                      >
+                        Tất cả ({filteredOrders.length})
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={selectPendingKitchenOrders}
+                      className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
+                    >
+                      <ChefHat className="w-4 h-4 text-indigo-600" />
+                      <span>Chọn & In Đơn Bếp ({orders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
+                    </button>
+
+                    {selectedOrderIds.length > 0 && (
+                      <>
+                        <button
+                          onClick={() => setSelectedOrderIds([])}
+                          className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 text-slate-600 text-xs font-semibold rounded-xl transition cursor-pointer min-h-[36px]"
+                        >
+                          Bỏ chọn
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            setBatchTestCount(null);
+                            setBatchPrintOrders(orders.filter((o) => selectedOrderIds.includes(o.id)));
+                          }}
+                          className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
+                        >
+                          <Printer className="w-4 h-4" />
+                          <span>In {selectedOrderIds.length} Phiếu POS</span>
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* ================= BẢNG DANH SÁCH ĐƠN HÀNG FULL KHÔNG CẦN SCROLL ================= */}
+              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
+                <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                  <div className="w-full">
+                    <table className="w-full text-left text-xs border-collapse">
+                      <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
+                        <tr>
+                          <th className="py-3 px-2 w-8 text-center shrink-0">
+                            <input
+                              type="checkbox"
+                              checked={
+                                filteredOrders.length > 0 &&
+                                selectedOrderIds.length === filteredOrders.length
+                              }
+                              onChange={toggleSelectAllOrders}
+                              className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                              title="Chọn / Bỏ chọn tất cả"
+                            />
+                          </th>
+                          <th className="py-3 px-2.5 w-[16%]">Đơn hàng & Thời gian</th>
+                          <th className="py-3 px-2.5 w-[20%]">Cán bộ & Nơi nhận</th>
+                          <th className="py-3 px-2 w-[11%] text-center">Ngày phục vụ</th>
+                          <th className="py-3 px-3 w-[27%]">Món ăn & Ghi chú</th>
+                          <th className="py-3 px-2.5 w-[11%] text-right">Tổng tiền</th>
+                          <th className="py-3 px-2.5 w-[15%] text-center">Trạng thái & Bếp</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {paginatedOrders.map((o) => (
+                          <tr key={o.id} className="hover:bg-slate-50/70 transition">
+                            <td className="py-3 px-2 text-center align-top">
+                              <input
+                                type="checkbox"
+                                checked={selectedOrderIds.includes(o.id)}
+                                onChange={() => toggleSelectOrder(o.id)}
+                                className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer mt-0.5"
+                              />
+                            </td>
+
+                            {/* Mã đơn & Thời gian khách đặt kèm bộ đếm */}
+                            <td className="py-3 px-2.5 align-top space-y-1">
+                              <p className="font-mono font-bold text-slate-900 text-xs tracking-tight">
+                                {o.orderCode}
+                              </p>
+                              <div>
+                                <OrderLiveElapsedTimer
+                                  createdAt={o.createdAt}
+                                  isCompleted={o.status === 'completed' || o.status === 'cancelled'}
+                                />
+                              </div>
+                              <p className="text-[10px] text-slate-400 font-normal">
+                                {o.createdAt
+                                  ? `${new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${new Date(o.createdAt).toLocaleDateString('vi-VN')}`
+                                  : '11:30'}
+                              </p>
+                            </td>
+
+                            {/* Cán bộ & Phòng / Căn tin */}
+                            <td className="py-3 px-2.5 align-top space-y-1">
+                              <p className="font-bold text-slate-900 leading-snug">{o.userName}</p>
+                              <p className="text-[11px] text-slate-500 leading-tight">{o.userDepartment}</p>
+                              <div className="pt-0.5 flex flex-wrap items-center gap-1">
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600 shrink-0" />
+                                    <span>{o.roomNumber || 'Giao phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Tại Căn tin
+                                  </span>
+                                )}
+                                <span className="text-[10px] font-bold text-slate-700">
+                                  ⏰ {o.pickupTime || '11:30'}
+                                </span>
+                              </div>
+                            </td>
+
+                            {/* Ngày phục vụ */}
+                            <td className="py-3 px-2 text-center align-top">
+                              <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold text-[11px] border border-indigo-200 shadow-2xs">
+                                <Calendar className="w-3 h-3 text-indigo-500 shrink-0" />
+                                <span>{o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}</span>
+                              </span>
+                            </td>
+
+                            {/* Chi tiết món & Ghi chú */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <div className="space-y-0.5">
+                                {(() => {
+                                  const orderItems = getOrderDisplayItems(o, menu);
+                                  if (orderItems && orderItems.length > 0) {
+                                    return orderItems.map((it, i) => (
+                                      <p key={i} className="text-slate-800 text-[11px] font-medium leading-tight">
+                                        <strong className="text-indigo-600 font-bold">{it.quantity}×</strong> {it.name}
+                                      </p>
+                                    ));
+                                  }
+                                  return (
+                                    <p className="text-slate-500 text-[11px] italic">
+                                      1× Suất ăn Căn tin
+                                    </p>
+                                  );
+                                })()}
+                              </div>
+                              {(o.note || o.notes) && (
+                                <div className="mt-1 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1 shadow-2xs">
+                                  <StickyNote className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                                  <div className="min-w-0">
+                                    <span className="font-bold text-amber-800">Ghi chú: </span>
+                                    <span className="break-words font-medium">{o.note || o.notes}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+
+                            {/* Tổng tiền */}
+                            <td className="py-3 px-2.5 text-right align-top font-extrabold text-indigo-600 text-xs whitespace-nowrap">
+                              {formatVnd(o.totalAmount)}
+                            </td>
+
+                            {/* Trạng thái & Thao tác bếp */}
+                            <td className="py-3 px-2.5 text-center align-top space-y-1.5">
+                              <div>
+                                <span
+                                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                                    o.status === 'confirmed'
+                                      ? 'bg-amber-100 text-amber-800'
+                                      : o.status === 'preparing'
+                                        ? 'bg-orange-100 text-orange-800'
+                                        : o.status === 'completed'
+                                          ? 'bg-emerald-100 text-emerald-800'
+                                          : 'bg-slate-100 text-slate-500'
+                                  }`}
+                                >
+                                  {o.status === 'confirmed'
+                                    ? '⏳ Chờ nấu'
+                                    : o.status === 'preparing'
+                                      ? '🔥 Đang nấu'
+                                      : o.status === 'completed'
+                                        ? '✅ Hoàn thành'
+                                        : 'Đã hủy'}
+                                </span>
+                              </div>
+
+                              <div className="flex items-center justify-center gap-1 flex-wrap">
+                                <button
+                                  onClick={() => setPrintReceiptOrder(o)}
+                                  className="px-2 py-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] transition cursor-pointer flex items-center gap-0.5 border border-slate-200"
+                                  title="In Bill POS nhiệt"
+                                >
+                                  <Printer className="w-3 h-3 text-indigo-600" />
+                                  <span className="font-bold">Bill</span>
+                                </button>
+                                {o.status === 'confirmed' && (
+                                  <button
+                                    disabled={updatingOrderId === o.id}
+                                    onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
+                                    className="px-2.5 py-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold rounded-lg text-[11px] transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                  >
+                                    {updatingOrderId === o.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Flame className="w-3 h-3" />
+                                    )}
+                                    <span>Nấu</span>
+                                  </button>
+                                )}
+                                {o.status === 'preparing' && (
+                                  <button
+                                    disabled={updatingOrderId === o.id}
+                                    onClick={() => handleUpdateOrderStatus(o.id, 'completed')}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-lg text-[11px] transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                  >
+                                    {updatingOrderId === o.id ? (
+                                      <Loader2 className="w-3 h-3 animate-spin" />
+                                    ) : (
+                                      <Check className="w-3 h-3" />
+                                    )}
+                                    <span>Xong</span>
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    {filteredOrders.length === 0 && (
+                      <div className="p-8 text-center text-slate-400 text-xs">
+                        Không có đơn hàng nào khớp với bộ lọc.
+                      </div>
+                    )}
+                  </div>
+
+                  <PaginationControls
+                    currentPage={orderPage}
+                    totalItems={filteredOrders.length}
+                    pageSize={orderPageSize}
+                    pageSizeOptions={[10, 20, 50, 100]}
+                    onPageChange={setOrderPage}
+                    onPageSizeChange={(sz) => {
+                      setOrderPageSize(sz);
+                      setOrderPage(1);
+                    }}
+                    itemName="đơn hàng"
+                  />
+                </div>
+              )}
+
+              {/* ================= MÀN HÌNH NHÀ BẾP (KDS) - 3 CỘT ĐIỀU HÀNH CHẾ BIẾN ================= */}
+              {(ordersViewMode === 'kds' || ordersViewMode === 'all') && (
+                <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                  {/* Header bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-orange-50 border border-orange-200 text-orange-600 flex items-center justify-center shrink-0 shadow-2xs">
+                        <ChefHat className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight">
+                            MÀN HÌNH NHÀ BẾP (KDS) — ĐIỀU HÀNH CHẾ BIẾN THEO MÓN
+                          </h3>
+                          <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-50 text-orange-700 border border-orange-200">
+                            {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Theo dõi thời gian thực từng món ăn & đếm thời gian từ lúc order qua 3 giai đoạn chế biến
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => window.print()}
+                        className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                        title="In bảng thống kê món cần nấu cho nhà bếp"
+                      >
+                        <Printer className="w-4 h-4 text-orange-600" />
+                        <span>In Bảng Bếp</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Kitchen Metrics Row */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-medium text-slate-500 block">Số loại món nấu</span>
+                      <span className="text-xl sm:text-2xl font-black text-slate-900 mt-1 block">
+                        {kitchenDishSummary.length} <span className="text-xs font-normal text-slate-500">món</span>
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-medium text-slate-500 block">Tổng số suất ăn</span>
+                      <span className="text-xl sm:text-2xl font-black text-orange-600 mt-1 block">
+                        {kitchenDishSummary.reduce((s, d) => s + d.quantity, 0)} <span className="text-xs font-normal text-slate-500">suất</span>
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-medium text-slate-500 block">Ăn tại Căn tin</span>
+                      <span className="text-xl sm:text-2xl font-black text-indigo-600 mt-1 block">
+                        {kitchenDishSummary.reduce((s, d) => s + d.dineInQty, 0)} <span className="text-xs font-normal text-slate-500">suất</span>
+                      </span>
+                    </div>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                      <span className="text-[11px] font-medium text-slate-500 block">Giao tận phòng</span>
+                      <span className="text-xl sm:text-2xl font-black text-teal-600 mt-1 block">
+                        {kitchenDishSummary.reduce((s, d) => s + d.roomDeliveryQty, 0)} <span className="text-xs font-normal text-slate-500">suất</span>
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Quick Dish Breakdown Summary Pills */}
+                  {kitchenDishSummary.length > 0 && (
+                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
+                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                        <UtensilsCrossed className="w-3.5 h-3.5 text-orange-600" />
+                        <span>Tổng hợp nhanh số suất cần nấu:</span>
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {kitchenDishSummary.map((d, i) => (
+                          <div
+                            key={i}
+                            className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-2 text-xs shadow-2xs"
+                          >
+                            <span className="font-bold text-slate-900">{d.name}</span>
+                            <span className="px-2 py-0.5 rounded-md bg-orange-600 text-white font-mono font-extrabold text-[11px]">
+                              {d.quantity} suất
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ================= 3 CỘT KANBAN KDS ================= */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-1">
+                    {/* CỘT 1: NHẬN ORDER (CHỜ NẤU) */}
+                    <div className="bg-slate-50/60 rounded-2xl border border-amber-200 overflow-hidden flex flex-col shadow-2xs">
+                      <div className="p-3 bg-amber-50 border-b border-amber-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Inbox className="w-4 h-4 text-amber-700" />
+                          <h4 className="font-extrabold text-amber-900 text-xs sm:text-sm">
+                            1. NHẬN ORDER (CHỜ NẤU)
+                          </h4>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-black bg-amber-200 text-amber-900">
+                          {kdsConfirmedOrders.length} đơn
+                        </span>
+                      </div>
+
+                      <div className="p-3 space-y-3 flex-1 overflow-y-auto max-h-[650px]">
+                        {kdsConfirmedOrders.map((o) => {
+                          const orderItems = getOrderDisplayItems(o, menu);
+                          return (
+                            <div
+                              key={o.id}
+                              className="bg-white border border-slate-200 hover:border-amber-400 rounded-xl p-3 shadow-xs space-y-2 transition"
+                            >
+                              {/* Top Bar: Code, Customer, Room, Time Counter */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-mono font-bold text-slate-900 text-xs">
+                                    {o.orderCode}
+                                  </p>
+                                  <p className="font-bold text-xs text-slate-800 mt-0.5">
+                                    {o.userName}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500">
+                                    {o.userDepartment}
+                                  </p>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-1">
+                                  <OrderLiveElapsedTimer createdAt={o.createdAt} />
+                                  <span className="text-[10px] font-bold text-slate-600">
+                                    ⏰ {o.pickupTime || '11:30'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Delivery Badge */}
+                              <div>
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600" />
+                                    <span>Giao {o.roomNumber || 'phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Ăn tại Căn tin
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Dish list */}
+                              <div className="p-2 bg-slate-50 rounded-lg border border-slate-100 space-y-1">
+                                {orderItems && orderItems.length > 0 ? (
+                                  orderItems.map((it, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs">
+                                      <span className="font-semibold text-slate-800">
+                                        {it.name}
+                                      </span>
+                                      <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-mono font-bold text-[10px]">
+                                        x{it.quantity}
+                                      </span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-800">Suất ăn Căn tin</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-mono font-bold text-[10px]">x1</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Note if any */}
+                              {(o.note || o.notes) && (
+                                <div className="p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-tight flex items-start gap-1">
+                                  <StickyNote className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                  <span className="break-words font-medium">{o.note || o.notes}</span>
+                                </div>
+                              )}
+
+                              {/* Action Buttons */}
+                              <div className="pt-1 flex items-center justify-between gap-2 border-t border-slate-100">
+                                <button
+                                  onClick={() => setPrintReceiptOrder(o)}
+                                  className="px-2 py-1 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1"
+                                >
+                                  <Printer className="w-3 h-3" />
+                                  <span>In Bill</span>
+                                </button>
+                                <button
+                                  disabled={updatingOrderId === o.id}
+                                  onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
+                                  className="px-3 py-1.5 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                >
+                                  {updatingOrderId === o.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Flame className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>Bắt đầu nấu</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {kdsConfirmedOrders.length === 0 && (
+                          <div className="p-6 text-center text-slate-400 text-xs">
+                            Không có món nào đang chờ nhận nấu.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CỘT 2: NẤU MÓN (ĐANG NẤU) */}
+                    <div className="bg-slate-50/60 rounded-2xl border border-orange-200 overflow-hidden flex flex-col shadow-2xs">
+                      <div className="p-3 bg-orange-50 border-b border-orange-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Flame className="w-4 h-4 text-orange-600" />
+                          <h4 className="font-extrabold text-orange-900 text-xs sm:text-sm">
+                            2. NẤU MÓN (ĐANG NẤU)
+                          </h4>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-black bg-orange-200 text-orange-900">
+                          {kdsPreparingOrders.length} đơn
+                        </span>
+                      </div>
+
+                      <div className="p-3 space-y-3 flex-1 overflow-y-auto max-h-[650px]">
+                        {kdsPreparingOrders.map((o) => {
+                          const orderItems = getOrderDisplayItems(o, menu);
+                          return (
+                            <div
+                              key={o.id}
+                              className="bg-orange-50/30 border border-orange-200 hover:border-orange-400 rounded-xl p-3 shadow-xs space-y-2 transition"
+                            >
+                              {/* Top Bar */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-mono font-bold text-slate-900 text-xs">
+                                    {o.orderCode}
+                                  </p>
+                                  <p className="font-bold text-xs text-slate-800 mt-0.5">
+                                    {o.userName}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500">
+                                    {o.userDepartment}
+                                  </p>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-1">
+                                  <OrderLiveElapsedTimer createdAt={o.createdAt} />
+                                  <span className="text-[10px] font-bold text-slate-600">
+                                    ⏰ {o.pickupTime || '11:30'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Delivery Badge */}
+                              <div>
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600" />
+                                    <span>Giao {o.roomNumber || 'phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Ăn tại Căn tin
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Dish list */}
+                              <div className="p-2 bg-white rounded-lg border border-orange-100 space-y-1">
+                                {orderItems && orderItems.length > 0 ? (
+                                  orderItems.map((it, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs">
+                                      <span className="font-semibold text-slate-900">
+                                        {it.name}
+                                      </span>
+                                      <span className="px-1.5 py-0.5 rounded bg-orange-600 text-white font-mono font-bold text-[10px]">
+                                        x{it.quantity}
+                                      </span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-900">Suất ăn Căn tin</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-orange-600 text-white font-mono font-bold text-[10px]">x1</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Note if any */}
+                              {(o.note || o.notes) && (
+                                <div className="p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-tight flex items-start gap-1">
+                                  <StickyNote className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
+                                  <span className="break-words font-medium">{o.note || o.notes}</span>
+                                </div>
+                              )}
+
+                              {/* Action Buttons */}
+                              <div className="pt-1 flex items-center justify-between gap-2 border-t border-orange-200/60">
+                                <button
+                                  disabled={updatingOrderId === o.id}
+                                  onClick={() => handleUpdateOrderStatus(o.id, 'confirmed')}
+                                  className="px-2 py-1 text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 rounded-lg text-[11px] font-medium transition cursor-pointer flex items-center gap-1 border border-slate-200"
+                                  title="Trả lại bước Nhận order"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Trả lại</span>
+                                </button>
+                                <button
+                                  disabled={updatingOrderId === o.id}
+                                  onClick={() => handleUpdateOrderStatus(o.id, 'completed')}
+                                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition cursor-pointer flex items-center gap-1.5 shadow-2xs"
+                                >
+                                  {updatingOrderId === o.id ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Check className="w-3.5 h-3.5" />
+                                  )}
+                                  <span>Hoàn thành món</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {kdsPreparingOrders.length === 0 && (
+                          <div className="p-6 text-center text-slate-400 text-xs">
+                            Hiện không có món nào đang nấu trên bếp.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* CỘT 3: HOÀN THÀNH (ĐÃ XONG) */}
+                    <div className="bg-slate-50/60 rounded-2xl border border-emerald-200 overflow-hidden flex flex-col shadow-2xs">
+                      <div className="p-3 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-700" />
+                          <h4 className="font-extrabold text-emerald-900 text-xs sm:text-sm">
+                            3. HOÀN THÀNH (ĐÃ XONG)
+                          </h4>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-full text-xs font-black bg-emerald-200 text-emerald-900">
+                          {kdsCompletedOrders.length} đơn
+                        </span>
+                      </div>
+
+                      <div className="p-3 space-y-3 flex-1 overflow-y-auto max-h-[650px]">
+                        {kdsCompletedOrders.map((o) => {
+                          const orderItems = getOrderDisplayItems(o, menu);
+                          return (
+                            <div
+                              key={o.id}
+                              className="bg-emerald-50/20 border border-emerald-200 rounded-xl p-3 shadow-xs space-y-2"
+                            >
+                              {/* Top Bar */}
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="font-mono font-bold text-slate-900 text-xs">
+                                    {o.orderCode}
+                                  </p>
+                                  <p className="font-bold text-xs text-slate-800 mt-0.5">
+                                    {o.userName}
+                                  </p>
+                                  <p className="text-[10px] text-slate-500">
+                                    {o.userDepartment}
+                                  </p>
+                                </div>
+                                <div className="text-right flex flex-col items-end gap-1">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-200">
+                                    ✅ Đã nấu xong
+                                  </span>
+                                  <span className="text-[10px] font-bold text-slate-600">
+                                    ⏰ {o.pickupTime || '11:30'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Delivery Badge */}
+                              <div>
+                                {o.deliveryMethod === 'room_delivery' ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                    <Building2 className="w-3 h-3 text-teal-600" />
+                                    <span>Giao {o.roomNumber || 'phòng'}</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium text-[10px] border border-slate-200">
+                                    🍽️ Ăn tại Căn tin
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Dish list */}
+                              <div className="p-2 bg-white rounded-lg border border-emerald-100 space-y-1">
+                                {orderItems && orderItems.length > 0 ? (
+                                  orderItems.map((it, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-xs">
+                                      <span className="font-semibold text-slate-800">
+                                        {it.name}
+                                      </span>
+                                      <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-mono font-bold text-[10px]">
+                                        x{it.quantity}
+                                      </span>
+                                    </div>
+                                  ))
+                                ) : (
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-800">Suất ăn Căn tin</span>
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-600 text-white font-mono font-bold text-[10px]">x1</span>
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Action Buttons */}
+                              <div className="pt-1 flex items-center justify-between gap-2 border-t border-emerald-200/60">
+                                <button
+                                  onClick={() => setPrintReceiptOrder(o)}
+                                  className="px-2 py-1 text-slate-600 hover:text-indigo-600 bg-white hover:bg-slate-100 rounded-lg text-[11px] font-bold transition cursor-pointer flex items-center gap-1 border border-slate-200"
+                                >
+                                  <Printer className="w-3 h-3" />
+                                  <span>In Bill</span>
+                                </button>
+                                <button
+                                  disabled={updatingOrderId === o.id}
+                                  onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
+                                  className="px-2.5 py-1 text-slate-600 hover:text-slate-800 bg-white hover:bg-slate-100 rounded-lg text-[11px] font-medium transition cursor-pointer flex items-center gap-1 border border-slate-200"
+                                  title="Chuyển lại sang Nấu món nếu cần chế biến thêm"
+                                >
+                                  <RotateCcw className="w-3 h-3" />
+                                  <span>Nấu lại</span>
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        {kdsCompletedOrders.length === 0 && (
+                          <div className="p-6 text-center text-slate-400 text-xs">
+                            Chưa có món nào hoàn thành cho ngày này.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

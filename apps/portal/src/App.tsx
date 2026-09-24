@@ -142,21 +142,35 @@ export default function App() {
       }
     };
 
+    const handleOrderCreated = () => {
+      if (isMountedRef.current) {
+        refresh();
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+    window.addEventListener('canteen_order_created', handleOrderCreated);
+    window.addEventListener('canteen_order_placed', handleOrderCreated);
     window.addEventListener('storage', handleStorage);
 
+    // Tự động làm mới dữ liệu đơn hàng và thực đơn định kỳ (2.5 giây khi tab đang xem)
     const clock = setInterval(() => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
+        if (typeof document !== 'undefined' && !document.hidden) {
+          refresh();
+        }
       }
-    }, 5_000);
+    }, 2_500);
 
     return () => {
       isMountedRef.current = false;
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+      window.removeEventListener('canteen_order_created', handleOrderCreated);
+      window.removeEventListener('canteen_order_placed', handleOrderCreated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(clock);
     };

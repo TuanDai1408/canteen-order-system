@@ -184,15 +184,39 @@ export default function App() {
       }
     };
 
+    const handleOrderCreated = () => {
+      if (!mounted) return;
+      const currentUser = userRef.current;
+      if (currentUser) {
+        if (currentViewRef.current === 'portal') {
+          refreshPortalData();
+        } else {
+          refreshOrderData(currentUser);
+        }
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+    window.addEventListener('canteen_order_created', handleOrderCreated);
+    window.addEventListener('canteen_order_placed', handleOrderCreated);
     window.addEventListener('storage', handleStorage);
 
-    // Chu kỳ cập nhật trạng thái thời gian mỗi 5s và đồng bộ config
+    // Chu kỳ cập nhật trạng thái thời gian và tự động đồng bộ đơn hàng khi tab hiển thị
     const clock = setInterval(async () => {
       if (!mounted) return;
       setTimeStatus(getTimeGateStatus());
-    }, 5_000);
+      if (typeof document !== 'undefined' && !document.hidden) {
+        const currentUser = userRef.current;
+        if (currentUser) {
+          if (currentViewRef.current === 'portal') {
+            refreshPortalData();
+          } else {
+            refreshOrderData(currentUser);
+          }
+        }
+      }
+    }, 2_500);
 
     const configSyncInterval = setInterval(async () => {
       if (!mounted) return;
@@ -205,6 +229,8 @@ export default function App() {
       unsub();
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
+      window.removeEventListener('canteen_order_created', handleOrderCreated);
+      window.removeEventListener('canteen_order_placed', handleOrderCreated);
       window.removeEventListener('storage', handleStorage);
       clearInterval(clock);
       clearInterval(configSyncInterval);
