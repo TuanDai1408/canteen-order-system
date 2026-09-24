@@ -939,21 +939,22 @@ export async function placeOrder(params: {
         (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
         ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
     );
-    const usedMealsCount = tokenOrders.reduce((sum, o) => {
+    const ordersUsedMeals = tokenOrders.reduce((sum, o) => {
       const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
       return sum + orderMeals;
     }, 0);
+    const usedMealsCount = Math.max(ordersUsedMeals, Number(matchedToken.usedCount || 0));
 
     if (usedMealsCount >= allowedQty) {
       matchedToken.isUsed = true;
       if (isSupabaseConfigured && supabase) {
         try {
-          await supabase.from('qr_exception_tokens').update({ is_used: true }).eq('token', matchedToken.token);
+          await supabase.from('qr_exception_tokens').update({ is_used: true, used_count: allowedQty }).eq('token', matchedToken.token);
         } catch {}
       }
       return {
         success: false,
-        error: `Mã QR ngoại lệ "${cleanToken}" đã hết hiệu lực do đã sử dụng đủ/vượt số suất cho phép (${allowedQty} suất). Không thể sử dụng mã này được nữa.`,
+        error: `Mã QR ngoại lệ "${cleanToken}" đã hết lượt sử dụng (${usedMealsCount}/${allowedQty} suất). Không thể sử dụng mã này được nữa.`,
       };
     }
 
@@ -961,7 +962,7 @@ export async function placeOrder(params: {
       const remainingMeals = Math.max(0, allowedQty - usedMealsCount);
       return {
         success: false,
-        error: `Vượt quá số suất được phép đặt của mã QR ngoại lệ! Mã chỉ cho phép tối đa ${allowedQty} suất (đã dùng ${usedMealsCount} suất, còn lại ${remainingMeals} suất). Bạn đang đặt ${totalRequestedMeals} suất. Vui lòng giảm bớt số lượng suất ăn.`,
+        error: `Mã QR ngoại lệ chỉ còn lại ${remainingMeals} lượt đặt (bạn đang chọn ${totalRequestedMeals} suất). Vui lòng giảm số lượng suất ăn.`,
       };
     }
   }
@@ -1499,7 +1500,7 @@ export async function placeOrder(params: {
     deviceInfo: device,
   };
 
-  // Cập nhật trạng thái mã QR ngoại lệ nếu đạt hoặc vượt định mức suất ăn
+  // Cập nhật trạng thái và số lượt đặt đã sử dụng của mã QR ngoại lệ
   if (matchedToken && cleanToken) {
     const allowedQty = Number(matchedToken.quantity) || 1;
     const allCachedOrders = getCachedOrders();
@@ -1508,41 +1509,42 @@ export async function placeOrder(params: {
         (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === cleanToken.toUpperCase()) ||
         ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === cleanToken.toUpperCase())
     );
-    const totalUsedMeals = tokenOrders.reduce((sum, o) => {
+    const prevUsed = tokenOrders.reduce((sum, o) => {
       const orderMeals = o.items && o.items.length > 0 ? o.items.reduce((sub, it) => sub + (Number(it.quantity) || 1), 0) : 1;
       return sum + orderMeals;
-    }, 0) + totalRequestedMeals;
+    }, 0);
+    const totalUsedMeals = Math.max(prevUsed + totalRequestedMeals, Number(matchedToken.usedCount || 0) + totalRequestedMeals);
+    const isFullyUsed = totalUsedMeals >= allowedQty;
 
-    if (totalUsedMeals >= allowedQty) {
-      if (isSupabaseConfigured && supabase) {
-        try {
-          await supabase
-            .from('qr_exception_tokens')
-            .update({
-              is_used: true,
-              used_by: userData.name || authUser.email || 'Người dùng',
-              used_at: new Date().toISOString(),
-            })
-            .eq('token', matchedToken.token);
-        } catch (e) {
-          console.warn('Update qr token status note:', e);
-        }
+    if (isSupabaseConfigured && supabase) {
+      try {
+        await supabase
+          .from('qr_exception_tokens')
+          .update({
+            used_count: totalUsedMeals,
+            is_used: isFullyUsed,
+            used_by: userData.name || authUser.email || 'Người dùng',
+            used_at: new Date().toISOString(),
+          })
+          .eq('token', matchedToken.token);
+      } catch (e) {
+        console.warn('Update qr token status note:', e);
       }
-
-      const cachedTokens = getCachedQRTokens();
-      const updatedTokens = cachedTokens.map((t) =>
-        t.token.toUpperCase() === cleanToken.toUpperCase()
-          ? {
-              ...t,
-              isUsed: true,
-              usedBy: userData.name || authUser.email || 'Người dùng',
-              usedAt: new Date().toISOString(),
-              usedCount: totalUsedMeals,
-            }
-          : t
-      );
-      setCachedQRTokens(updatedTokens);
     }
+
+    const cachedTokens = getCachedQRTokens();
+    const updatedTokens = cachedTokens.map((t) =>
+      t.token.toUpperCase() === cleanToken.toUpperCase()
+        ? {
+            ...t,
+            usedCount: totalUsedMeals,
+            isUsed: isFullyUsed,
+            usedBy: userData.name || authUser.email || 'Người dùng',
+            usedAt: new Date().toISOString(),
+          }
+        : t
+    );
+    setCachedQRTokens(updatedTokens);
   }
 
   const userOrders = getCachedOrders(userData.id);
@@ -2206,16 +2208,17 @@ export async function updateOrderStatus(
 export async function createQRToken(
   actor: UserProfile,
   note?: string,
-  expiresInMinutes = 15,
+  expiresInMinutes = 30,
   quantity = 1
 ): Promise<QRExceptionToken> {
   checkSupabase();
   const token = `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
-  const formattedNote = note ? `[Số lượng: ${quantity} suất] ${note}` : `[Số lượng: ${quantity} suất]`;
+  const cleanUserNote = note ? note.replace(/\[Số lượng:\s*\d+\s*(suất|lượt)\]\s*/gi, '').trim() : '';
+  const formattedNote = cleanUserNote ? `[Số lượng: ${quantity} lượt] ${cleanUserNote}` : `[Số lượng: ${quantity} lượt]`;
 
   let insertedData: any = null;
-  // Try inserting with quantity first
+  // Try inserting with quantity and used_count
   try {
     const { data, error } = await supabase
       .from('qr_exception_tokens')
@@ -2226,6 +2229,8 @@ export async function createQRToken(
         created_by_name: actor.name,
         note: formattedNote,
         quantity,
+        used_count: 0,
+        is_used: false,
       })
       .select()
       .single();
@@ -2233,7 +2238,7 @@ export async function createQRToken(
     if (!error && data) {
       insertedData = data;
     } else if (error) {
-      // Retry without quantity column if schema does not have it yet
+      // Retry without quantity/used_count column if schema does not have it yet
       const { data: retryData, error: retryErr } = await supabase
         .from('qr_exception_tokens')
         .insert({
@@ -2242,6 +2247,7 @@ export async function createQRToken(
           created_by: actor.id,
           created_by_name: actor.name,
           note: formattedNote,
+          is_used: false,
         })
         .select()
         .single();
@@ -2254,6 +2260,8 @@ export async function createQRToken(
 
   const newToken = mapQRToken(insertedData);
   newToken.quantity = quantity;
+  newToken.usedCount = 0;
+  newToken.isUsed = false;
   const cached = getCachedQRTokens();
   setCachedQRTokens([newToken, ...cached.filter((t) => t.token !== newToken.token)]);
   return newToken;
@@ -2964,9 +2972,12 @@ function mapQRToken(row: any): QRExceptionToken {
   if (row.quantity) {
     qty = Number(row.quantity);
   } else if (row.note) {
-    const m = String(row.note).match(/\[Số lượng:\s*(\d+)\s*suất\]/);
+    const m = String(row.note).match(/\[Số lượng:\s*(\d+)\s*(suất|lượt)\]/i);
     if (m) qty = parseInt(m[1], 10);
   }
+
+  const usedCount = Number(row.used_count || row.usedCount || 0);
+  const isUsed = Boolean(row.is_used || (usedCount >= qty && qty > 0));
 
   return {
     token: row.token,
@@ -2974,10 +2985,11 @@ function mapQRToken(row: any): QRExceptionToken {
     expiresAt: row.expires_at,
     createdBy: row.created_by,
     createdByName: row.created_by_name || '',
-    isUsed: Boolean(row.is_used),
+    isUsed,
     usedBy: row.used_by,
     usedAt: row.used_at,
     note: row.note,
     quantity: qty,
+    usedCount,
   };
 }

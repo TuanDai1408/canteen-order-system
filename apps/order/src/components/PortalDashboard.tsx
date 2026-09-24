@@ -11,8 +11,6 @@ import {
   createUserByAdmin,
   approveUserAndFundWallet,
   fileToBase64,
-  getCustomTimeGateConfig,
-  setCustomTimeGateConfig,
   getTomorrowStr,
   getTodayStr,
   parseItemsFromNote,
@@ -230,21 +228,6 @@ export function PortalDashboard({
     }
     return batchPrintOrders;
   }, [batchPrintOrders, batchTestCount]);
-
-  // Admin Time Gate Settings (Khung giờ tiêu chuẩn: 13h – 17h)
-  const initialTimeCfg = getCustomTimeGateConfig();
-  const [timeOpen, setTimeOpen] = useState(initialTimeCfg.openTime || '13:00');
-  const [timeClose, setTimeClose] = useState(initialTimeCfg.closeTime || '17:00');
-  const [isForceOpen, setIsForceOpen] = useState(Boolean(initialTimeCfg.isForceOpen));
-  const [isSavingTime, setIsSavingTime] = useState(false);
-
-  // Sync state when timeStatus prop changes from external fetch
-  useEffect(() => {
-    if (timeStatus.opensAt) setTimeOpen(timeStatus.opensAt);
-    if (timeStatus.closesAt) setTimeClose(timeStatus.closesAt);
-    const cfg = getCustomTimeGateConfig();
-    setIsForceOpen(Boolean(cfg.isForceOpen));
-  }, [timeStatus.opensAt, timeStatus.closesAt]);
 
   // Edit Dish state
   const [editingDish, setEditingDish] = useState<MenuItem | null>(null);
@@ -715,24 +698,6 @@ export function PortalDashboard({
       setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật ví' });
     } finally {
       setIsUpdatingWallet(false);
-    }
-  };
-
-  // Save Admin Time Gate Config
-  const handleSaveTimeGate = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setIsSavingTime(true);
-    try {
-      await setCustomTimeGateConfig(timeOpen, timeClose, currentUser, isForceOpen);
-      setMsg({
-        type: 'ok',
-        text: `Đã cập nhật khung giờ nhận đơn: ${timeOpen} – ${timeClose} ${isForceOpen ? '(Luôn mở 24/7)' : ''} thành công!`,
-      });
-      await onRefresh();
-    } catch (err: any) {
-      setMsg({ type: 'err', text: err.message || 'Lỗi khi cập nhật khung giờ nhận đơn' });
-    } finally {
-      setIsSavingTime(false);
     }
   };
 
@@ -1353,130 +1318,6 @@ export function PortalDashboard({
                   </table>
                 </div>
               </div>
-
-              {/* Admin Time Gate Settings */}
-              {currentUser.role === 'admin' && (
-                <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-indigo-600" />
-                        <h3 className="font-extrabold text-slate-900 text-sm">
-                          Cấu hình Khung giờ Nhận Đơn Thường (Admin)
-                        </h3>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          Quyền Admin
-                        </span>
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1">
-                        Cán bộ và giáo viên chỉ có thể đặt suất ăn thường trong khung giờ này. Sau giờ đóng, hệ thống sẽ yêu cầu Mã QR ngoại lệ.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 ${
-                          timeStatus.isOpen
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                            : 'bg-rose-50 text-rose-700 border border-rose-200'
-                        }`}
-                      >
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            timeStatus.isOpen ? 'bg-emerald-500' : 'bg-rose-500'
-                          }`}
-                        />
-                        {timeStatus.isOpen ? 'Cổng Đang MỞ' : 'Cổng Đã ĐÓNG'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Quick Presets */}
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-bold text-slate-600">Chọn nhanh khung giờ:</span>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTimeOpen('06:00');
-                        setTimeClose('22:00');
-                        setIsForceOpen(false);
-                      }}
-                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 transition cursor-pointer"
-                    >
-                      06:00 – 22:00 (Mở rộng)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTimeOpen('13:00');
-                        setTimeClose('17:00');
-                        setIsForceOpen(false);
-                      }}
-                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-slate-50 hover:bg-indigo-50 hover:text-indigo-600 transition cursor-pointer"
-                    >
-                      13:00 – 17:00 (Tiêu chuẩn)
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setTimeOpen('00:00');
-                        setTimeClose('23:59');
-                        setIsForceOpen(true);
-                      }}
-                      className="px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition cursor-pointer"
-                    >
-                      🟢 Luôn mở 24/7 (Thử nghiệm)
-                    </button>
-                  </div>
-
-                  <form onSubmit={handleSaveTimeGate} className="mt-4 flex flex-col sm:flex-row items-end gap-3">
-                    <div className="w-full sm:w-44">
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Giờ mở nhận đơn:
-                      </label>
-                      <input
-                        type="time"
-                        required
-                        value={timeOpen}
-                        onChange={(e) => setTimeOpen(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                      />
-                    </div>
-
-                    <div className="w-full sm:w-44">
-                      <label className="block text-xs font-bold text-slate-700 mb-1">
-                        Giờ chốt nhận đơn:
-                      </label>
-                      <input
-                        type="time"
-                        required
-                        value={timeClose}
-                        onChange={(e) => setTimeClose(e.target.value)}
-                        className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                      />
-                    </div>
-
-                    <div className="flex-1 text-xs text-slate-500 pb-1">
-                      <p>
-                        Cấu hình: <strong className="text-slate-800 font-mono">{timeOpen} – {timeClose}</strong> {isForceOpen ? '(Chế độ luôn mở)' : 'hàng ngày'}.
-                      </p>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={isSavingTime}
-                      className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition cursor-pointer flex items-center justify-center gap-2 shadow-xs min-h-[38px]"
-                    >
-                      {isSavingTime ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-white" />
-                      ) : (
-                        <Check className="w-4 h-4" />
-                      )}
-                      <span>{isSavingTime ? 'Đang lưu vào Supabase...' : 'Lưu & Đồng bộ ngay'}</span>
-                    </button>
-                  </form>
-                </div>
-              )}
             </div>
           )}
 
@@ -2846,14 +2687,15 @@ export function PortalDashboard({
 
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[550px]">
+                  <table className="w-full text-left text-xs min-w-[600px]">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4">Mã Token</th>
-                        <th className="py-3 px-4 text-center">Số suất cấp</th>
+                        <th className="py-3 px-3 text-center">Số lượt cấp</th>
+                        <th className="py-3 px-3 text-center">Đã dùng / Còn lại</th>
                         <th className="py-3 px-4">Ghi chú</th>
-                        <th className="py-3 px-4">Tạo bởi</th>
-                        <th className="py-3 px-4">Thời gian hết hạn</th>
+                        <th className="py-3 px-4">Tạo bởi / Người dùng</th>
+                        <th className="py-3 px-4">Hạn sử dụng</th>
                         <th className="py-3 px-4 text-center">Trạng thái</th>
                         <th className="py-3 px-4 text-center">Sao chép</th>
                       </tr>
@@ -2861,31 +2703,61 @@ export function PortalDashboard({
                     <tbody className="divide-y divide-slate-100">
                       {paginatedTokens.map((t) => {
                         const isExpired = new Date(t.expiresAt) < new Date();
+                        const qty = Number(t.quantity) || 1;
+                        const used = Number(t.usedCount) || 0;
+                        const remaining = Math.max(0, qty - used);
+                        const isFullyUsed = t.isUsed || remaining <= 0;
+
                         return (
                           <tr key={t.token} className="hover:bg-slate-50/70">
-                            <td className="py-3 px-4 font-mono font-extrabold text-indigo-700">{t.token}</td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-4 font-mono font-extrabold text-indigo-700">
+                              {t.token}
+                            </td>
+                            <td className="py-3 px-3 text-center">
                               <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200">
-                                {t.quantity || 1} suất
+                                {qty} lượt
                               </span>
                             </td>
+                            <td className="py-3 px-3 text-center">
+                              <div className="inline-flex flex-col items-center gap-0.5">
+                                <span className="font-bold text-slate-800 text-xs">
+                                  Đã dùng: <strong className="text-orange-600 font-mono">{used}</strong> / {qty}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                    remaining > 0
+                                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                      : 'bg-slate-100 text-slate-500 border border-slate-200'
+                                  }`}
+                                >
+                                  {remaining > 0 ? `Còn lại: ${remaining} lượt` : 'Hết lượt'}
+                                </span>
+                              </div>
+                            </td>
                             <td className="py-3 px-4 text-slate-700">{t.note || '—'}</td>
-                            <td className="py-3 px-4 text-slate-500">{t.createdByName}</td>
+                            <td className="py-3 px-4 text-slate-700">
+                              <p className="font-bold text-slate-800">{t.createdByName || 'Admin'}</p>
+                              {t.usedBy && (
+                                <p className="text-[10px] text-indigo-600 mt-0.5 font-medium">
+                                  Đã dùng bởi: {t.usedBy}
+                                </p>
+                              )}
+                            </td>
                             <td className="py-3 px-4 text-slate-700">
                               {new Date(t.expiresAt).toLocaleString('vi-VN')}
                             </td>
                             <td className="py-3 px-4 text-center">
-                              {t.isUsed ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
-                                  Hết hiệu lực (Đã hết suất)
+                              {isFullyUsed ? (
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
+                                  Đã dùng hết ({used}/{qty})
                                 </span>
                               ) : isExpired ? (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-rose-50 text-rose-600 border border-rose-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-50 text-rose-600 border border-rose-200">
                                   Hết hạn giờ
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  Còn hiệu lực ({t.quantity || 1} suất)
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  🟢 Còn hiệu lực ({remaining}/{qty} lượt)
                                 </span>
                               )}
                             </td>
@@ -3502,7 +3374,7 @@ export function PortalDashboard({
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Số lượng suất được phép đặt
+                  Số lượt đặt cho phép (Suất ăn)
                 </label>
                 <div className="flex items-center gap-2">
                   <button
@@ -3528,7 +3400,7 @@ export function PortalDashboard({
                     +
                   </button>
                   <div className="flex gap-1 ml-auto">
-                    {[1, 2, 5, 10].map((q) => (
+                    {[1, 2, 3, 5, 10].map((q) => (
                       <button
                         key={q}
                         type="button"
@@ -3539,7 +3411,7 @@ export function PortalDashboard({
                             : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
                         }`}
                       >
-                        {q} suất
+                        {q} lượt
                       </button>
                     ))}
                   </div>
