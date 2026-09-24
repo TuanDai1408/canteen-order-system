@@ -1,36 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100%" height="100%">
-  <defs>
-    <linearGradient id="favRed" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#EF4444" />
-      <stop offset="100%" stop-color="#B91C1C" />
-    </linearGradient>
-    <linearGradient id="favGold" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#FBBF24" />
-      <stop offset="100%" stop-color="#F59E0B" />
-    </linearGradient>
-  </defs>
-
-  <rect width="100" height="100" rx="24" fill="#FFFFFF" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="100%" height="100%">
+  <rect width="500" height="500" rx="100" fill="#FFFFFF" />
   
-  <g transform="translate(10, 6) scale(0.42)">
-    <!-- Rice Fluff Clouds in Bowl -->
-    <path d="M 60 92 C 50 68, 80 50, 100 62 C 115 48, 145 48, 158 65 C 175 52, 205 68, 198 92 Z" 
-          fill="#FFF7ED" stroke="url(#favRed)" stroke-width="8" stroke-linejoin="round" />
+  <g fill="#ED1C24" stroke="#ED1C24">
+    <!-- STEAM & HEART SECTION -->
+    <!-- Base line of steam / rim top -->
+    <path d="M 136 194 L 364 194" stroke-width="12" stroke-linecap="round" />
 
-    <!-- Center Heart in Steam -->
-    <path d="M 130 38 C 130 38, 120 22, 108 28 C 96 34, 100 50, 130 72 C 160 50, 164 34, 152 28 C 140 22, 130 38, 130 38 Z" 
-          fill="url(#favRed)" />
+    <!-- Steam Cloud Outline (Left to Right) -->
+    <path d="M 144 190 C 138 175, 148 150, 172 148 C 178 128, 204 126, 226 138 C 230 144, 234 152, 234 162" 
+          fill="none" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <path d="M 266 162 C 266 152, 270 144, 274 138 C 296 126, 322 128, 328 148 C 352 150, 362 175, 356 190" 
+          fill="none" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" />
 
-    <!-- Rice Bowl (Smooth curved bowl) -->
-    <path d="M 50 90 Q 130 90 210 90 C 205 145, 55 145, 50 90 Z" 
-          fill="url(#favRed)" stroke="#FFFFFF" stroke-width="4" />
+    <!-- Solid Heart in center of steam -->
+    <path d="M 250 142 C 250 142, 238 124, 224 130 C 210 136, 214 154, 250 180 C 286 154, 290 136, 276 130 C 262 124, 250 142, 250 142 Z" 
+          stroke="none" />
 
-    <!-- Bowl Highlight Rim -->
-    <path d="M 58 98 Q 130 102 202 98" 
-          fill="none" stroke="#FEE2E2" stroke-width="5" stroke-linecap="round" opacity="0.85" />
+    <!-- BOWL SECTION -->
+    <path d="M 125 204 L 375 204 C 375 240, 362 268, 335 282 C 305 298, 260 304, 225 298 C 175 288, 138 252, 125 204 Z" 
+          stroke="none" />
 
-    <!-- Caring Gentle Hand Supporting the Bowl -->
-    <path d="M 45 135 C 50 165, 80 185, 125 185 C 165 185, 195 165, 212 142 C 218 135, 212 125, 202 130 C 180 148, 155 158, 125 158 C 95 158, 70 148, 55 125 C 48 115, 42 122, 45 135 Z" 
-          fill="url(#favRed)" />
+    <!-- CARING HAND SECTION -->
+    <!-- Hand cradling underneath with curved fingers on right, thumb, and graceful left wing wrist -->
+    <path d="M 368 268 C 374 274, 372 284, 364 292 C 342 314, 308 340, 260 354 C 220 365, 185 360, 162 388 C 160 370, 166 345, 184 328 C 205 308, 238 300, 272 300 C 304 300, 318 310, 314 318 C 308 326, 288 326, 262 322 C 248 320, 238 325, 245 330 C 258 338, 286 338, 312 325 C 335 314, 355 292, 360 274 C 362 268, 366 266, 368 268 Z" 
+          stroke="none" />
   </g>
 </svg>

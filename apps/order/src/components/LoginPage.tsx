@@ -69,17 +69,10 @@ export function LoginPage({ onSuccess }: Props) {
       <div className="w-full max-w-md relative z-10">
         {/* Brand header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center mb-2">
-            <BrandLogo size={80} />
+          <div className="inline-flex items-center justify-center p-2.5 bg-white/95 rounded-2xl border border-slate-200/80 shadow-md mb-2">
+            <BrandLogo height={72} />
           </div>
-          <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-slate-900 mt-1">
-            <span className="text-red-600">Cơm Ngon </span>
-            <span className="text-red-700">SIBA</span>
-          </h1>
-          <p className="text-red-700/80 font-bold uppercase tracking-wider text-xs mt-0.5">
-            ĂN SẠCH – SỐNG KHỎE
-          </p>
-          <p className="text-slate-500 text-xs mt-1 max-w-sm mx-auto">
+          <p className="text-slate-600 font-medium text-xs sm:text-sm mt-1 max-w-sm mx-auto">
             Hệ thống đặt suất ăn trực tuyến dành cho Cán bộ, Giảng viên & Nhân viên
           </p>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 mt-2.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-medium">

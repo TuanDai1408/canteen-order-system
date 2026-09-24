@@ -47,13 +47,20 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
         </div>
       )}
 
-      {/* Header */}
-      <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1">
-        <h4 className="font-bold text-sm uppercase tracking-wider text-slate-900">
+      {/* Header with Brand Logo */}
+      <div className="text-center pb-3 border-b border-dashed border-slate-400 space-y-1.5">
+        <div className="flex justify-center pb-0.5">
+          <img
+            src="/logo.svg"
+            alt="Cơm Ngon SIBA"
+            className={`object-contain select-none ${isK58 ? 'h-10 max-w-[170px]' : 'h-12 max-w-[210px]'}`}
+          />
+        </div>
+        <h4 className="font-extrabold text-sm uppercase tracking-wider text-slate-900">
           CƠM NGON SIBA
         </h4>
-        <p className="text-[11px] font-bold text-red-600">
-          ĂN SẠCH – SỐNG KHỎE · PHIẾU CHẾ BIẾN & XUẤT SUẤT ĂN
+        <p className="text-[10px] font-extrabold text-red-600 tracking-wider">
+          ĂN SẠCH – SỐNG KHỎE · PHIẾU BẾP & XUẤT SUẤT ĂN
         </p>
         {!isPrintMode && (
           <p className="text-[10px] text-slate-400 no-print">

@@ -413,24 +413,19 @@ export function OrderHome({
     <div className="min-h-dvh bg-slate-50 flex flex-col font-sans text-slate-800 pb-28 sm:pb-24">
       {/* Top Navigation Bar */}
       <header className="sticky top-0 z-30 bg-slate-900 border-b border-slate-800 text-white shadow-md">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 py-2.5 min-h-[64px] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <BrandLogo size={42} />
-            <div>
+            <div className="bg-white/95 px-2 py-1 rounded-xl shadow-xs border border-white/20">
+              <BrandLogo height={44} />
+            </div>
+            <div className="hidden sm:block">
               <div className="flex items-center gap-2">
-                <span className="font-extrabold text-sm sm:text-base tracking-tight text-white">
-                  <span className="text-red-500">Cơm Ngon </span>
-                  <span className="text-red-400 font-black">SIBA</span>
-                </span>
-                <span className="hidden xs:inline-block text-[11px] font-bold text-red-300 uppercase tracking-wider">
-                  · Ăn Sạch – Sống Khỏe
-                </span>
                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Live
+                  Live Sync
                 </span>
               </div>
-              <p className="text-xs text-slate-400">
+              <p className="text-xs text-slate-300 font-medium mt-0.5">
                 {currentUser.name} · {currentUser.department || 'Cán bộ'}
               </p>
             </div>

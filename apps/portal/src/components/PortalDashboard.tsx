@@ -1082,20 +1082,8 @@ export function PortalDashboard({
         <div>
           {/* Logo & Header */}
           <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <BrandLogo size={42} />
-              <div>
-                <h2 className="font-extrabold text-sm tracking-tight text-slate-900">
-                  <span className="text-red-600">Cơm Ngon </span>
-                  <span className="text-red-700 font-black">SIBA</span>
-                </h2>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                  <p className="text-[10px] text-red-700/80 font-bold uppercase tracking-wider truncate max-w-[140px]">
-                    ĂN SẠCH – SỐNG KHỎE
-                  </p>
-                </div>
-              </div>
+            <div className="flex items-center">
+              <BrandLogo height={48} />
             </div>
 
             <button
