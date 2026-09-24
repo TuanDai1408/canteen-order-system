@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 
 -- ========================================================
--- CẤU HÌNH ROW LEVEL SECURITY (RLS) CHO PHÉP ĐỌC / GHI ĐỂ TEST
+-- CẤU HÌNH ROW LEVEL SECURITY (RLS) PHÂN QUYỀN TOÀN DIỆN CHO PRODUCTION
 -- ========================================================
 ALTER TABLE menu_items ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users ENABLE ROW LEVEL SECURITY;

@@ -1137,25 +1137,22 @@ export async function placeOrder(params: {
     };
   }
 
-  // 5. Tạo mã đơn hàng chuẩn hoá POS: CT-YYYYMMDD-XXX
+  // 5. Tạo mã đơn hàng độc nhất chuẩn hoá POS: CT-YYYYMMDD-HHMMSS-XXXX (Không bao giờ trùng lặp)
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
-  const datePrefix = `CT-${yyyy}${mm}${dd}-`;
-
-  const allCached = getCachedOrders();
-  const todayCount = allCached.filter(
-    (o) => o.orderCode && o.orderCode.startsWith(datePrefix)
-  ).length;
-  const seqStr = String(todayCount + Math.floor(Math.random() * 80) + 1).padStart(3, '0');
-  const orderCode = `${datePrefix}${seqStr}`;
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  const sec = String(now.getSeconds()).padStart(2, '0');
+  const randSuffix = Math.floor(1000 + Math.random() * 9000);
+  let orderCode = `CT-${yyyy}${mm}${dd}-${hh}${min}${sec}-${randSuffix}`;
   const targetDate = getTomorrowStr();
   const itemsSummaryText = orderItemsData
     .map((it) => `${it.quantity}x ${it.name} (${formatVnd(it.price)})`)
     .join(', ');
 
-  const orderUuid = generateUUID();
+  let orderUuid = generateUUID();
   const userCustomNote = params.note?.trim() || '';
 
   // 6. Chèn đơn hàng vào bảng orders trên Supabase (Adaptive Schema Insertion)
@@ -1190,7 +1187,7 @@ export async function placeOrder(params: {
       : (params.isExceptionOrder ? `[Ngoại lệ: ${cleanToken}] ${itemsSummaryText}` : itemsSummaryText),
   };
 
-  // Vòng lặp thích ứng schema: Tự động loại bỏ bất kỳ cột nào mà bảng orders trên DB chưa hỗ trợ
+  // Vòng lặp thích ứng schema: Tự động loại bỏ bất kỳ cột nào mà bảng orders trên DB chưa hỗ trợ & tự phục hồi khi trùng mã
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
       const res = await withQueryTimeout(
@@ -1207,14 +1204,35 @@ export async function placeOrder(params: {
 
       if (res.error) {
         orderInsertError = res.error.message;
-        const errMsg = res.error.message || '';
+        const errMsg = (res.error.message || '').toLowerCase();
+
+        // Xử lý triệt để lỗi duplicate key value violates unique constraint "orders_order_code_key"
+        if (
+          errMsg.includes('orders_order_code_key') ||
+          errMsg.includes('duplicate key') ||
+          errMsg.includes('violates unique constraint') ||
+          errMsg.includes('order_code')
+        ) {
+          const freshTime = new Date();
+          const freshRand = Math.floor(1000 + Math.random() * 9000);
+          const freshCode = `CT-${yyyy}${mm}${dd}-${String(freshTime.getHours()).padStart(2, '0')}${String(freshTime.getMinutes()).padStart(2, '0')}${String(freshTime.getSeconds()).padStart(2, '0')}-${freshRand}`;
+          const freshId = generateUUID();
+          orderCode = freshCode;
+          orderUuid = freshId;
+          currentPayload.order_code = freshCode;
+          currentPayload.id = freshId;
+          console.warn(
+            `[placeOrder unique constraint fix]: Trùng mã đơn orders_order_code_key, tự động tạo mã duy nhất mới '${freshCode}' và thử lại ngay...`
+          );
+          continue;
+        }
 
         // Trích xuất tên cột bị thiếu từ lỗi PostgREST hoặc PostgreSQL
         const missingColMatch =
-          errMsg.match(/Could not find the '([^']+)' column/) ||
-          errMsg.match(/column "([^"]+)" of relation/i) ||
-          errMsg.match(/Could not find the column '([^']+)'/i) ||
-          errMsg.match(/column '([^']+)' does not exist/i);
+          res.error.message.match(/Could not find the '([^']+)' column/) ||
+          res.error.message.match(/column "([^"]+)" of relation/i) ||
+          res.error.message.match(/Could not find the column '([^']+)'/i) ||
+          res.error.message.match(/column '([^']+)' does not exist/i);
 
         if (missingColMatch && missingColMatch[1]) {
           const colToRemove = missingColMatch[1];
@@ -1341,26 +1359,58 @@ export async function placeOrder(params: {
     console.warn('[placeOrder order_items exception]:', e);
   }
 
-  // 8. Trừ tồn kho món ăn trên Supabase
+  // 8. Trừ tồn kho món ăn trên Supabase (Hỗ trợ tra cứu theo ID hoặc Tên món)
   for (const it of orderItemsData) {
-    if (it.real_db_item_id) {
-      try {
-        const { data: currentDbItem } = await supabase
+    try {
+      let dbItem: { id: string; current_stock: number } | null = null;
+
+      // 8.1 Thử tìm món trong database bằng ID (nếu có UUID hợp lệ)
+      if (it.real_db_item_id && isValidUuid(it.real_db_item_id)) {
+        const { data: byId } = await supabase
           .from('menu_items')
-          .select('current_stock')
+          .select('id, current_stock')
           .eq('id', it.real_db_item_id)
           .maybeSingle();
-
-        if (currentDbItem) {
-          const currentStockVal = Number(currentDbItem.current_stock ?? 0);
-          await supabase
-            .from('menu_items')
-            .update({ current_stock: Math.max(0, currentStockVal - it.quantity) })
-            .eq('id', it.real_db_item_id);
-        }
-      } catch (stockErr) {
-        console.warn('[placeOrder stock update note]:', stockErr);
+        if (byId) dbItem = byId;
       }
+
+      // 8.2 Nếu chưa tìm thấy theo ID, tìm theo Tên món chính xác trong DB
+      if (!dbItem && it.name) {
+        const cleanName = it.name.trim();
+        const { data: byName } = await supabase
+          .from('menu_items')
+          .select('id, current_stock')
+          .ilike('name', cleanName)
+          .limit(1)
+          .maybeSingle();
+        if (byName) {
+          dbItem = byName;
+          it.real_db_item_id = byName.id;
+        }
+      }
+
+      // 8.3 Cập nhật trừ tồn kho trong bảng menu_items trên DB Supabase
+      if (dbItem) {
+        const currentStockVal = Number(dbItem.current_stock ?? 0);
+        const newStockVal = Math.max(0, currentStockVal - it.quantity);
+        const { error: stockErr } = await supabase
+          .from('menu_items')
+          .update({
+            current_stock: newStockVal,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', dbItem.id);
+
+        if (stockErr) {
+          console.warn(`[placeOrder stock update warning for "${it.name}"]:`, stockErr.message);
+        } else {
+          console.log(`[placeOrder stock updated]: "${it.name}" (ID: ${dbItem.id}) tồn mới: ${newStockVal}`);
+        }
+      } else {
+        console.warn(`[placeOrder]: Không tìm thấy món "${it.name}" trong database để trừ tồn.`);
+      }
+    } catch (stockErr) {
+      console.warn('[placeOrder stock update exception]:', stockErr);
     }
   }
 
@@ -1400,7 +1450,12 @@ export async function placeOrder(params: {
   // 11. Cập nhật tồn kho trong cache thực đơn
   const cachedMenu = getCachedMenu();
   const updatedCachedMenu = cachedMenu.map((m) => {
-    const requested = orderItemsData.find((it) => it.menu_item_id === m.id || it.name === m.name);
+    const requested = orderItemsData.find(
+      (it) =>
+        it.menu_item_id === m.id ||
+        (it.real_db_item_id && it.real_db_item_id === m.id) ||
+        (m.name && it.name && m.name.trim().toLowerCase() === it.name.trim().toLowerCase())
+    );
     if (requested) {
       return { ...m, currentStock: Math.max(0, m.currentStock - requested.quantity) };
     }
@@ -1772,21 +1827,46 @@ export async function cancelOrder(
 
       if (fetchedItems && Array.isArray(fetchedItems)) {
         for (const it of fetchedItems) {
+          let mItem: any = null;
           if (it.menu_item_id && isValidUuid(it.menu_item_id)) {
-            const { data: mItem } = await supabase
+            const { data } = await supabase
               .from('menu_items')
-              .select('current_stock')
+              .select('id, current_stock')
               .eq('id', it.menu_item_id)
               .maybeSingle();
+            mItem = data;
+          }
+          if (!mItem && it.name) {
+            const { data } = await supabase
+              .from('menu_items')
+              .select('id, current_stock')
+              .ilike('name', it.name.trim())
+              .limit(1)
+              .maybeSingle();
+            mItem = data;
+          }
 
-            if (mItem) {
-              await supabase
-                .from('menu_items')
-                .update({ current_stock: Number(mItem.current_stock ?? 0) + Number(it.quantity ?? 1) })
-                .eq('id', it.menu_item_id);
-            }
+          if (mItem) {
+            const restoredStock = Number(mItem.current_stock ?? 0) + Number(it.quantity ?? 1);
+            await supabase
+              .from('menu_items')
+              .update({ current_stock: restoredStock, updated_at: new Date().toISOString() })
+              .eq('id', mItem.id);
           }
         }
+
+        // Cập nhật lại tồn kho trong cache thực đơn
+        const currMenu = getCachedMenu();
+        const updatedMenu = currMenu.map((m) => {
+          const matchingIt = fetchedItems.find(
+            (it) => it.menu_item_id === m.id || (it.name && m.name && it.name.trim().toLowerCase() === m.name.trim().toLowerCase())
+          );
+          if (matchingIt) {
+            return { ...m, currentStock: m.currentStock + Number(matchingIt.quantity ?? 1) };
+          }
+          return m;
+        });
+        setCachedMenu(updatedMenu);
       }
     } catch (restockErr) {
       console.warn('[Restock menu items notice]:', restockErr);

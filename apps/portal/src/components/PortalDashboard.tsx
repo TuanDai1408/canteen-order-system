@@ -228,28 +228,98 @@ export function PortalDashboard({
   const roomDeliveryCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'room_delivery').length, [activeOrders]);
   const dineInCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'dine_in').length, [activeOrders]);
 
-  const dishSummary = useMemo(() => {
-    const map = new Map<string, { name: string; quantity: number; totalAmount: number }>();
-    for (const ord of activeOrders) {
+  // Tổng hợp món ăn cho Màn hình Nhà bếp (KDS) theo ngày lọc hiện tại
+  const kitchenDishSummary = useMemo(() => {
+    // Lọc theo ngày được chọn (hoặc tất cả các ngày nếu chọn 'all'), loại bỏ đơn hủy
+    const targetOrders = (orderDateFilter && orderDateFilter !== 'all'
+      ? orders.filter((o) => {
+          const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
+          return d === orderDateFilter && o.status !== 'cancelled';
+        })
+      : activeOrders);
+
+    const map = new Map<string, {
+      name: string;
+      category: string;
+      quantity: number;
+      dineInQty: number;
+      roomDeliveryQty: number;
+      totalAmount: number;
+      confirmedCount: number;
+      preparingCount: number;
+      completedCount: number;
+      notes: string[];
+    }>();
+
+    for (const ord of targetOrders) {
       const items = getOrderDisplayItems(ord, menu);
+      const isRoom = ord.deliveryMethod === 'room_delivery';
+      const ordNote = (ord.note || ord.notes || '').trim();
+
       if (items && items.length > 0) {
         for (const it of items) {
           const dishName = it.name || 'Suất ăn Căn tin';
-          const curr = map.get(dishName) || { name: dishName, quantity: 0, totalAmount: 0 };
+          const menuItem = menu.find((m) => m.name === dishName || m.id === it.menuItemId);
+          const cat = menuItem?.category || 'Món chính';
+          const curr = map.get(dishName) || {
+            name: dishName,
+            category: cat,
+            quantity: 0,
+            dineInQty: 0,
+            roomDeliveryQty: 0,
+            totalAmount: 0,
+            confirmedCount: 0,
+            preparingCount: 0,
+            completedCount: 0,
+            notes: [],
+          };
           curr.quantity += it.quantity;
           curr.totalAmount += (it.price || 0) * it.quantity;
+          if (isRoom) curr.roomDeliveryQty += it.quantity;
+          else curr.dineInQty += it.quantity;
+
+          if (ord.status === 'confirmed') curr.confirmedCount += it.quantity;
+          else if (ord.status === 'preparing') curr.preparingCount += it.quantity;
+          else if (ord.status === 'completed') curr.completedCount += it.quantity;
+
+          if (ordNote && !curr.notes.includes(ordNote)) {
+            curr.notes.push(ordNote);
+          }
           map.set(dishName, curr);
         }
       } else {
         const dishName = 'Suất ăn Căn tin';
-        const curr = map.get(dishName) || { name: dishName, quantity: 0, totalAmount: 0 };
+        const curr = map.get(dishName) || {
+          name: dishName,
+          category: 'Món chính',
+          quantity: 0,
+          dineInQty: 0,
+          roomDeliveryQty: 0,
+          totalAmount: 0,
+          confirmedCount: 0,
+          preparingCount: 0,
+          completedCount: 0,
+          notes: [],
+        };
         curr.quantity += 1;
         curr.totalAmount += ord.totalAmount || 0;
+        if (isRoom) curr.roomDeliveryQty += 1;
+        else curr.dineInQty += 1;
+
+        if (ord.status === 'confirmed') curr.confirmedCount += 1;
+        else if (ord.status === 'preparing') curr.preparingCount += 1;
+        else if (ord.status === 'completed') curr.completedCount += 1;
+
+        if (ordNote && !curr.notes.includes(ordNote)) {
+          curr.notes.push(ordNote);
+        }
         map.set(dishName, curr);
       }
     }
     return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
-  }, [activeOrders, menu]);
+  }, [orders, activeOrders, orderDateFilter, menu]);
+
+  const dishSummary = kitchenDishSummary;
 
   const ordersByStatus = useMemo(() => ({
     confirmed: orders.filter((o) => o.status === 'confirmed').length,
@@ -689,65 +759,6 @@ export function PortalDashboard({
     } else {
       setMsg({ type: 'ok', text: 'Hiện không có đơn nào đang chờ nấu hoặc đang nấu.' });
     }
-  };
-
-  const handleSeed49TestOrders = () => {
-    const teachers = [
-      'ThS. Nguyễn Văn An', 'Cô Trần Thị Mai', 'Thầy Lê Hoàng Long', 'Cô Phạm Thị Thu',
-      'ThS. Hoàng Minh Đức', 'Cô Đỗ Thị Lan', 'Thầy Vũ Đình Trọng', 'Cô Bùi Minh Anh',
-      'Thầy Ngô Quốc Dũng', 'Cô Đặng Thảo Vy', 'Thầy Phan Thanh Tùng', 'Cô Dương Diệu Linh',
-      'Thầy Trịnh Quang Vinh', 'Cô Hồ Ngọc Hà', 'Thầy Lý Gia Bảo', 'Cô Mai Phương Thúy'
-    ];
-    const depts = [
-      'Tổ Toán - Tin', 'Tổ Ngữ Văn', 'Tổ Ngoại Ngữ', 'Tổ Vật Lý',
-      'Tổ Hóa Sinh', 'Phòng Đào Tạo', 'Phòng Hành Chính', 'Ban Giám Hiệu'
-    ];
-    const sampleItems = menu && menu.length > 0 ? menu : DEFAULT_MENU_ITEMS;
-
-    const new49Orders: Order[] = Array.from({ length: 49 }, (_, i) => {
-      const teacherName = teachers[i % teachers.length];
-      const dept = depts[i % depts.length];
-      const isRoom = i % 3 === 0;
-      const dMethod: 'dine_in' | 'room_delivery' = isRoom ? 'room_delivery' : 'dine_in';
-      const dish = sampleItems[i % sampleItems.length];
-      const qty = (i % 2) + 1;
-      const itemTotal = dish.price * qty;
-
-      return {
-        id: `test-pos-order-${Date.now()}-${i + 1}`,
-        orderCode: `POS${String(i + 1).padStart(3, '0')}`,
-        userId: `user-test-${i + 1}`,
-        userName: teacherName,
-        userPhone: `09${String(10000000 + i * 12345).slice(0, 8)}`,
-        userDepartment: dept,
-        targetDate: getTodayStr(),
-        deliveryMethod: dMethod,
-        roomNumber: isRoom ? `P.${100 + (i % 20)}` : '',
-        pickupTime: `${11 + Math.floor(i / 20)}:${(i % 4) * 15 === 0 ? '00' : (i % 4) * 15}`,
-        totalAmount: itemTotal,
-        status: (i % 5 === 0 ? 'preparing' : 'confirmed') as OrderStatus,
-        cancellationDeadline: '16:00',
-        note: i % 4 === 1 ? 'Ít cay, cơm mềm' : (i % 4 === 2 ? 'Không hành, canh nóng' : ''),
-        items: [
-          {
-            menuItemId: dish.id,
-            name: dish.name,
-            price: dish.price,
-            quantity: qty,
-            imageUrl: dish.imageUrl || '',
-          }
-        ],
-        createdAt: new Date(Date.now() - (49 - i) * 60000).toISOString(),
-      };
-    });
-
-    const existing = getCachedOrders();
-    setCachedOrders([...new49Orders, ...existing]);
-    onRefresh();
-    setSelectedOrderIds(new49Orders.map((o) => o.id));
-    setBatchPrintOrders(new49Orders);
-    setBatchTestCount(null);
-    setMsg({ type: 'ok', text: 'Đã nạp thành công 49 đơn hàng mẫu phục vụ kiểm thử in POS hàng loạt!' });
   };
 
   const navItems = [
@@ -1696,49 +1707,6 @@ export function PortalDashboard({
                 </div>
               </div>
 
-              {/* Bảng tổng hợp các món ăn nhà bếp cần chuẩn bị */}
-              {dishSummary.length > 0 && (
-                <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center">
-                        <ChefHat className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm">
-                          Tổng hợp Món ăn Nhà Bếp Cần Nấu (Ngày mai)
-                        </h3>
-                        <p className="text-[11px] text-slate-500">
-                          Tự động tổng hợp từ tất cả các đơn đặt suất ăn của cán bộ, giáo viên
-                        </p>
-                      </div>
-                    </div>
-                    <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                      Tổng: {dishSummary.reduce((s, d) => s + d.quantity, 0)} suất ăn
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 pt-1">
-                    {dishSummary.map((dish, idx) => (
-                      <div
-                        key={idx}
-                        className="p-3 bg-slate-50 hover:bg-indigo-50/40 rounded-xl border border-slate-200 transition flex items-center justify-between"
-                      >
-                        <div className="min-w-0 pr-2">
-                          <p className="font-bold text-xs text-slate-900 truncate">{dish.name}</p>
-                          <p className="text-[10px] text-slate-500 mt-0.5">
-                            Doanh thu: {formatVnd(dish.totalAmount)}
-                          </p>
-                        </div>
-                        <span className="px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-extrabold text-xs font-mono flex-shrink-0 shadow-2xs">
-                          {dish.quantity} suất
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Batch Action Bar */}
               <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
                 <div className="flex items-center gap-2">
@@ -1787,15 +1755,6 @@ export function PortalDashboard({
                     <span>Chọn & In Đơn Bếp ({orders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
                   </button>
 
-                  <button
-                    onClick={handleSeed49TestOrders}
-                    className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
-                    title="Tạo nhanh 49 đơn hàng thực tế để kiểm thử xuất đủ 49 trang PDF chuẩn POS"
-                  >
-                    <Sparkles className="w-4 h-4 text-emerald-600" />
-                    <span>Nạp 49 đơn test POS</span>
-                  </button>
-
                   {selectedOrderIds.length > 0 && (
                     <>
                       <button
@@ -1823,7 +1782,7 @@ export function PortalDashboard({
               {/* Orders Table */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[750px]">
+                  <table className="w-full text-left text-xs min-w-[900px]">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-3 w-10 text-center">
@@ -1838,14 +1797,15 @@ export function PortalDashboard({
                             title="Chọn / Bỏ chọn tất cả"
                           />
                         </th>
-                        <th className="py-3 px-4">Mã đơn</th>
-                        <th className="py-3 px-4">Cán bộ / Giáo viên</th>
-                        <th className="py-3 px-4">Phòng nhận</th>
-                        <th className="py-3 px-4">Giờ nhận</th>
-                        <th className="py-3 px-4">Chi tiết món ăn</th>
-                        <th className="py-3 px-4 text-right">Tổng tiền</th>
-                        <th className="py-3 px-4 text-center">Trạng thái</th>
-                        <th className="py-3 px-4 text-center">Thao tác bếp</th>
+                        <th className="py-3 px-3">Mã đơn</th>
+                        <th className="py-3 px-3 whitespace-nowrap">Thời gian khách đặt</th>
+                        <th className="py-3 px-3">Cán bộ / Giáo viên</th>
+                        <th className="py-3 px-3 text-center whitespace-nowrap">Ngày phục vụ</th>
+                        <th className="py-3 px-3 whitespace-nowrap">Giờ ăn & Nhận</th>
+                        <th className="py-3 px-4">Chi tiết món & Ghi chú</th>
+                        <th className="py-3 px-3 text-right">Tổng tiền</th>
+                        <th className="py-3 px-3 text-center">Trạng thái</th>
+                        <th className="py-3 px-3 text-center">Thao tác bếp</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -1859,28 +1819,49 @@ export function PortalDashboard({
                               className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
                             />
                           </td>
-                          <td className="py-3 px-4 font-mono font-bold text-slate-900 whitespace-nowrap">
+                          <td className="py-3 px-3 font-mono font-bold text-slate-900 whitespace-nowrap">
                             {o.orderCode}
                           </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
+                          {/* Thời gian khách hàng đặt đơn */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <div className="flex items-center gap-1.5 text-slate-900 font-bold text-xs">
+                              <Clock className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                              <span>
+                                {o.createdAt
+                                  ? new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })
+                                  : '11:30'}
+                              </span>
+                            </div>
+                            <p className="text-[10px] text-slate-400 font-normal pl-5">
+                              {o.createdAt
+                                ? new Date(o.createdAt).toLocaleDateString('vi-VN')
+                                : ''}
+                            </p>
+                          </td>
+                          <td className="py-3 px-3 whitespace-nowrap">
                             <p className="font-bold text-slate-900">{o.userName}</p>
                             <p className="text-[11px] text-slate-500">{o.userDepartment}</p>
                           </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            {o.deliveryMethod === 'room_delivery' ? (
-                              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-teal-50 text-teal-800 font-bold border border-teal-200">
-                                <Building2 className="w-3.5 h-3.5" />
-                                {o.roomNumber || 'Giao phòng'}
-                              </span>
-                            ) : (
-                              <span className="text-slate-500 font-medium">Ăn tại chỗ</span>
-                            )}
+                          {/* Ngày phục vụ của món đặt trước */}
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
+                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-bold text-xs border border-indigo-200 shadow-2xs">
+                              <Calendar className="w-3 h-3 text-indigo-500" />
+                              {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
+                            </span>
                           </td>
-                          <td className="py-3 px-4 whitespace-nowrap">
-                            <p className="text-xs font-bold text-slate-900">{o.pickupTime}</p>
-                            <p className="text-[10px] text-slate-400 font-normal">
-                              {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '')}
-                            </p>
+                          {/* Giờ ăn & Phòng nhận */}
+                          <td className="py-3 px-3 whitespace-nowrap">
+                            <p className="text-xs font-bold text-slate-900">⏰ {o.pickupTime || '11:30'}</p>
+                            <div className="mt-0.5">
+                              {o.deliveryMethod === 'room_delivery' ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
+                                  <Building2 className="w-3 h-3" />
+                                  {o.roomNumber || 'Giao phòng'}
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 font-medium text-[10px]">🍽️ Ăn tại căn tin</span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-3 px-4 max-w-xs">
                             <div className="space-y-0.5">
@@ -1901,7 +1882,7 @@ export function PortalDashboard({
                               })()}
                             </div>
                             {(o.note || o.notes) && (
-                              <div className="mt-1.5 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1">
+                              <div className="mt-1.5 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1 shadow-2xs">
                                 <StickyNote className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
                                 <div className="min-w-0">
                                   <span className="font-bold text-amber-800">Ghi chú: </span>
@@ -1910,10 +1891,10 @@ export function PortalDashboard({
                               </div>
                             )}
                           </td>
-                          <td className="py-3 px-4 text-right font-extrabold text-indigo-600 whitespace-nowrap">
+                          <td className="py-3 px-3 text-right font-extrabold text-indigo-600 whitespace-nowrap">
                             {formatVnd(o.totalAmount)}
                           </td>
-                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
                             <span
                               className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${
                                 o.status === 'confirmed'
@@ -1934,7 +1915,7 @@ export function PortalDashboard({
                                     : 'Đã hủy'}
                             </span>
                           </td>
-                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-1.5">
                               <button
                                 onClick={() => setPrintReceiptOrder(o)}
@@ -1993,6 +1974,149 @@ export function PortalDashboard({
                   }}
                   itemName="đơn hàng"
                 />
+              </div>
+
+              {/* ================= MÀN HÌNH NHÀ BẾP (KDS) - ĐIỀU HÀNH CHẾ BIẾN ================= */}
+              <div className="bg-slate-900 text-white border border-slate-800 rounded-2xl p-4 sm:p-5 shadow-lg space-y-4">
+                {/* Header bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-orange-500/20 border border-orange-500/30 text-orange-400 flex items-center justify-center shrink-0 shadow-inner">
+                      <ChefHat className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="font-extrabold text-white text-sm sm:text-base tracking-tight">
+                          MÀN HÌNH NHÀ BẾP (KDS) — TỔNG HỢP MÓN CẦN NẤU
+                        </h3>
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-500/20 text-orange-300 border border-orange-500/30">
+                          {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Bảng phân bổ trực quan số lượng suất ăn nhà bếp cần chuẩn bị theo đơn đặt trước
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => window.print()}
+                      className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl text-xs font-bold border border-slate-700 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                      title="In bảng thống kê món cần nấu cho nhà bếp"
+                    >
+                      <Printer className="w-4 h-4 text-orange-400" />
+                      <span>In Bảng Bếp</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Kitchen Metrics Row */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
+                    <span className="text-[11px] font-medium text-slate-400 block">Số loại món nấu</span>
+                    <span className="text-xl sm:text-2xl font-black text-white mt-1 block">
+                      {kitchenDishSummary.length} <span className="text-xs font-normal text-slate-400">món</span>
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
+                    <span className="text-[11px] font-medium text-slate-400 block">Tổng số suất ăn</span>
+                    <span className="text-xl sm:text-2xl font-black text-amber-400 mt-1 block">
+                      {kitchenDishSummary.reduce((s, d) => s + d.quantity, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
+                    <span className="text-[11px] font-medium text-slate-400 block">Ăn tại Căn tin</span>
+                    <span className="text-xl sm:text-2xl font-black text-emerald-400 mt-1 block">
+                      {kitchenDishSummary.reduce((s, d) => s + d.dineInQty, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
+                    </span>
+                  </div>
+                  <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700/60">
+                    <span className="text-[11px] font-medium text-slate-400 block">Giao tận phòng</span>
+                    <span className="text-xl sm:text-2xl font-black text-teal-400 mt-1 block">
+                      {kitchenDishSummary.reduce((s, d) => s + d.roomDeliveryQty, 0)} <span className="text-xs font-normal text-slate-400">suất</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Kitchen Dish Cards */}
+                {kitchenDishSummary.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+                    {kitchenDishSummary.map((dish, idx) => (
+                      <div
+                        key={idx}
+                        className="p-3.5 bg-slate-800/90 hover:bg-slate-800 rounded-xl border border-slate-700/80 flex flex-col justify-between transition group hover:border-orange-500/50 shadow-xs"
+                      >
+                        <div>
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-700 text-slate-300 inline-block mb-1">
+                                {dish.category}
+                              </span>
+                              <h4 className="font-bold text-sm text-white leading-snug group-hover:text-orange-300 transition">
+                                {dish.name}
+                              </h4>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <span className="px-3 py-1.5 rounded-xl bg-orange-500 text-white font-black text-sm sm:text-base font-mono inline-block shadow-sm">
+                                {dish.quantity} suất
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Service Type Breakdown */}
+                          <div className="mt-3 pt-2.5 border-t border-slate-700/60 flex items-center justify-between text-xs">
+                            <span className="text-slate-300 flex items-center gap-1 text-[11px]">
+                              🍽️ Tại chỗ: <strong className="text-emerald-400">{dish.dineInQty}</strong>
+                            </span>
+                            <span className="text-slate-300 flex items-center gap-1 text-[11px]">
+                              🚪 Giao phòng: <strong className="text-teal-400">{dish.roomDeliveryQty}</strong>
+                            </span>
+                          </div>
+
+                          {/* Cooking status progress in Kitchen */}
+                          <div className="mt-2 flex items-center gap-1.5 flex-wrap text-[10px]">
+                            {dish.confirmedCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-900/60 text-amber-200 border border-amber-700/60 font-semibold">
+                                ⏳ Chờ nấu: {dish.confirmedCount}
+                              </span>
+                            )}
+                            {dish.preparingCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-indigo-900/60 text-indigo-200 border border-indigo-700/60 font-semibold">
+                                🔥 Đang nấu: {dish.preparingCount}
+                              </span>
+                            )}
+                            {dish.completedCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-900/60 text-emerald-200 border border-emerald-700/60 font-semibold">
+                                ✅ Đã xong: {dish.completedCount}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Customer Special Notes for this Dish */}
+                          {dish.notes && dish.notes.length > 0 && (
+                            <div className="mt-2.5 p-2 rounded-lg bg-slate-900/90 border border-amber-500/30 text-[11px] text-amber-300 space-y-1">
+                              <span className="font-bold flex items-center gap-1 text-[10px] text-amber-400 uppercase tracking-wider">
+                                <StickyNote className="w-3 h-3 text-amber-400 shrink-0" />
+                                Ghi chú từ khách hàng:
+                              </span>
+                              {dish.notes.slice(0, 3).map((n, i) => (
+                                <p key={i} className="line-clamp-1 italic text-[11px] text-amber-200/90">
+                                  • {n}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center bg-slate-800/40 rounded-xl border border-slate-800 text-slate-400 text-xs">
+                    <ChefHat className="w-8 h-8 mx-auto mb-2 text-slate-600 opacity-50" />
+                    <span>Không có món ăn nào cần nấu cho ngày đang chọn.</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -3302,7 +3426,7 @@ export function PortalDashboard({
               </div>
             </div>
 
-            {/* Quick Test Presets (2 đơn, 10 đơn, tất cả) */}
+            {/* Chọn số lượng xuất in nhanh (2 đơn, 10 đơn, tất cả) */}
             {batchPrintOrders.length > 2 && (
               <div className="px-4 py-2 bg-slate-800 border-t border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
                 <span className="text-slate-300 font-medium text-[11px]">
@@ -3318,7 +3442,7 @@ export function PortalDashboard({
                         : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
                     }`}
                   >
-                    Test 2 đơn
+                    2 đơn đầu
                   </button>
                   {batchPrintOrders.length >= 10 && (
                     <button
@@ -3330,7 +3454,7 @@ export function PortalDashboard({
                           : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
                       }`}
                     >
-                      Test 10 đơn
+                      10 đơn đầu
                     </button>
                   )}
                   <button
