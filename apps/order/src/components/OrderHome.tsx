@@ -275,6 +275,18 @@ export function OrderHome({
       return;
     }
 
+    const isUserDisabled = Boolean(
+      currentUser.isDisabled || (currentUser.isActive === false && Number(currentUser.walletBalance ?? 0) > 0)
+    );
+    if (isUserDisabled) {
+      setFeedbackModal({
+        title: 'Tài khoản đã bị vô hiệu hóa',
+        message: 'Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Bạn không thể thực hiện đặt suất ăn. Vui lòng liên hệ Ban Quản lý Căn tin để được hỗ trợ mở lại.',
+        type: 'error',
+      });
+      return;
+    }
+
     if (currentUser.walletBalance < cartSubtotal) {
       setFeedbackModal({
         title: 'Số dư ví không đủ',
@@ -416,7 +428,7 @@ export function OrderHome({
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-2.5 min-h-[64px] flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="py-0.5">
-              <BrandLogo height={46} />
+              <BrandLogo height={36} showText={true} />
             </div>
             <div className="hidden sm:block border-l border-slate-200 pl-3">
               <div className="flex items-center gap-2">

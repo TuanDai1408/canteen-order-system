@@ -14,6 +14,7 @@ import {
   getCachedMenu,
   getCachedOrders,
   fetchTimeGateConfig,
+  formatVnd,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -24,6 +25,7 @@ import { LoginPage } from './components/LoginPage';
 import { OrderHome } from './components/OrderHome';
 import { PortalDashboard } from './components/PortalDashboard';
 import { PendingApprovalView } from './components/PendingApprovalView';
+import { ShieldAlert } from 'lucide-react';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -196,10 +198,22 @@ export default function App() {
       }
     };
 
+    const handleUserStatusChanged = () => {
+      if (!mounted) return;
+      const currentUser = userRef.current;
+      if (currentUser) {
+        refreshOrderData(currentUser);
+        if (currentViewRef.current === 'portal') {
+          refreshPortalData();
+        }
+      }
+    };
+
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
     window.addEventListener('canteen_order_created', handleOrderCreated);
     window.addEventListener('canteen_order_placed', handleOrderCreated);
+    window.addEventListener('canteen_user_status_changed', handleUserStatusChanged);
     window.addEventListener('storage', handleStorage);
 
     // Chu kỳ cập nhật trạng thái thời gian và tự động đồng bộ đơn hàng khi tab hiển thị
@@ -231,6 +245,7 @@ export default function App() {
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
       window.removeEventListener('canteen_order_created', handleOrderCreated);
       window.removeEventListener('canteen_order_placed', handleOrderCreated);
+      window.removeEventListener('canteen_user_status_changed', handleUserStatusChanged);
       window.removeEventListener('storage', handleStorage);
       clearInterval(clock);
       clearInterval(configSyncInterval);
@@ -273,6 +288,73 @@ export default function App() {
   }
 
   const isManagementRole = Boolean(user && ['admin', 'data_entry', 'executive'].includes(user.role));
+
+  // Kiểm tra tài khoản có bị vô hiệu hóa không
+  const isUserDisabled = Boolean(
+    user.isDisabled || (user.isActive === false && Number(user.walletBalance ?? 0) > 0)
+  );
+
+  if (isUserDisabled) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-4 relative overflow-hidden font-sans">
+        <div className="absolute -top-32 -left-32 w-96 h-96 bg-rose-100/60 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-32 -right-32 w-96 h-96 bg-slate-100/60 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-xl p-6 sm:p-8 text-center space-y-5 relative z-10">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 shadow-sm mx-auto">
+            <ShieldAlert className="w-8 h-8" />
+          </div>
+
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold mb-2">
+              <span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span>Tài khoản đã bị vô hiệu hóa</span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-slate-900 tracking-tight">
+              Tài Khoản Đang Bị Tạm Khóa
+            </h1>
+            <p className="text-slate-500 text-xs sm:text-sm mt-1.5 max-w-sm mx-auto">
+              Quản trị viên Căn tin đã tạm thời vô hiệu hóa tài khoản của bạn. Bạn không thể thực hiện đặt món trong thời gian này.
+            </p>
+          </div>
+
+          <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-left space-y-2 text-xs">
+            <div className="flex justify-between pb-1.5 border-b border-slate-200/60">
+              <span className="text-slate-500">Họ và tên cán bộ:</span>
+              <span className="font-bold text-slate-800">{user.name}</span>
+            </div>
+            <div className="flex justify-between pb-1.5 border-b border-slate-200/60">
+              <span className="text-slate-500">Email đăng nhập:</span>
+              <span className="font-mono text-slate-700">{user.email}</span>
+            </div>
+            <div className="flex justify-between pt-0.5">
+              <span className="text-slate-500">Số dư ví bảo lưu:</span>
+              <span className="font-bold text-emerald-600">{formatVnd(user.walletBalance)}</span>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-400">
+            Khi Quản trị viên mở lại tài khoản trên Portal, trang này sẽ tự động khôi phục và bạn có thể đặt suất ăn bình thường.
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => refreshOrderData(user)}
+              className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs cursor-pointer transition min-h-[44px]"
+            >
+              Kiểm tra lại
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs cursor-pointer shadow-md shadow-rose-600/20 transition min-h-[44px]"
+            >
+              Đăng xuất
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (currentView === 'portal' && isManagementRole) {
     return (

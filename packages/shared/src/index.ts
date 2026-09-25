@@ -28,6 +28,7 @@ export {
   getCachedUsers,
   setCachedUsers,
   updateUserWallet,
+  setUserDisabledStatus,
   getMenu,
   getAllMenuItems,
   getCachedMenu,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { login, signUp, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
+import { login, signUp, logout, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
 import { BrandLogo } from './BrandLogo';
 import {
   UtensilsCrossed,
@@ -50,6 +50,11 @@ export function LoginPage({ onSuccess }: Props) {
       const profile = await getCurrentUserProfile();
       if (!profile) {
         setError('Tài khoản chưa được kích hoạt hồ sơ trong hệ thống. Vui lòng liên hệ Quản trị.');
+        return;
+      }
+      if (profile.isDisabled || (profile.isActive === false && Number(profile.walletBalance ?? 0) > 0)) {
+        await logout().catch(() => {});
+        setError('Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Bạn không thể đăng nhập hoặc đặt suất ăn. Vui lòng liên hệ Ban Quản lý Căn tin để được hỗ trợ mở lại.');
         return;
       }
       onSuccess(profile);

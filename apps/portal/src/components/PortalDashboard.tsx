@@ -10,6 +10,7 @@ import {
   deleteQRToken,
   updateOrderStatus,
   updateUserWallet,
+  setUserDisabledStatus,
   createUserByAdmin,
   approveUserAndFundWallet,
   fileToBase64,
@@ -54,6 +55,10 @@ import {
   Printer,
   Menu as MenuIcon,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
   Sparkles,
   Pencil,
   Upload,
@@ -255,12 +260,20 @@ export function PortalDashboard({
   // Add User state (Cán bộ & Ví suất ăn)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
-  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'pending' | 'active' | 'disabled'>('all');
+  const [disablingUser, setDisablingUser] = useState<{ user: UserProfile; willDisable: boolean } | null>(null);
+  const [isTogglingUserDisabled, setIsTogglingUserDisabled] = useState(false);
   const [approvingUser, setApprovingUser] = useState<UserProfile | null>(null);
   const [approvalWalletAmount, setApprovalWalletAmount] = useState<number>(1000000);
   const [approvalNote, setApprovalNote] = useState('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
   const [isApproving, setIsApproving] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  // Bộ lọc hiển thị menu cho khách hàng (Tất cả / Đang hiển thị / Đang ẩn)
+  const [menuDisplayFilter, setMenuDisplayFilter] = useState<'all' | 'visible' | 'hidden'>('all');
+
+  // Trạng thái thu gọn / mở rộng Bảng tổng hợp món cần nấu (Mặc định thu gọn)
+  const [isKitchenSummaryOpen, setIsKitchenSummaryOpen] = useState(false);
 
   const [newUserForm, setNewUserForm] = useState<{
     name: string;
@@ -381,6 +394,23 @@ export function PortalDashboard({
     return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
   }, [orders, activeOrders, orderDateFilter, menu]);
 
+  // Gom nhóm các món cần nấu theo danh mục để bếp quan sát khoa học hơn
+  const kitchenDishesByCategory = useMemo(() => {
+    const groups: Record<string, typeof kitchenDishSummary> = {};
+    for (const d of kitchenDishSummary) {
+      const cat = d.category || 'Món khác';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(d);
+    }
+    const result: { category: string; dishes: typeof kitchenDishSummary; totalQty: number }[] = [];
+    for (const cat in groups) {
+      const dishes = groups[cat].sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+      const totalQty = dishes.reduce((sum, d) => sum + d.quantity, 0);
+      result.push({ category: cat, dishes, totalQty });
+    }
+    return result.sort((a, b) => b.totalQty - a.totalQty);
+  }, [kitchenDishSummary]);
+
   const dishSummary = kitchenDishSummary;
 
   const ordersByStatus = useMemo(() => ({
@@ -418,9 +448,15 @@ export function PortalDashboard({
       const matchSearch =
         item.name.toLowerCase().includes(menuSearch.toLowerCase()) ||
         item.description.toLowerCase().includes(menuSearch.toLowerCase());
-      return matchCat && matchSearch;
+      const matchDisplay =
+        menuDisplayFilter === 'all'
+          ? true
+          : menuDisplayFilter === 'visible'
+          ? item.isActive !== false
+          : item.isActive === false;
+      return matchCat && matchSearch && matchDisplay;
     });
-  }, [menu, menuFilterCat, menuSearch]);
+  }, [menu, menuFilterCat, menuSearch, menuDisplayFilter]);
 
   // Danh sách các ngày có đơn hàng trong hệ thống (sắp xếp ngày mới nhất lên đầu)
   const availableOrderDates = useMemo(() => {
@@ -508,20 +544,41 @@ export function PortalDashboard({
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
 
+  // Disabled users count
+  const disabledUsersCount = useMemo(() => {
+    return users.filter((u) => Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0))).length;
+  }, [users]);
+
   // Pending users count for approval
   const pendingUsersCount = useMemo(() => {
-    return users.filter((u) => u.isActive === false).length;
+    return users.filter((u) => Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0)).length;
+  }, [users]);
+
+  // Active users count
+  const activeUsersCount = useMemo(() => {
+    return users.filter((u) => {
+      const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+      const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+      return !isDis && !isPend;
+    }).length;
   }, [users]);
 
   // Filtered Users
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
-      const matchStatus =
-        userStatusFilter === 'all'
-          ? true
-          : userStatusFilter === 'pending'
-          ? u.isActive === false
-          : u.isActive !== false;
+      const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+      const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+      const isAct = !isDis && !isPend;
+
+      let matchStatus = true;
+      if (userStatusFilter === 'pending') {
+        matchStatus = isPend;
+      } else if (userStatusFilter === 'active') {
+        matchStatus = isAct;
+      } else if (userStatusFilter === 'disabled') {
+        matchStatus = isDis;
+      }
+
       const matchSearch =
         (u.name || '').toLowerCase().includes(userSearch.toLowerCase()) ||
         (u.email || '').toLowerCase().includes(userSearch.toLowerCase()) ||
@@ -784,6 +841,44 @@ export function PortalDashboard({
     }
   };
 
+  // Bật/tắt trạng thái hiển thị món ăn trên menu cho khách hàng
+  const handleToggleDishVisibility = async (item: MenuItem) => {
+    const nextStatus = item.isActive === false;
+    try {
+      await updateMenuItem(item.id, { isActive: nextStatus }, currentUser);
+      setMsg({
+        type: 'ok',
+        text: nextStatus
+          ? `Đã bật hiển thị món "${item.name}" cho khách hàng!`
+          : `Đã tắt hiển thị món "${item.name}" khỏi thực đơn khách hàng!`,
+      });
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi cập nhật trạng thái hiển thị món' });
+    }
+  };
+
+  // Vô hiệu hóa hoặc Kích hoạt lại tài khoản cán bộ
+  const handleConfirmToggleUserDisabled = async () => {
+    if (!disablingUser) return;
+    setIsTogglingUserDisabled(true);
+    try {
+      await setUserDisabledStatus(disablingUser.user.id, disablingUser.willDisable, currentUser);
+      setMsg({
+        type: 'ok',
+        text: disablingUser.willDisable
+          ? `Đã vô hiệu hóa tài khoản "${disablingUser.user.name}". Tài khoản này không thể đăng nhập hoặc đặt món.`
+          : `Đã mở lại tài khoản "${disablingUser.user.name}". Cán bộ đã có thể đăng nhập và đặt suất ăn bình thường.`,
+      });
+      setDisablingUser(null);
+      await onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi cập nhật trạng thái tài khoản' });
+    } finally {
+      setIsTogglingUserDisabled(false);
+    }
+  };
+
   // Add new dish
   const handleAddDish = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1001,7 +1096,7 @@ export function PortalDashboard({
     },
     {
       id: 'kitchen' as Tab,
-      label: 'Màn hình Nhà Bếp (KDS)',
+      label: 'Màn hình bếp',
       icon: ChefHat,
       badge: ordersByStatus.confirmed + ordersByStatus.preparing,
     },
@@ -1398,13 +1493,24 @@ export function PortalDashboard({
                     </span>
                     <span className="text-xs text-slate-400">· Mặc định 20 dòng / trang</span>
                   </div>
-                  <button
-                    onClick={() => setTab('orders')}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition"
-                  >
-                    <span>Xem toàn bộ Bảng đơn hàng</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => exportOrdersToExcel(sortedOverviewOrders, 'Don_hang_moi_nhan')}
+                      disabled={sortedOverviewOrders.length === 0}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed min-h-[34px]"
+                      title="Xuất các dữ liệu của Đơn hàng mới nhận ra Excel (.xlsx)"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Xuất Excel Đơn mới ({sortedOverviewOrders.length})</span>
+                    </button>
+                    <button
+                      onClick={() => setTab('orders')}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition px-2 py-1.5 rounded-xl hover:bg-indigo-50"
+                    >
+                      <span>Xem toàn bộ Bảng đơn hàng</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="w-full overflow-x-auto">
@@ -1574,50 +1680,95 @@ export function PortalDashboard({
           {tab === 'menu' && (
             <div className="space-y-4">
               {/* Search & Category toolbar */}
-              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                  {menuCategories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setMenuFilterCat(cat)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
-                        menuFilterCat === cat
-                          ? 'bg-indigo-600 text-white shadow-2xs'
-                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      {cat === 'all' ? 'Tất cả' : cat}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1 sm:w-60">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={menuSearch}
-                      onChange={(e) => setMenuSearch(e.target.value)}
-                      placeholder="Tìm tên món ăn..."
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    {menuCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setMenuFilterCat(cat)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
+                          menuFilterCat === cat
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {cat === 'all' ? 'Tất cả danh mục' : cat}
+                      </button>
+                    ))}
                   </div>
 
-                  <button
-                    onClick={() => setIsBulkUploadOpen(true)}
-                    className="px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
-                    title="Thêm hàng loạt món ăn từ file Excel (.xlsx, .csv)"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Nhập từ File Excel</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 sm:w-60">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={menuSearch}
+                        onChange={(e) => setMenuSearch(e.target.value)}
+                        placeholder="Tìm tên món ăn..."
+                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
 
+                    <button
+                      onClick={() => setIsBulkUploadOpen(true)}
+                      className="px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                      title="Thêm hàng loạt món ăn từ file Excel (.xlsx, .csv)"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>Nhập từ File Excel</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsAddDishOpen(true)}
+                      className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Thêm món</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-toolbar: Visibility filter for customers */}
+                <div className="flex items-center gap-2 flex-wrap bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mr-1">
+                    <Filter className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Hiển thị trên Menu khách:</span>
+                  </span>
                   <button
-                    onClick={() => setIsAddDishOpen(true)}
-                    className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('all')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      menuDisplayFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>Thêm món</span>
+                    Tất cả ({menu.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('visible')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                      menuDisplayFilter === 'visible'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Đang hiển thị ({menu.filter((m) => m.isActive !== false).length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('hidden')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                      menuDisplayFilter === 'hidden'
+                        ? 'bg-rose-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Đang ẩn ({menu.filter((m) => m.isActive === false).length})</span>
                   </button>
                 </div>
               </div>
@@ -1642,11 +1793,14 @@ export function PortalDashboard({
                   <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
                     {paginatedMenu.map((item) => {
                       const isOutOfStock = item.currentStock <= 0;
+                      const isHidden = item.isActive === false;
                       return (
                         <div
                           key={item.id}
                           className={`bg-white border rounded-2xl p-2.5 sm:p-4 shadow-xs flex flex-col justify-between transition-all ${
-                            isOutOfStock
+                            isHidden
+                              ? 'border-rose-200 bg-rose-50/20'
+                              : isOutOfStock
                               ? 'border-slate-300/80 bg-slate-50/90 opacity-60'
                               : 'border-slate-200 hover:border-indigo-200'
                           }`}
@@ -1658,17 +1812,34 @@ export function PortalDashboard({
                                   src={item.imageUrl}
                                   alt={item.name}
                                   className={`w-full h-full object-cover transition-all ${
-                                    isOutOfStock ? 'grayscale opacity-60' : ''
+                                    isHidden
+                                      ? 'opacity-40 grayscale-[80%] blur-[0.5px]'
+                                      : isOutOfStock
+                                      ? 'grayscale opacity-60'
+                                      : ''
                                   }`}
                                   loading="lazy"
                                 />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                <div className={`w-full h-full flex items-center justify-center text-slate-400 ${isHidden ? 'opacity-40' : ''}`}>
                                   <UtensilsCrossed className="w-6 h-6 sm:w-8 sm:h-8" />
                                 </div>
                               )}
 
-                              {isOutOfStock && (
+                              {/* Ghi chú thông tin khi món bị tắt hiển thị */}
+                              {isHidden && (
+                                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex flex-col items-center justify-center p-2 text-center">
+                                  <span className="inline-flex items-center gap-1 bg-rose-600 text-white font-extrabold text-[10px] sm:text-xs px-2.5 py-1 rounded-lg shadow-sm uppercase tracking-wider">
+                                    <EyeOff className="w-3 h-3" />
+                                    <span>Đang tắt hiển thị</span>
+                                  </span>
+                                  <span className="text-[10px] text-white/90 font-medium mt-1">
+                                    (Ẩn khỏi menu khách)
+                                  </span>
+                                </div>
+                              )}
+
+                              {!isHidden && isOutOfStock && (
                                 <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-1 text-center">
                                   <span className="bg-red-600/90 text-white font-extrabold text-[10px] sm:text-xs px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
                                     Hết suất
@@ -1676,9 +1847,16 @@ export function PortalDashboard({
                                 </div>
                               )}
 
-                              <span className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
-                                {item.category}
-                              </span>
+                              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 flex items-center gap-1">
+                                <span className="bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
+                                  {item.category}
+                                </span>
+                                {isHidden && (
+                                  <span className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow-xs">
+                                    Đang ẩn
+                                  </span>
+                                )}
+                              </div>
 
                               <button
                                 onClick={() => handleStartEditDish(item)}
@@ -1691,7 +1869,7 @@ export function PortalDashboard({
                             </div>
 
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-0.5 sm:gap-2">
-                              <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">
+                              <h4 className={`font-extrabold text-xs sm:text-sm leading-snug line-clamp-2 ${isHidden ? 'text-slate-500' : 'text-slate-900'}`}>
                                 {item.name}
                               </h4>
                               <span className="text-indigo-600 font-extrabold text-xs sm:text-sm whitespace-nowrap">
@@ -1703,50 +1881,68 @@ export function PortalDashboard({
                             </p>
                           </div>
 
-                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
-                            <div className="flex items-center justify-between sm:block">
-                              <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
-                              <p className="text-xs font-bold text-slate-900">
-                                <span
-                                  className={
-                                    item.currentStock === 0
-                                      ? 'text-rose-600 font-extrabold'
-                                      : item.currentStock < 10
-                                        ? 'text-amber-600'
-                                        : 'text-emerald-600'
-                                  }
-                                >
-                                  {item.currentStock}
-                                </span>{' '}
-                                / {item.preparedStock}
-                              </p>
+                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col gap-2">
+                            {/* Hàng tồn kho và nút bật/tắt hiển thị */}
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
+                                <p className="text-xs font-bold text-slate-900">
+                                  <span
+                                    className={
+                                      item.currentStock === 0
+                                        ? 'text-rose-600 font-extrabold'
+                                        : item.currentStock < 10
+                                          ? 'text-amber-600'
+                                          : 'text-emerald-600'
+                                    }
+                                  >
+                                    {item.currentStock}
+                                  </span>{' '}
+                                  / {item.preparedStock}
+                                </p>
+                              </div>
+
+                              {/* Nút bật / tắt hiển thị nhanh trên thực đơn */}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDishVisibility(item)}
+                                className={`px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                                  isHidden
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
+                                    : 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200'
+                                }`}
+                                title={isHidden ? 'Bật hiển thị món này trên thực đơn khách' : 'Tắt hiển thị món này khỏi thực đơn khách'}
+                              >
+                                {isHidden ? <Eye className="w-3.5 h-3.5 text-emerald-600" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                <span>{isHidden ? 'Bật hiển thị' : 'Tắt hiển thị'}</span>
+                              </button>
                             </div>
 
-                            <div className="flex items-center justify-end gap-1">
+                            <div className="flex items-center justify-end gap-1 pt-1 border-t border-slate-100/60">
                               <button
                                 onClick={() => handleToggleStock(item, -5)}
-                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px]"
                                 title="Trừ 5 suất"
                               >
                                 -5
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, -1)}
-                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px]"
                                 title="Trừ 1 suất"
                               >
                                 <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, 1)}
-                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px]"
                                 title="Thêm 1 suất"
                               >
                                 <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, 5)}
-                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px]"
                                 title="Thêm 5 suất"
                               >
                                 +5
@@ -2233,7 +2429,7 @@ export function PortalDashboard({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight">
-                            MÀN HÌNH NHÀ BẾP (KDS) — ĐIỀU HÀNH CHẾ BIẾN THEO MÓN
+                            MÀN HÌNH BẾP — ĐIỀU HÀNH CHẾ BIẾN THEO MÓN
                           </h3>
                           <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-50 text-orange-700 border border-orange-200">
                             {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
@@ -2317,26 +2513,90 @@ export function PortalDashboard({
                     </div>
                   </div>
 
-                  {/* Quick Dish Breakdown Summary Pills */}
+                  {/* Quick Dish Breakdown Summary Accordion (Mặc định thu gọn - Collapsed) */}
                   {kitchenDishSummary.length > 0 && (
-                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <UtensilsCrossed className="w-3.5 h-3.5 text-orange-600" />
-                        <span>Tổng hợp nhanh số suất cần nấu:</span>
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {kitchenDishSummary.map((d, i) => (
-                          <div
-                            key={i}
-                            className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-2 text-xs shadow-2xs"
-                          >
-                            <span className="font-bold text-slate-900">{d.name}</span>
-                            <span className="px-2 py-0.5 rounded-md bg-orange-600 text-white font-mono font-extrabold text-[11px]">
-                              {d.quantity} suất
-                            </span>
+                    <div className="bg-slate-50/90 rounded-2xl border border-slate-200 overflow-hidden shadow-2xs transition-all">
+                      {/* Nút bấm chuyển đổi thu gọn / mở rộng */}
+                      <button
+                        type="button"
+                        onClick={() => setIsKitchenSummaryOpen((prev) => !prev)}
+                        className="w-full p-3.5 sm:p-4 flex items-center justify-between text-left hover:bg-slate-100/70 transition cursor-pointer select-none"
+                      >
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
+                            <UtensilsCrossed className="w-4 h-4" />
                           </div>
-                        ))}
-                      </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs sm:text-sm font-extrabold text-slate-900">
+                                Tổng hợp nhanh các món cần nấu
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-orange-600 text-white font-mono font-black text-[11px]">
+                                {kitchenDishSummary.reduce((s, d) => s + d.quantity, 0)} suất
+                              </span>
+                              <span className="text-[11px] font-semibold text-slate-500">
+                                ({kitchenDishSummary.length} món · {kitchenDishesByCategory.length} danh mục)
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {isKitchenSummaryOpen
+                                ? 'Đang mở rộng xem chi tiết theo từng danh mục. Bấm để thu gọn lại.'
+                                : 'Mặc định thu gọn. Bấm vào đây để mở rộng xem danh sách món theo danh mục.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1.5 rounded-xl shrink-0">
+                          <span>{isKitchenSummaryOpen ? 'Thu gọn' : 'Mở rộng xem'}</span>
+                          {isKitchenSummaryOpen ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </button>
+
+                      {/* Nội dung khi mở rộng: Sắp xếp theo danh mục để dễ nhìn hơn */}
+                      {isKitchenSummaryOpen && (
+                        <div className="p-3.5 sm:p-4 pt-0 border-t border-slate-200/80 bg-white space-y-3.5">
+                          {kitchenDishesByCategory.map((group) => (
+                            <div
+                              key={group.category}
+                              className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 space-y-2"
+                            >
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60">
+                                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-orange-500" />
+                                  <span>{group.category}</span>
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-orange-100 text-orange-800">
+                                  {group.totalQty} suất ({group.dishes.length} món)
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2 pt-0.5">
+                                {group.dishes.map((d, i) => (
+                                  <div
+                                    key={i}
+                                    className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-2 text-xs shadow-2xs hover:border-orange-200 transition"
+                                  >
+                                    <span className="font-bold text-slate-900">{d.name}</span>
+                                    <span className="px-2 py-0.5 rounded-md bg-orange-600 text-white font-mono font-extrabold text-[11px]">
+                                      {d.quantity} suất
+                                    </span>
+                                    {(d.dineInQty > 0 || d.roomDeliveryQty > 0) && (
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        ({d.dineInQty > 0 ? `${d.dineInQty} tại căn tin` : ''}
+                                        {d.dineInQty > 0 && d.roomDeliveryQty > 0 ? ' · ' : ''}
+                                        {d.roomDeliveryQty > 0 ? `${d.roomDeliveryQty} giao phòng` : ''})
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2735,6 +2995,7 @@ export function PortalDashboard({
               <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
                   <button
+                    type="button"
                     onClick={() => setUserStatusFilter('all')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
                       userStatusFilter === 'all'
@@ -2746,6 +3007,43 @@ export function PortalDashboard({
                   </button>
 
                   <button
+                    type="button"
+                    onClick={() => setUserStatusFilter('active')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
+                      userStatusFilter === 'active'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Đang hoạt động ({activeUsersCount})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setUserStatusFilter('disabled')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
+                      userStatusFilter === 'disabled'
+                        ? 'bg-rose-600 text-white shadow-2xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Đã vô hiệu hóa</span>
+                    {disabledUsersCount > 0 && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                          userStatusFilter === 'disabled'
+                            ? 'bg-white text-rose-700'
+                            : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {disabledUsersCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setUserStatusFilter('pending')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
                       userStatusFilter === 'pending'
@@ -2765,17 +3063,6 @@ export function PortalDashboard({
                         {pendingUsersCount}
                       </span>
                     )}
-                  </button>
-
-                  <button
-                    onClick={() => setUserStatusFilter('active')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
-                      userStatusFilter === 'active'
-                        ? 'bg-emerald-600 text-white shadow-2xs'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    Đang hoạt động ({users.length - pendingUsersCount})
                   </button>
                 </div>
 
@@ -2826,11 +3113,14 @@ export function PortalDashboard({
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedUsers.map((u) => {
-                        const isPending = u.isActive === false;
+                        const isUserDisabled = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+                        const isPending = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+                        const isSelf = u.id === currentUser.id;
+
                         return (
-                          <tr key={u.id} className={`hover:bg-slate-50/70 ${isPending ? 'bg-amber-50/30' : ''}`}>
+                          <tr key={u.id} className={`hover:bg-slate-50/70 ${isUserDisabled ? 'bg-rose-50/30' : isPending ? 'bg-amber-50/30' : ''}`}>
                             <td className="py-3 px-4">
-                              <p className="font-bold text-slate-900">{u.name}</p>
+                              <p className={`font-bold ${isUserDisabled ? 'text-slate-500 line-through decoration-rose-400' : 'text-slate-900'}`}>{u.name}</p>
                               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
                                 {u.role === 'admin'
                                   ? 'Quản trị viên'
@@ -2849,7 +3139,12 @@ export function PortalDashboard({
                               )}
                             </td>
                             <td className="py-3 px-4">
-                              {isPending ? (
+                              {isUserDisabled ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                  <Ban className="w-3 h-3 text-rose-600" />
+                                  <span>Đã vô hiệu hóa</span>
+                                </span>
+                              ) : isPending ? (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100/80 text-amber-800 border border-amber-300">
                                   <Clock className="w-3 h-3 text-amber-600 animate-spin" />
                                   <span>Chờ duyệt & cấp ví</span>
@@ -2868,29 +3163,56 @@ export function PortalDashboard({
                               {formatVnd(u.monthlyAllowance)}
                             </td>
                             <td className="py-3 px-4 text-center">
-                              {isPending ? (
-                                <button
-                                  onClick={() => {
-                                    setApprovingUser(u);
-                                    setApprovalWalletAmount(1000000);
-                                    setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
-                                  }}
-                                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-amber-500/20 transition min-h-[36px] mx-auto"
-                                >
-                                  <Sparkles className="w-3.5 h-3.5" />
-                                  <span>Duyệt & Nạp ví</span>
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setWalletModalUser(u);
-                                    setWalletAmountChange(50000);
-                                  }}
-                                  className="px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-indigo-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-indigo-200 transition cursor-pointer min-h-[36px]"
-                                >
-                                  Nạp / Chỉnh ví
-                                </button>
-                              )}
+                              <div className="flex items-center justify-center gap-1.5">
+                                {isPending ? (
+                                  <button
+                                    onClick={() => {
+                                      setApprovingUser(u);
+                                      setApprovalWalletAmount(1000000);
+                                      setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
+                                    }}
+                                    className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-amber-500/20 transition min-h-[36px]"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>Duyệt & Nạp ví</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setWalletModalUser(u);
+                                        setWalletAmountChange(50000);
+                                      }}
+                                      disabled={isUserDisabled}
+                                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-indigo-50 text-indigo-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-indigo-200 transition cursor-pointer min-h-[34px] disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                      Nạp / Chỉnh ví
+                                    </button>
+
+                                    {isUserDisabled ? (
+                                      <button
+                                        onClick={() => setDisablingUser({ user: u, willDisable: false })}
+                                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-xl text-[11px] border border-emerald-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
+                                        title="Kích hoạt lại tài khoản này để cán bộ có thể đăng nhập và đặt suất ăn"
+                                      >
+                                        <Unlock className="w-3 h-3 text-emerald-600" />
+                                        <span>Mở lại</span>
+                                      </button>
+                                    ) : (
+                                      !isSelf && (
+                                        <button
+                                          onClick={() => setDisablingUser({ user: u, willDisable: true })}
+                                          className="px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-rose-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
+                                          title="Vô hiệu hóa tài khoản: cán bộ sẽ không thể đăng nhập hoặc đặt món"
+                                        >
+                                          <Ban className="w-3 h-3 text-rose-500" />
+                                          <span>Vô hiệu hóa</span>
+                                        </button>
+                                      )
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -3788,6 +4110,97 @@ export function PortalDashboard({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: VÔ HIỆU HÓA HOẶC MỞ LẠI TÀI KHOẢN CÁN BỘ ================= */}
+      {disablingUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                  disablingUser.willDisable
+                    ? 'bg-rose-50 text-rose-600 border-rose-200'
+                    : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                }`}
+              >
+                {disablingUser.willDisable ? (
+                  <Ban className="w-6 h-6" />
+                ) : (
+                  <Unlock className="w-6 h-6" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  {disablingUser.willDisable
+                    ? 'Vô hiệu hóa tài khoản cán bộ?'
+                    : 'Mở lại tài khoản cán bộ?'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                  {disablingUser.user.name} ({disablingUser.user.email})
+                </p>
+              </div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-2xl text-xs space-y-2 ${
+                disablingUser.willDisable
+                  ? 'bg-rose-50 border border-rose-200 text-rose-800'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+              }`}
+            >
+              {disablingUser.willDisable ? (
+                <>
+                  <p className="font-bold">Khi vô hiệu hóa tài khoản này:</p>
+                  <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
+                    <li>Cán bộ này sẽ <strong>không thể đăng nhập</strong> vào hệ thống.</li>
+                    <li>Cán bộ này sẽ <strong>không thể đặt suất ăn</strong> (bị chặn tại giao diện và máy chủ).</li>
+                    <li>Số dư ví hiện tại ({formatVnd(disablingUser.user.walletBalance)}) vẫn được bảo lưu an toàn.</li>
+                    <li>Bạn có thể bấm <strong>"Mở lại"</strong> bất kỳ lúc nào để cán bộ hoạt động bình thường.</li>
+                  </ul>
+                </>
+              ) : (
+                <p className="leading-relaxed">
+                  Tài khoản của cán bộ sẽ được <strong>kích hoạt lại trạng thái hoạt động bình thường</strong> ngay lập tức. Cán bộ có thể đăng nhập và đặt suất ăn bằng số dư ví ({formatVnd(disablingUser.user.walletBalance)}).
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDisablingUser(null)}
+                disabled={isTogglingUserDisabled}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmToggleUserDisabled}
+                disabled={isTogglingUserDisabled}
+                className={`flex-1 py-3 rounded-xl text-white text-xs font-bold cursor-pointer transition flex items-center justify-center gap-1.5 min-h-[44px] ${
+                  disablingUser.willDisable
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20'
+                    : 'bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20'
+                }`}
+              >
+                {isTogglingUserDisabled ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Đang cập nhật...</span>
+                  </>
+                ) : (
+                  <span>
+                    {disablingUser.willDisable
+                      ? 'Xác nhận Vô hiệu hóa'
+                      : 'Xác nhận Mở lại tài khoản'}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

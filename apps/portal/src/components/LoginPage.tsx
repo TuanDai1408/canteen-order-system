@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { login, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
+import { login, logout, getCurrentUserProfile, type UserProfile } from '@canteen/shared';
 import { BrandLogo } from './BrandLogo';
 import {
   Building2,
@@ -33,6 +33,11 @@ export function LoginPage({ onSuccess }: Props) {
       const profile = await getCurrentUserProfile();
       if (!profile) {
         setError('Tài khoản chưa được kích hoạt profile quản trị. Vui lòng kiểm tra lại.');
+        return;
+      }
+      if (profile.isDisabled || (profile.isActive === false && Number(profile.walletBalance ?? 0) > 0)) {
+        await logout().catch(() => {});
+        setError('Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Vui lòng liên hệ Quản lý Căn tin để được mở lại.');
         return;
       }
       if (profile.role === 'teacher') {

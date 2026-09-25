@@ -1,56 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 160" width="100%" height="100%">
-  <defs>
-    <style>
-      .red-fill { fill: #ED1C24; }
-      .red-stroke { stroke: #ED1C24; fill: none; }
-    </style>
-  </defs>
-
-  <!-- ==================== LEFT ICON: BOWL + HEART + HAND ==================== -->
-  <g transform="translate(10, 0)">
-    <!-- Steam Cloud Outlines -->
-    <path d="M 28 62 C 22 48, 30 28, 52 26 C 58 10, 78 8, 94 18 C 98 22, 100 28, 100 36" 
-          fill="none" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
-    
-    <path d="M 108 36 C 108 28, 110 22, 114 18 C 130 8, 150 10, 156 26 C 178 28, 186 48, 180 62" 
-          fill="none" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" />
-
-    <!-- Solid Red Heart in center steam -->
-    <path d="M 104 18 C 104 18, 95 2, 83 8 C 71 14, 75 30, 104 52 C 133 30, 137 14, 125 8 C 113 2, 104 18, 104 18 Z" 
-          fill="#ED1C24" />
-
-    <!-- Top Rim separator line -->
-    <line x1="20" y1="64" x2="188" y2="64" stroke="#ED1C24" stroke-width="6.5" stroke-linecap="round" />
-
-    <!-- Solid Red Bowl -->
-    <path d="M 16 72 L 192 72 C 192 100, 180 120, 160 130 C 138 142, 104 146, 80 142 C 44 134, 22 108, 16 72 Z" 
-          fill="#ED1C24" />
-
-    <!-- Caring Gentle Hand holding the bowl -->
-    <path d="M 186 112 C 192 118, 190 128, 182 134 C 164 154, 138 168, 100 176 C 68 182, 42 178, 24 196 C 22 182, 28 164, 42 152 C 58 136, 84 130, 110 130 C 136 130, 148 138, 142 146 C 136 152, 120 152, 100 148 C 86 146, 80 150, 86 155 C 98 162, 120 162, 140 151 C 158 140, 174 126, 178 114 C 180 110, 184 108, 186 112 Z" 
-          fill="#ED1C24" />
-  </g>
-
-  <!-- ==================== RIGHT TEXT: Cơm Ngon SIBA + Ăn sạch Sống khỏe ==================== -->
-  <g transform="translate(225, 12)">
-    <!-- Main Brand Title: Cơm Ngon SIBA -->
-    <text x="0" y="62" 
-          font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif" 
-          font-size="46" 
-          font-weight="800" 
-          fill="#ED1C24" 
-          letter-spacing="-0.5">
-      Cơm Ngon <tspan font-weight="900" fill="#ED1C24">SIBA</tspan>
-    </text>
-
-    <!-- Subtitle: Ăn sạch Sống khỏe -->
-    <text x="2" y="112" 
-          font-family="'Be Vietnam Pro', 'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif" 
-          font-size="26" 
-          font-weight="700" 
-          fill="#ED1C24" 
-          letter-spacing="0.5">
-      Ăn sạch Sống khỏe
-    </text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000" width="100%" height="100%">
+  <g fill="#EE2737">
+    <path d="M 270 395 C 265 365 272 335 295 315 C 322 292 355 298 370 320 C 388 272 448 252 495 285 C 500 288 505 288 510 285 C 557 252 617 272 635 320 C 650 298 683 292 710 315 C 733 335 740 365 735 395 Z"
+          fill="none" stroke="#EE2737" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M 505 360 C 503 358 450 312 450 282 C 450 258 470 242 492 252 C 499 255 503 262 505 262 C 507 262 511 255 518 252 C 540 242 560 258 560 282 C 560 312 507 358 505 360 Z" />
+    <path d="M 248 408 L 762 408 C 762 485 710 560 628 578 C 570 590 440 590 382 578 C 300 560 248 485 248 408 Z" />
+    <path d="M 745 565 C 745 575 735 590 715 615 C 675 660 605 700 520 710 C 440 718 380 705 340 735 C 325 750 320 765 320 775 C 325 745 335 690 360 650 C 385 610 440 585 495 590 C 530 592 585 585 615 585 C 628 585 632 600 620 608 C 590 620 550 625 520 622 C 500 620 495 635 510 642 C 550 655 615 645 665 615 C 700 595 725 570 738 548 C 744 554 745 560 745 565 Z" />
   </g>
 </svg>

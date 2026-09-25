@@ -493,6 +493,88 @@ export async function updateUserWallet(
   }
 }
 
+export async function setUserDisabledStatus(
+  userId: string,
+  isDisabled: boolean,
+  actor?: UserProfile
+): Promise<UserProfile> {
+  checkSupabase();
+  const nowIso = new Date().toISOString();
+
+  // Thử cập nhật kèm cột is_disabled
+  const payload: Record<string, any> = {
+    is_active: !isDisabled,
+    is_disabled: isDisabled,
+    updated_at: nowIso,
+  };
+  if (isDisabled) {
+    payload.disabled_at = nowIso;
+  } else {
+    payload.disabled_at = null;
+  }
+
+  let { data, error } = await supabase
+    .from('users')
+    .update(payload)
+    .eq('id', userId)
+    .select()
+    .maybeSingle();
+
+  // Nếu DB chưa có cột is_disabled, fallback cập nhật is_active
+  if (error && (error.message.includes('is_disabled') || error.message.includes('column'))) {
+    const fallbackPayload = {
+      is_active: !isDisabled,
+      updated_at: nowIso,
+    };
+    const res = await supabase
+      .from('users')
+      .update(fallbackPayload)
+      .eq('id', userId)
+      .select()
+      .maybeSingle();
+    data = res.data;
+    error = res.error;
+  }
+
+  if (error) {
+    throw new Error(`Cập nhật trạng thái tài khoản thất bại: ${error.message}`);
+  }
+
+  // Cập nhật bộ nhớ cache người dùng
+  const cachedUsers = getCachedUsers();
+  const updatedList = cachedUsers.map((u) => {
+    if (u.id === userId) {
+      return {
+        ...u,
+        isDisabled,
+        isActive: !isDisabled,
+        disabledAt: isDisabled ? nowIso : undefined,
+      };
+    }
+    return u;
+  });
+  setCachedUsers(updatedList);
+
+  // Phát tín hiệu đồng bộ realtime tới tất cả tab / client
+  try {
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({
+        type: 'CANTEEN_USER_STATUS_CHANGED',
+        userId,
+        isDisabled,
+        isActive: !isDisabled,
+      });
+    }
+    window.dispatchEvent(
+      new CustomEvent('canteen_user_status_changed', {
+        detail: { userId, isDisabled, isActive: !isDisabled },
+      })
+    );
+  } catch {}
+
+  return mapUser(data || { id: userId, is_active: !isDisabled, is_disabled: isDisabled });
+}
+
 export const isValidUuid = (str?: string): boolean =>
   !!str && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 
@@ -986,6 +1068,21 @@ export async function placeOrder(params: {
     }
   } catch (userQueryErr) {
     console.warn('[placeOrder user query note]:', userQueryErr);
+  }
+
+  // Kiểm tra tài khoản có bị vô hiệu hóa không
+  if (userData) {
+    const isUserDisabled = Boolean(
+      userData.is_disabled ||
+      userData.isDisabled ||
+      (userData.is_active === false && Number(userData.wallet_balance ?? 0) > 0)
+    );
+    if (isUserDisabled) {
+      return {
+        success: false,
+        error: 'Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Bạn không thể thực hiện đặt món. Vui lòng liên hệ Ban Quản lý Căn tin để được hỗ trợ mở lại.',
+      };
+    }
   }
 
   // Nếu chưa có row trong bảng users, tiến hành chèn trực tiếp vào DB
@@ -2853,6 +2950,13 @@ export function subscribeRealtime(callback: () => void) {
 // ============================================================
 
 function mapUser(row: any): UserProfile {
+  const isDisabled = Boolean(
+    row.is_disabled ||
+    row.isDisabled ||
+    (row.is_active === false && Number(row.wallet_balance ?? 0) > 0)
+  );
+  const isActive = row.is_active !== undefined ? Boolean(row.is_active) : !isDisabled;
+
   return {
     id: row.id,
     authUserId: row.auth_user_id || undefined,
@@ -2867,7 +2971,9 @@ function mapUser(row: any): UserProfile {
     walletBalance: Number(row.wallet_balance ?? 0),
     monthlyAllowance: Number(row.monthly_allowance ?? 0),
     lastWalletResetDate: row.last_wallet_reset_date,
-    isActive: row.is_active !== undefined ? Boolean(row.is_active) : true,
+    isActive,
+    isDisabled,
+    disabledAt: row.disabled_at,
     createdAt: row.created_at,
   };
 }

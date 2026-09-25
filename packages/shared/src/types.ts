@@ -15,6 +15,8 @@ export interface UserProfile {
   monthlyAllowance: number;
   lastWalletResetDate?: string;
   isActive?: boolean;
+  isDisabled?: boolean;
+  disabledAt?: string;
   createdAt?: string;
 }
 

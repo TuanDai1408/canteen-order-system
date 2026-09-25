@@ -88,6 +88,10 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancellation_deadline TEXT DEFAULT '
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS cancel_reason TEXT;
 
+-- Bổ sung cột quản lý tài khoản cho bảng users
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+
 -- 5. Bảng chi tiết món trong đơn (order_items)
 CREATE TABLE IF NOT EXISTS order_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

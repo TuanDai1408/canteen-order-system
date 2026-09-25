@@ -6,8 +6,11 @@ import {
   createMenuItem,
   seedMenuToSupabase,
   createQRToken,
+  toggleQRTokenStatus,
+  deleteQRToken,
   updateOrderStatus,
   updateUserWallet,
+  setUserDisabledStatus,
   createUserByAdmin,
   approveUserAndFundWallet,
   fileToBase64,
@@ -52,6 +55,10 @@ import {
   Printer,
   Menu as MenuIcon,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Eye,
+  EyeOff,
   Sparkles,
   Pencil,
   Upload,
@@ -69,6 +76,13 @@ import {
   ArrowRight,
   RotateCcw,
   Phone,
+  Mail,
+  Ban,
+  Power,
+  Lock,
+  Unlock,
+  Trash2,
+  ShieldAlert,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -152,7 +166,7 @@ interface Props {
   onSwitchToOrder?: () => void;
 }
 
-type Tab = 'overview' | 'menu' | 'orders' | 'users' | 'qr';
+type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr';
 
 export function PortalDashboard({
   currentUser,
@@ -180,7 +194,6 @@ export function PortalDashboard({
   const [orderSearch, setOrderSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
-  const [ordersViewMode, setOrdersViewMode] = useState<'all' | 'table' | 'kds'>('all');
 
   // Modals state
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
@@ -247,12 +260,20 @@ export function PortalDashboard({
   // Add User state (Cán bộ & Ví suất ăn)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
-  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'pending' | 'active'>('all');
+  const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'pending' | 'active' | 'disabled'>('all');
+  const [disablingUser, setDisablingUser] = useState<{ user: UserProfile; willDisable: boolean } | null>(null);
+  const [isTogglingUserDisabled, setIsTogglingUserDisabled] = useState(false);
   const [approvingUser, setApprovingUser] = useState<UserProfile | null>(null);
   const [approvalWalletAmount, setApprovalWalletAmount] = useState<number>(1000000);
   const [approvalNote, setApprovalNote] = useState('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
   const [isApproving, setIsApproving] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  // Bộ lọc hiển thị menu cho khách hàng (Tất cả / Đang hiển thị / Đang ẩn)
+  const [menuDisplayFilter, setMenuDisplayFilter] = useState<'all' | 'visible' | 'hidden'>('all');
+
+  // Trạng thái thu gọn / mở rộng Bảng tổng hợp món cần nấu (Mặc định thu gọn)
+  const [isKitchenSummaryOpen, setIsKitchenSummaryOpen] = useState(false);
 
   const [newUserForm, setNewUserForm] = useState<{
     name: string;
@@ -373,6 +394,23 @@ export function PortalDashboard({
     return Array.from(map.values()).sort((a, b) => b.quantity - a.quantity);
   }, [orders, activeOrders, orderDateFilter, menu]);
 
+  // Gom nhóm các món cần nấu theo danh mục để bếp quan sát khoa học hơn
+  const kitchenDishesByCategory = useMemo(() => {
+    const groups: Record<string, typeof kitchenDishSummary> = {};
+    for (const d of kitchenDishSummary) {
+      const cat = d.category || 'Món khác';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(d);
+    }
+    const result: { category: string; dishes: typeof kitchenDishSummary; totalQty: number }[] = [];
+    for (const cat in groups) {
+      const dishes = groups[cat].sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+      const totalQty = dishes.reduce((sum, d) => sum + d.quantity, 0);
+      result.push({ category: cat, dishes, totalQty });
+    }
+    return result.sort((a, b) => b.totalQty - a.totalQty);
+  }, [kitchenDishSummary]);
+
   const dishSummary = kitchenDishSummary;
 
   const ordersByStatus = useMemo(() => ({
@@ -410,9 +448,15 @@ export function PortalDashboard({
       const matchSearch =
         item.name.toLowerCase().includes(menuSearch.toLowerCase()) ||
         item.description.toLowerCase().includes(menuSearch.toLowerCase());
-      return matchCat && matchSearch;
+      const matchDisplay =
+        menuDisplayFilter === 'all'
+          ? true
+          : menuDisplayFilter === 'visible'
+          ? item.isActive !== false
+          : item.isActive === false;
+      return matchCat && matchSearch && matchDisplay;
     });
-  }, [menu, menuFilterCat, menuSearch]);
+  }, [menu, menuFilterCat, menuSearch, menuDisplayFilter]);
 
   // Danh sách các ngày có đơn hàng trong hệ thống (sắp xếp ngày mới nhất lên đầu)
   const availableOrderDates = useMemo(() => {
@@ -500,20 +544,41 @@ export function PortalDashboard({
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
 
+  // Disabled users count
+  const disabledUsersCount = useMemo(() => {
+    return users.filter((u) => Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0))).length;
+  }, [users]);
+
   // Pending users count for approval
   const pendingUsersCount = useMemo(() => {
-    return users.filter((u) => u.isActive === false).length;
+    return users.filter((u) => Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0)).length;
+  }, [users]);
+
+  // Active users count
+  const activeUsersCount = useMemo(() => {
+    return users.filter((u) => {
+      const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+      const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+      return !isDis && !isPend;
+    }).length;
   }, [users]);
 
   // Filtered Users
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
-      const matchStatus =
-        userStatusFilter === 'all'
-          ? true
-          : userStatusFilter === 'pending'
-          ? u.isActive === false
-          : u.isActive !== false;
+      const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+      const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+      const isAct = !isDis && !isPend;
+
+      let matchStatus = true;
+      if (userStatusFilter === 'pending') {
+        matchStatus = isPend;
+      } else if (userStatusFilter === 'active') {
+        matchStatus = isAct;
+      } else if (userStatusFilter === 'disabled') {
+        matchStatus = isDis;
+      }
+
       const matchSearch =
         (u.name || '').toLowerCase().includes(userSearch.toLowerCase()) ||
         (u.email || '').toLowerCase().includes(userSearch.toLowerCase()) ||
@@ -521,6 +586,16 @@ export function PortalDashboard({
       return matchStatus && matchSearch;
     });
   }, [users, userSearch, userStatusFilter]);
+
+  // User map for quick profile lookup in orders and overview
+  const userMap = useMemo(() => {
+    const map = new Map<string, UserProfile>();
+    users.forEach((u) => {
+      if (u.id) map.set(u.id, u);
+      if (u.phoneNumber) map.set(u.phoneNumber, u);
+    });
+    return map;
+  }, [users]);
 
   // Pagination states for all table tabs
   const [overviewOrderPage, setOverviewOrderPage] = useState(1);
@@ -537,6 +612,10 @@ export function PortalDashboard({
 
   const [qrPage, setQrPage] = useState(1);
   const [qrPageSize, setQrPageSize] = useState(10);
+  const [qrSearch, setQrSearch] = useState('');
+  const [qrStatusFilter, setQrStatusFilter] = useState<'all' | 'active' | 'disabled' | 'used' | 'expired'>('all');
+  const [togglingQRToken, setTogglingQRToken] = useState<string | null>(null);
+  const [deletingQRToken, setDeletingQRToken] = useState<string | null>(null);
 
   // Reset page numbers when search / filters change
   useEffect(() => {
@@ -550,6 +629,10 @@ export function PortalDashboard({
   useEffect(() => {
     setMenuPage(1);
   }, [menuSearch, menuFilterCat]);
+
+  useEffect(() => {
+    setQrPage(1);
+  }, [qrSearch, qrStatusFilter]);
 
   // Paginated Slices
   const sortedOverviewOrders = useMemo(() => {
@@ -578,10 +661,76 @@ export function PortalDashboard({
     return filteredMenu.slice(start, start + menuPageSize);
   }, [filteredMenu, menuPage, menuPageSize]);
 
+  // Enriched QR Tokens with real-time dynamic usage from Orders
+  const enrichedTokens = useMemo(() => {
+    return tokens.map((t) => {
+      const cleanToken = t.token.trim().toUpperCase();
+      const matchingOrders = orders.filter(
+        (o) =>
+          o.status !== 'cancelled' &&
+          ((o.exceptionTokenUsed && o.exceptionTokenUsed.trim().toUpperCase() === cleanToken) ||
+           ((o as any).used_qr_token && String((o as any).used_qr_token).trim().toUpperCase() === cleanToken) ||
+           (o.note && o.note.toUpperCase().includes(cleanToken)))
+      );
+
+      const actualOrdersCount = matchingOrders.length;
+      const effectiveUsed = Math.max(Number(t.usedCount) || 0, actualOrdersCount);
+      const qty = Number(t.quantity) || 1;
+      const remaining = Math.max(0, qty - effectiveUsed);
+      const isFullyUsed = t.isUsed || remaining <= 0;
+      const isExpired = new Date(t.expiresAt).getTime() < Date.now();
+      const isDisabled = Boolean(t.isDisabled);
+
+      const usedUserNames = Array.from(
+        new Set(matchingOrders.map((o) => o.userName || '').filter(Boolean))
+      );
+
+      return {
+        ...t,
+        quantity: qty,
+        usedCount: effectiveUsed,
+        remaining,
+        isFullyUsed,
+        isExpired,
+        isDisabled,
+        matchingOrdersCount: actualOrdersCount,
+        usedUserNames,
+        matchingOrders,
+      };
+    });
+  }, [tokens, orders]);
+
+  const filteredTokens = useMemo(() => {
+    return enrichedTokens.filter((t) => {
+      const matchSearch =
+        !qrSearch.trim() ||
+        t.token.toLowerCase().includes(qrSearch.toLowerCase()) ||
+        (t.note && t.note.toLowerCase().includes(qrSearch.toLowerCase())) ||
+        (t.createdByName && t.createdByName.toLowerCase().includes(qrSearch.toLowerCase())) ||
+        t.usedUserNames.some((u) => u.toLowerCase().includes(qrSearch.toLowerCase()));
+
+      if (!matchSearch) return false;
+
+      if (qrStatusFilter === 'active') {
+        return !t.isDisabled && !t.isExpired && !t.isFullyUsed;
+      }
+      if (qrStatusFilter === 'disabled') {
+        return t.isDisabled;
+      }
+      if (qrStatusFilter === 'used') {
+        return t.isFullyUsed;
+      }
+      if (qrStatusFilter === 'expired') {
+        return t.isExpired && !t.isFullyUsed && !t.isDisabled;
+      }
+      return true;
+    });
+  }, [enrichedTokens, qrSearch, qrStatusFilter]);
+
   const paginatedTokens = useMemo(() => {
     const start = (qrPage - 1) * qrPageSize;
-    return tokens.slice(start, start + qrPageSize);
-  }, [tokens, qrPage, qrPageSize]);
+    return filteredTokens.slice(start, start + qrPageSize);
+  }, [filteredTokens, qrPage, qrPageSize]);
 
   // Handle Approve User & Fund Initial Wallet
   const handleApproveUser = async (e: React.FormEvent) => {
@@ -630,7 +779,7 @@ export function PortalDashboard({
       const token = await createQRToken(currentUser, qrNote, qrExpiryMins, qrQuantity);
       setMsg({
         type: 'ok',
-        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượng: ${qrQuantity} suất)`,
+        text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượt đặt: ${qrQuantity} lượt)`,
       });
       setIsCreateQROpen(false);
       onRefresh();
@@ -638,6 +787,43 @@ export function PortalDashboard({
       setMsg({ type: 'err', text: e.message || 'Lỗi khi tạo mã QR' });
     } finally {
       setIsCreatingQR(false);
+    }
+  };
+
+  // Toggle QR Disable / Enable
+  const handleToggleQRDisable = async (tokenString: string, currentIsDisabled: boolean) => {
+    const nextDisabled = !currentIsDisabled;
+    setTogglingQRToken(tokenString);
+    try {
+      await toggleQRTokenStatus(tokenString, nextDisabled);
+      setMsg({
+        type: 'ok',
+        text: nextDisabled
+          ? `Đã vô hiệu hóa mã QR "${tokenString}". Người dùng sẽ không thể sử dụng mã này để đặt món.`
+          : `Đã kích hoạt lại mã QR "${tokenString}". Mã hiện đã có thể sử dụng bình thường.`,
+      });
+      onRefresh();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Lỗi khi cập nhật trạng thái mã QR' });
+    } finally {
+      setTogglingQRToken(null);
+    }
+  };
+
+  // Delete QR
+  const handleDeleteQR = async (tokenString: string) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa vĩnh viễn mã QR "${tokenString}" không?`)) {
+      return;
+    }
+    setDeletingQRToken(tokenString);
+    try {
+      await deleteQRToken(tokenString);
+      setMsg({ type: 'ok', text: `Đã xóa mã QR "${tokenString}" thành công.` });
+      onRefresh();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Lỗi khi xóa mã QR' });
+    } finally {
+      setDeletingQRToken(null);
     }
   };
 
@@ -652,6 +838,44 @@ export function PortalDashboard({
       onRefresh();
     } catch (e: any) {
       setMsg({ type: 'err', text: e.message });
+    }
+  };
+
+  // Bật/tắt trạng thái hiển thị món ăn trên menu cho khách hàng
+  const handleToggleDishVisibility = async (item: MenuItem) => {
+    const nextStatus = item.isActive === false;
+    try {
+      await updateMenuItem(item.id, { isActive: nextStatus }, currentUser);
+      setMsg({
+        type: 'ok',
+        text: nextStatus
+          ? `Đã bật hiển thị món "${item.name}" cho khách hàng!`
+          : `Đã tắt hiển thị món "${item.name}" khỏi thực đơn khách hàng!`,
+      });
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi cập nhật trạng thái hiển thị món' });
+    }
+  };
+
+  // Vô hiệu hóa hoặc Kích hoạt lại tài khoản cán bộ
+  const handleConfirmToggleUserDisabled = async () => {
+    if (!disablingUser) return;
+    setIsTogglingUserDisabled(true);
+    try {
+      await setUserDisabledStatus(disablingUser.user.id, disablingUser.willDisable, currentUser);
+      setMsg({
+        type: 'ok',
+        text: disablingUser.willDisable
+          ? `Đã vô hiệu hóa tài khoản "${disablingUser.user.name}". Tài khoản này không thể đăng nhập hoặc đặt món.`
+          : `Đã mở lại tài khoản "${disablingUser.user.name}". Cán bộ đã có thể đăng nhập và đặt suất ăn bình thường.`,
+      });
+      setDisablingUser(null);
+      await onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi cập nhật trạng thái tài khoản' });
+    } finally {
+      setIsTogglingUserDisabled(false);
     }
   };
 
@@ -866,8 +1090,14 @@ export function PortalDashboard({
     { id: 'menu' as Tab, label: 'Thực đơn ngày mai', icon: UtensilsCrossed, badge: menu.length },
     {
       id: 'orders' as Tab,
-      label: 'Đơn hàng & Bếp',
+      label: 'Bảng Đơn hàng',
       icon: Receipt,
+      badge: orders.length,
+    },
+    {
+      id: 'kitchen' as Tab,
+      label: 'Màn hình bếp',
+      icon: ChefHat,
       badge: ordersByStatus.confirmed + ordersByStatus.preparing,
     },
     {
@@ -947,20 +1177,8 @@ export function PortalDashboard({
         <div>
           {/* Logo & Header */}
           <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <BrandLogo size={42} />
-              <div>
-                <h2 className="font-extrabold text-sm tracking-tight text-slate-900">
-                  <span className="text-red-600">Cơm Ngon </span>
-                  <span className="text-red-700 font-black">SIBA</span>
-                </h2>
-                <div className="flex items-center gap-1.5 mt-0.5">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                  <p className="text-[10px] text-red-700/80 font-bold uppercase tracking-wider truncate max-w-[140px]">
-                    ĂN SẠCH – SỐNG KHỎE
-                  </p>
-                </div>
-              </div>
+            <div className="flex items-center">
+              <BrandLogo height={48} />
             </div>
 
             <button
@@ -1085,6 +1303,17 @@ export function PortalDashboard({
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-indigo-600' : ''}`} />
               <span>Làm mới dữ liệu</span>
             </button>
+
+            {tab === 'kitchen' && (
+              <button
+                onClick={() => window.print()}
+                className="px-3.5 py-2 bg-orange-50 hover:bg-orange-100 text-orange-700 text-xs font-bold rounded-xl border border-orange-200 flex items-center gap-1.5 transition cursor-pointer shadow-2xs min-h-[40px]"
+                title="In bảng danh sách món cần nấu cho nhà bếp"
+              >
+                <Printer className="w-4 h-4 text-orange-600" />
+                <span>In Bảng Bếp</span>
+              </button>
+            )}
 
             {tab === 'menu' && (
               <button
@@ -1255,38 +1484,54 @@ export function PortalDashboard({
               {/* Recent Orders Overview */}
               <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-3">
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pb-2 border-b border-slate-100">
-                  <div className="flex items-center gap-2.5">
+                  <div className="flex items-center gap-2.5 flex-wrap">
                     <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
                       Đơn hàng mới nhận
                     </h3>
                     <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200">
                       Tổng {sortedOverviewOrders.length} đơn
                     </span>
+                    <span className="text-xs text-slate-400">· Mặc định 20 dòng / trang</span>
                   </div>
-                  <button
-                    onClick={() => setTab('orders')}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition"
-                  >
-                    <span>Xem toàn bộ & Màn hình Bếp</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button
+                      onClick={() => exportOrdersToExcel(sortedOverviewOrders, 'Don_hang_moi_nhan')}
+                      disabled={sortedOverviewOrders.length === 0}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition disabled:opacity-50 disabled:cursor-not-allowed min-h-[34px]"
+                      title="Xuất các dữ liệu của Đơn hàng mới nhận ra Excel (.xlsx)"
+                    >
+                      <FileSpreadsheet className="w-3.5 h-3.5" />
+                      <span>Xuất Excel Đơn mới ({sortedOverviewOrders.length})</span>
+                    </button>
+                    <button
+                      onClick={() => setTab('orders')}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-bold cursor-pointer flex items-center gap-1.5 transition px-2 py-1.5 rounded-xl hover:bg-indigo-50"
+                    >
+                      <span>Xem toàn bộ Bảng đơn hàng</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
-                <div className="w-full">
+                <div className="w-full overflow-x-auto">
                   <table className="w-full text-left text-xs border-collapse">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
-                        <th className="py-2.5 px-3 w-[16%]">Đơn hàng & Thời gian</th>
-                        <th className="py-2.5 px-3 w-[22%]">Cán bộ / Khách hàng</th>
+                        <th className="py-2.5 px-3 w-[18%]">Mã đơn & Thời gian đặt</th>
+                        <th className="py-2.5 px-3 w-[26%]">Thông tin Cán bộ / Khách hàng</th>
                         <th className="py-2.5 px-2.5 w-[18%]">Nơi nhận & Giờ ăn</th>
-                        <th className="py-2.5 px-3 w-[23%]">Món ăn & Ghi chú</th>
-                        <th className="py-2.5 px-2.5 w-[10%] text-right">Tổng tiền</th>
-                        <th className="py-2.5 px-2.5 w-[11%] text-center">Trạng thái & Xử lý</th>
+                        <th className="py-2.5 px-3 w-[24%]">Món ăn & Suất ăn</th>
+                        <th className="py-2.5 px-2.5 w-[14%] text-right">Tổng tiền</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedOverviewOrders.map((o) => {
                         const orderItems = getOrderDisplayItems(o, menu);
+                        const matchedUser = userMap.get(o.userId) || (o.userPhone ? userMap.get(o.userPhone) : undefined);
+                        const totalMealsCount = orderItems && orderItems.length > 0
+                          ? orderItems.reduce((acc, it) => acc + (it.quantity || 1), 0)
+                          : 1;
+
                         return (
                           <tr key={o.id} className="hover:bg-slate-50/70 transition">
                             {/* Mã đơn & Thời gian đặt kèm Live Timer */}
@@ -1305,16 +1550,44 @@ export function PortalDashboard({
                                   ? `${new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${new Date(o.createdAt).toLocaleDateString('vi-VN')}`
                                   : '11:30'}
                               </p>
+                              {o.isExceptionOrder && (
+                                <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                  ⚡ QR Ngoại lệ
+                                </span>
+                              )}
                             </td>
 
-                            {/* Cán bộ & Liên hệ */}
-                            <td className="py-3 px-3 align-top space-y-0.5">
-                              <p className="font-bold text-slate-900 leading-snug">{o.userName}</p>
-                              <p className="text-[11px] text-slate-500 leading-tight">{o.userDepartment}</p>
-                              {o.userPhone && (
-                                <p className="text-[10px] text-slate-600 flex items-center gap-1 font-mono pt-0.5">
-                                  <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                                  <span>{o.userPhone}</span>
+                            {/* Cán bộ & Thông tin khách hàng chi tiết */}
+                            <td className="py-3 px-3 align-top space-y-1">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-bold text-slate-900 text-xs leading-snug">{o.userName}</span>
+                                {matchedUser?.roleTitle && (
+                                  <span className="px-1.5 py-0.2 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    {matchedUser.roleTitle}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-tight">
+                                🏢 {o.userDepartment || matchedUser?.department || 'Cán bộ cơ quan'}
+                              </p>
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 pt-0.5 text-[10px] text-slate-600">
+                                {o.userPhone && (
+                                  <span className="flex items-center gap-1 font-mono">
+                                    <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span>{o.userPhone}</span>
+                                  </span>
+                                )}
+                                {matchedUser?.email && (
+                                  <span className="flex items-center gap-1 text-slate-500">
+                                    <Mail className="w-3 h-3 text-slate-400 shrink-0" />
+                                    <span className="truncate max-w-[140px]">{matchedUser.email}</span>
+                                  </span>
+                                )}
+                              </div>
+                              {matchedUser?.walletBalance != null && (
+                                <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
+                                  <Wallet className="w-3 h-3 text-emerald-600 shrink-0" />
+                                  <span>Số dư ví: {formatVnd(matchedUser.walletBalance)}</span>
                                 </p>
                               )}
                             </td>
@@ -1335,15 +1608,15 @@ export function PortalDashboard({
                               </div>
                               <div className="flex flex-col text-[11px] space-y-0.5">
                                 <span className="font-bold text-slate-700">
-                                  ⏰ {o.pickupTime || '11:30'}
+                                  ⏰ Giờ ăn: {o.pickupTime || '11:30'}
                                 </span>
                                 <span className="text-[10px] text-slate-500">
-                                  📅 {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
+                                  📅 Phục vụ: {o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : 'Ngày mai')}
                                 </span>
                               </div>
                             </td>
 
-                            {/* Chi tiết món & Ghi chú */}
+                            {/* Chi tiết món & Số lượng */}
                             <td className="py-3 px-3 align-top space-y-1">
                               <div className="space-y-0.5">
                                 {orderItems && orderItems.length > 0 ? (
@@ -1358,78 +1631,21 @@ export function PortalDashboard({
                                   </p>
                                 )}
                               </div>
-                              {(o.note || o.notes) && (
-                                <div className="mt-1 p-1.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-[11px] leading-snug flex items-start gap-1 shadow-2xs">
-                                  <StickyNote className="w-3 h-3 text-amber-600 shrink-0 mt-0.5" />
-                                  <span className="break-words font-medium">{o.note || o.notes}</span>
-                                </div>
-                              )}
-                              {o.isExceptionOrder && (
-                                <span className="inline-block mt-0.5 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
-                                  ⚡ Đơn QR Ngoại lệ
+                              <div className="pt-0.5">
+                                <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-slate-700 text-[10px] font-bold">
+                                  Tổng: {totalMealsCount} suất
                                 </span>
-                              )}
+                              </div>
                             </td>
 
                             {/* Tổng tiền */}
-                            <td className="py-3 px-2.5 text-right align-top font-extrabold text-indigo-600 text-xs whitespace-nowrap">
-                              {formatVnd(o.totalAmount)}
-                            </td>
-
-                            {/* Trạng thái & Thao tác */}
-                            <td className="py-3 px-2.5 text-center align-top space-y-1.5">
-                              <div>
-                                <span
-                                  className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                                    o.status === 'confirmed'
-                                      ? 'bg-amber-100 text-amber-800'
-                                      : o.status === 'preparing'
-                                        ? 'bg-orange-100 text-orange-800'
-                                        : o.status === 'completed'
-                                          ? 'bg-emerald-100 text-emerald-800'
-                                          : 'bg-slate-100 text-slate-500'
-                                  }`}
-                                >
-                                  {o.status === 'confirmed'
-                                    ? '⏳ Chờ nấu'
-                                    : o.status === 'preparing'
-                                      ? '🔥 Đang nấu'
-                                      : o.status === 'completed'
-                                        ? '✅ Xong'
-                                        : 'Đã hủy'}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-center gap-1 flex-wrap">
-                                <button
-                                  onClick={() => setPrintReceiptOrder(o)}
-                                  className="p-1.5 text-slate-600 hover:text-indigo-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-xs transition cursor-pointer border border-slate-200"
-                                  title="In Bill POS"
-                                >
-                                  <Printer className="w-3.5 h-3.5" />
-                                </button>
-                                {o.status === 'confirmed' && (
-                                  <button
-                                    disabled={updatingOrderId === o.id}
-                                    onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
-                                    className="px-2 py-1 bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-0.5 shadow-2xs"
-                                    title="Chuyển sang Bếp đang nấu"
-                                  >
-                                    <Flame className="w-3 h-3" />
-                                    <span>Nấu</span>
-                                  </button>
-                                )}
-                                {o.status === 'preparing' && (
-                                  <button
-                                    disabled={updatingOrderId === o.id}
-                                    onClick={() => handleUpdateOrderStatus(o.id, 'completed')}
-                                    className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-0.5 shadow-2xs"
-                                    title="Xác nhận hoàn thành món"
-                                  >
-                                    <Check className="w-3 h-3" />
-                                    <span>Xong</span>
-                                  </button>
-                                )}
-                              </div>
+                            <td className="py-3 px-2.5 text-right align-top whitespace-nowrap">
+                              <span className="font-black text-indigo-600 text-xs block">
+                                {formatVnd(o.totalAmount)}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {o.deliveryMethod === 'room_delivery' ? 'Giao tận phòng' : 'Ăn tại chỗ'}
+                              </span>
                             </td>
                           </tr>
                         );
@@ -1464,50 +1680,95 @@ export function PortalDashboard({
           {tab === 'menu' && (
             <div className="space-y-4">
               {/* Search & Category toolbar */}
-              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
-                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-                  {menuCategories.map((cat) => (
-                    <button
-                      key={cat}
-                      onClick={() => setMenuFilterCat(cat)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
-                        menuFilterCat === cat
-                          ? 'bg-indigo-600 text-white shadow-2xs'
-                          : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                      }`}
-                    >
-                      {cat === 'all' ? 'Tất cả' : cat}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <div className="relative flex-1 sm:w-60">
-                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      value={menuSearch}
-                      onChange={(e) => setMenuSearch(e.target.value)}
-                      placeholder="Tìm tên món ăn..."
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                    {menuCategories.map((cat) => (
+                      <button
+                        key={cat}
+                        onClick={() => setMenuFilterCat(cat)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
+                          menuFilterCat === cat
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                        }`}
+                      >
+                        {cat === 'all' ? 'Tất cả danh mục' : cat}
+                      </button>
+                    ))}
                   </div>
 
-                  <button
-                    onClick={() => setIsBulkUploadOpen(true)}
-                    className="px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
-                    title="Thêm hàng loạt món ăn từ file Excel (.xlsx, .csv)"
-                  >
-                    <FileSpreadsheet className="w-4 h-4" />
-                    <span>Nhập từ File Excel</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1 sm:w-60">
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={menuSearch}
+                        onChange={(e) => setMenuSearch(e.target.value)}
+                        placeholder="Tìm tên món ăn..."
+                        className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
 
+                    <button
+                      onClick={() => setIsBulkUploadOpen(true)}
+                      className="px-3 sm:px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                      title="Thêm hàng loạt món ăn từ file Excel (.xlsx, .csv)"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
+                      <span>Nhập từ File Excel</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsAddDishOpen(true)}
+                      className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Thêm món</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sub-toolbar: Visibility filter for customers */}
+                <div className="flex items-center gap-2 flex-wrap bg-white p-2.5 rounded-xl border border-slate-200 shadow-2xs">
+                  <span className="text-xs text-slate-500 font-semibold flex items-center gap-1.5 mr-1">
+                    <Filter className="w-3.5 h-3.5 text-indigo-600" />
+                    <span>Hiển thị trên Menu khách:</span>
+                  </span>
                   <button
-                    onClick={() => setIsAddDishOpen(true)}
-                    className="px-3 sm:px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-xs transition"
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('all')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                      menuDisplayFilter === 'all'
+                        ? 'bg-indigo-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                   >
-                    <Plus className="w-4 h-4" />
-                    <span>Thêm món</span>
+                    Tất cả ({menu.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('visible')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                      menuDisplayFilter === 'visible'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span>Đang hiển thị ({menu.filter((m) => m.isActive !== false).length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMenuDisplayFilter('hidden')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1.5 ${
+                      menuDisplayFilter === 'hidden'
+                        ? 'bg-rose-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Đang ẩn ({menu.filter((m) => m.isActive === false).length})</span>
                   </button>
                 </div>
               </div>
@@ -1532,11 +1793,14 @@ export function PortalDashboard({
                   <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 sm:gap-4">
                     {paginatedMenu.map((item) => {
                       const isOutOfStock = item.currentStock <= 0;
+                      const isHidden = item.isActive === false;
                       return (
                         <div
                           key={item.id}
                           className={`bg-white border rounded-2xl p-2.5 sm:p-4 shadow-xs flex flex-col justify-between transition-all ${
-                            isOutOfStock
+                            isHidden
+                              ? 'border-rose-200 bg-rose-50/20'
+                              : isOutOfStock
                               ? 'border-slate-300/80 bg-slate-50/90 opacity-60'
                               : 'border-slate-200 hover:border-indigo-200'
                           }`}
@@ -1548,17 +1812,34 @@ export function PortalDashboard({
                                   src={item.imageUrl}
                                   alt={item.name}
                                   className={`w-full h-full object-cover transition-all ${
-                                    isOutOfStock ? 'grayscale opacity-60' : ''
+                                    isHidden
+                                      ? 'opacity-40 grayscale-[80%] blur-[0.5px]'
+                                      : isOutOfStock
+                                      ? 'grayscale opacity-60'
+                                      : ''
                                   }`}
                                   loading="lazy"
                                 />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-slate-400">
+                                <div className={`w-full h-full flex items-center justify-center text-slate-400 ${isHidden ? 'opacity-40' : ''}`}>
                                   <UtensilsCrossed className="w-6 h-6 sm:w-8 sm:h-8" />
                                 </div>
                               )}
 
-                              {isOutOfStock && (
+                              {/* Ghi chú thông tin khi món bị tắt hiển thị */}
+                              {isHidden && (
+                                <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex flex-col items-center justify-center p-2 text-center">
+                                  <span className="inline-flex items-center gap-1 bg-rose-600 text-white font-extrabold text-[10px] sm:text-xs px-2.5 py-1 rounded-lg shadow-sm uppercase tracking-wider">
+                                    <EyeOff className="w-3 h-3" />
+                                    <span>Đang tắt hiển thị</span>
+                                  </span>
+                                  <span className="text-[10px] text-white/90 font-medium mt-1">
+                                    (Ẩn khỏi menu khách)
+                                  </span>
+                                </div>
+                              )}
+
+                              {!isHidden && isOutOfStock && (
                                 <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center p-1 text-center">
                                   <span className="bg-red-600/90 text-white font-extrabold text-[10px] sm:text-xs px-2 py-1 rounded-md shadow-sm uppercase tracking-wider">
                                     Hết suất
@@ -1566,9 +1847,16 @@ export function PortalDashboard({
                                 </div>
                               )}
 
-                              <span className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
-                                {item.category}
-                              </span>
+                              <div className="absolute top-1.5 left-1.5 sm:top-2 sm:left-2 flex items-center gap-1">
+                                <span className="bg-white/95 backdrop-blur-xs text-slate-800 text-[10px] sm:text-[11px] font-bold px-1.5 sm:px-2 py-0.5 rounded-md shadow-xs border border-slate-200/60">
+                                  {item.category}
+                                </span>
+                                {isHidden && (
+                                  <span className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-md shadow-xs">
+                                    Đang ẩn
+                                  </span>
+                                )}
+                              </div>
 
                               <button
                                 onClick={() => handleStartEditDish(item)}
@@ -1581,7 +1869,7 @@ export function PortalDashboard({
                             </div>
 
                             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-0.5 sm:gap-2">
-                              <h4 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">
+                              <h4 className={`font-extrabold text-xs sm:text-sm leading-snug line-clamp-2 ${isHidden ? 'text-slate-500' : 'text-slate-900'}`}>
                                 {item.name}
                               </h4>
                               <span className="text-indigo-600 font-extrabold text-xs sm:text-sm whitespace-nowrap">
@@ -1593,50 +1881,68 @@ export function PortalDashboard({
                             </p>
                           </div>
 
-                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2">
-                            <div className="flex items-center justify-between sm:block">
-                              <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
-                              <p className="text-xs font-bold text-slate-900">
-                                <span
-                                  className={
-                                    item.currentStock === 0
-                                      ? 'text-rose-600 font-extrabold'
-                                      : item.currentStock < 10
-                                        ? 'text-amber-600'
-                                        : 'text-emerald-600'
-                                  }
-                                >
-                                  {item.currentStock}
-                                </span>{' '}
-                                / {item.preparedStock}
-                              </p>
+                          <div className="mt-2.5 sm:mt-4 pt-2 sm:pt-3 border-t border-slate-100 flex flex-col gap-2">
+                            {/* Hàng tồn kho và nút bật/tắt hiển thị */}
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-[10px] sm:text-[11px] text-slate-400 font-medium">Tồn kho:</p>
+                                <p className="text-xs font-bold text-slate-900">
+                                  <span
+                                    className={
+                                      item.currentStock === 0
+                                        ? 'text-rose-600 font-extrabold'
+                                        : item.currentStock < 10
+                                          ? 'text-amber-600'
+                                          : 'text-emerald-600'
+                                    }
+                                  >
+                                    {item.currentStock}
+                                  </span>{' '}
+                                  / {item.preparedStock}
+                                </p>
+                              </div>
+
+                              {/* Nút bật / tắt hiển thị nhanh trên thực đơn */}
+                              <button
+                                type="button"
+                                onClick={() => handleToggleDishVisibility(item)}
+                                className={`px-2 py-1 rounded-lg text-[10px] sm:text-[11px] font-bold flex items-center gap-1 transition cursor-pointer ${
+                                  isHidden
+                                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300'
+                                    : 'bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 border border-slate-200'
+                                }`}
+                                title={isHidden ? 'Bật hiển thị món này trên thực đơn khách' : 'Tắt hiển thị món này khỏi thực đơn khách'}
+                              >
+                                {isHidden ? <Eye className="w-3.5 h-3.5 text-emerald-600" /> : <EyeOff className="w-3.5 h-3.5" />}
+                                <span>{isHidden ? 'Bật hiển thị' : 'Tắt hiển thị'}</span>
+                              </button>
                             </div>
 
-                            <div className="flex items-center justify-end gap-1">
+                            <div className="flex items-center justify-end gap-1 pt-1 border-t border-slate-100/60">
                               <button
                                 onClick={() => handleToggleStock(item, -5)}
-                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px]"
                                 title="Trừ 5 suất"
                               >
                                 -5
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, -1)}
-                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px]"
                                 title="Trừ 1 suất"
                               >
                                 <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, 1)}
-                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="w-7 h-7 sm:w-8 sm:h-8 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg flex items-center justify-center font-bold text-xs cursor-pointer min-h-[30px]"
                                 title="Thêm 1 suất"
                               >
                                 <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               </button>
                               <button
                                 onClick={() => handleToggleStock(item, 5)}
-                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px] sm:min-h-[36px]"
+                                className="px-1.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] sm:text-xs font-mono font-bold cursor-pointer min-h-[30px]"
                                 title="Thêm 5 suất"
                               >
                                 +5
@@ -1806,41 +2112,16 @@ export function PortalDashboard({
                   </div>
                 </div>
 
-                {/* Row 3: View Mode Switcher & Realtime Sync Status */}
+                {/* Row 3: Quick KDS Link & Realtime Sync Status */}
                 <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2.5 border-t border-slate-100">
-                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                  <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setOrdersViewMode('table')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'table'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
+                      onClick={() => setTab('kitchen')}
+                      className="px-3.5 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[36px] bg-orange-50 text-orange-700 hover:bg-orange-100 border border-orange-200 shadow-2xs"
                     >
-                      <Receipt className="w-3.5 h-3.5" />
-                      <span>Bảng danh sách đơn</span>
-                    </button>
-                    <button
-                      onClick={() => setOrdersViewMode('kds')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'kds'
-                          ? 'bg-white text-orange-600 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <ChefHat className="w-3.5 h-3.5" />
-                      <span>Màn hình Bếp (KDS 3 Cột)</span>
-                    </button>
-                    <button
-                      onClick={() => setOrdersViewMode('all')}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                        ordersViewMode === 'all'
-                          ? 'bg-white text-indigo-700 shadow-2xs'
-                          : 'text-slate-600 hover:text-slate-900'
-                      }`}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Xem kết hợp cả hai</span>
+                      <ChefHat className="w-4 h-4 text-orange-600" />
+                      <span>Chuyển sang Màn hình Nhà Bếp (KDS 3 Cột)</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
                     </button>
                   </div>
 
@@ -1854,17 +2135,16 @@ export function PortalDashboard({
               </div>
 
               {/* Batch Action Bar */}
-              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
-                <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
-                  <div className="flex items-center gap-2">
-                    <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
-                    <span className="text-xs font-bold text-slate-800">
-                      In Bill Hàng Loạt Máy POS (K80 / K58):
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium">
-                      Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
-                    </span>
-                  </div>
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 sm:p-4 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+                <div className="flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-indigo-600 flex-shrink-0" />
+                  <span className="text-xs font-bold text-slate-800">
+                    In Bill Hàng Loạt Máy POS (K80 / K58):
+                  </span>
+                  <span className="text-xs text-slate-500 font-medium">
+                    Đã chọn <strong className="text-indigo-600">{selectedOrderIds.length}</strong> / {filteredOrders.length} đơn
+                  </span>
+                </div>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-xl p-0.5">
@@ -1925,10 +2205,8 @@ export function PortalDashboard({
                     )}
                   </div>
                 </div>
-              )}
 
-              {/* ================= BẢNG DANH SÁCH ĐƠN HÀNG FULL KHÔNG CẦN SCROLL ================= */}
-              {(ordersViewMode === 'table' || ordersViewMode === 'all') && (
+                {/* ================= BẢNG DANH SÁCH ĐƠN HÀNG FULL KHÔNG CẦN SCROLL ================= */}
                 <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                   <div className="w-full">
                     <table className="w-full text-left text-xs border-collapse">
@@ -2135,10 +2413,12 @@ export function PortalDashboard({
                     itemName="đơn hàng"
                   />
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* ================= MÀN HÌNH NHÀ BẾP (KDS) - 3 CỘT ĐIỀU HÀNH CHẾ BIẾN ================= */}
-              {(ordersViewMode === 'kds' || ordersViewMode === 'all') && (
+            {/* ================= TAB: KITCHEN (KDS) ================= */}
+            {tab === 'kitchen' && (
+              <div className="space-y-4">
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
                   {/* Header bar */}
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
@@ -2149,10 +2429,14 @@ export function PortalDashboard({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-extrabold text-slate-900 text-sm sm:text-base tracking-tight">
-                            MÀN HÌNH NHÀ BẾP (KDS) — ĐIỀU HÀNH CHẾ BIẾN THEO MÓN
+                            MÀN HÌNH BẾP — ĐIỀU HÀNH CHẾ BIẾN THEO MÓN
                           </h3>
                           <span className="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-orange-50 text-orange-700 border border-orange-200">
                             {orderDateFilter === 'all' ? 'Toàn bộ các ngày' : `Ngày: ${orderDateFilter || 'Ngày mai'}`}
+                          </span>
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-2xs">
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span>Tự động tải lại tức thì khi có order</span>
                           </span>
                         </div>
                         <p className="text-xs text-slate-500 mt-0.5">
@@ -2161,10 +2445,38 @@ export function PortalDashboard({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <select
+                        value={orderDateFilter}
+                        onChange={(e) => setOrderDateFilter(e.target.value)}
+                        className="px-3 py-1.5 bg-slate-50 hover:bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[38px] cursor-pointer shadow-2xs"
+                      >
+                        {availableOrderDates.length > 0 ? (
+                          <>
+                            {availableOrderDates.map((dateStr, idx) => (
+                              <option key={dateStr} value={dateStr}>
+                                {idx === 0 ? `📅 ${dateStr} (Mới nhất)` : `📅 ${dateStr}`}
+                              </option>
+                            ))}
+                            <option value="all">🌐 Toàn bộ các ngày</option>
+                          </>
+                        ) : (
+                          <option value="all">Tất cả các ngày</option>
+                        )}
+                      </select>
+
+                      <button
+                        onClick={selectPendingKitchenOrders}
+                        className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold border border-indigo-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                        title="Chọn và In hàng loạt bill POS cho toàn bộ đơn bếp"
+                      >
+                        <Printer className="w-4 h-4 text-indigo-600" />
+                        <span>In Bill Đơn Bếp POS</span>
+                      </button>
+
                       <button
                         onClick={() => window.print()}
-                        className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
+                        className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold border border-slate-200 transition cursor-pointer flex items-center gap-1.5 min-h-[38px] shadow-2xs"
                         title="In bảng thống kê món cần nấu cho nhà bếp"
                       >
                         <Printer className="w-4 h-4 text-orange-600" />
@@ -2201,26 +2513,90 @@ export function PortalDashboard({
                     </div>
                   </div>
 
-                  {/* Quick Dish Breakdown Summary Pills */}
+                  {/* Quick Dish Breakdown Summary Accordion (Mặc định thu gọn - Collapsed) */}
                   {kitchenDishSummary.length > 0 && (
-                    <div className="p-3 bg-slate-50/80 rounded-xl border border-slate-200 space-y-2">
-                      <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                        <UtensilsCrossed className="w-3.5 h-3.5 text-orange-600" />
-                        <span>Tổng hợp nhanh số suất cần nấu:</span>
-                      </span>
-                      <div className="flex flex-wrap gap-2">
-                        {kitchenDishSummary.map((d, i) => (
-                          <div
-                            key={i}
-                            className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-2 text-xs shadow-2xs"
-                          >
-                            <span className="font-bold text-slate-900">{d.name}</span>
-                            <span className="px-2 py-0.5 rounded-md bg-orange-600 text-white font-mono font-extrabold text-[11px]">
-                              {d.quantity} suất
-                            </span>
+                    <div className="bg-slate-50/90 rounded-2xl border border-slate-200 overflow-hidden shadow-2xs transition-all">
+                      {/* Nút bấm chuyển đổi thu gọn / mở rộng */}
+                      <button
+                        type="button"
+                        onClick={() => setIsKitchenSummaryOpen((prev) => !prev)}
+                        className="w-full p-3.5 sm:p-4 flex items-center justify-between text-left hover:bg-slate-100/70 transition cursor-pointer select-none"
+                      >
+                        <div className="flex items-center gap-2.5 flex-wrap">
+                          <div className="w-8 h-8 rounded-lg bg-orange-100 text-orange-700 flex items-center justify-center shrink-0">
+                            <UtensilsCrossed className="w-4 h-4" />
                           </div>
-                        ))}
-                      </div>
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs sm:text-sm font-extrabold text-slate-900">
+                                Tổng hợp nhanh các món cần nấu
+                              </span>
+                              <span className="px-2 py-0.5 rounded-full bg-orange-600 text-white font-mono font-black text-[11px]">
+                                {kitchenDishSummary.reduce((s, d) => s + d.quantity, 0)} suất
+                              </span>
+                              <span className="text-[11px] font-semibold text-slate-500">
+                                ({kitchenDishSummary.length} món · {kitchenDishesByCategory.length} danh mục)
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {isKitchenSummaryOpen
+                                ? 'Đang mở rộng xem chi tiết theo từng danh mục. Bấm để thu gọn lại.'
+                                : 'Mặc định thu gọn. Bấm vào đây để mở rộng xem danh sách món theo danh mục.'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-600 bg-indigo-50 border border-indigo-200/80 px-2.5 py-1.5 rounded-xl shrink-0">
+                          <span>{isKitchenSummaryOpen ? 'Thu gọn' : 'Mở rộng xem'}</span>
+                          {isKitchenSummaryOpen ? (
+                            <ChevronUp className="w-4 h-4" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4" />
+                          )}
+                        </div>
+                      </button>
+
+                      {/* Nội dung khi mở rộng: Sắp xếp theo danh mục để dễ nhìn hơn */}
+                      {isKitchenSummaryOpen && (
+                        <div className="p-3.5 sm:p-4 pt-0 border-t border-slate-200/80 bg-white space-y-3.5">
+                          {kitchenDishesByCategory.map((group) => (
+                            <div
+                              key={group.category}
+                              className="p-3 rounded-xl bg-slate-50/80 border border-slate-200 space-y-2"
+                            >
+                              <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/60">
+                                <span className="text-xs font-extrabold text-slate-800 flex items-center gap-1.5">
+                                  <span className="w-2 h-2 rounded-full bg-orange-500" />
+                                  <span>{group.category}</span>
+                                </span>
+                                <span className="px-2 py-0.5 rounded-md text-[11px] font-mono font-bold bg-orange-100 text-orange-800">
+                                  {group.totalQty} suất ({group.dishes.length} món)
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap gap-2 pt-0.5">
+                                {group.dishes.map((d, i) => (
+                                  <div
+                                    key={i}
+                                    className="px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg flex items-center gap-2 text-xs shadow-2xs hover:border-orange-200 transition"
+                                  >
+                                    <span className="font-bold text-slate-900">{d.name}</span>
+                                    <span className="px-2 py-0.5 rounded-md bg-orange-600 text-white font-mono font-extrabold text-[11px]">
+                                      {d.quantity} suất
+                                    </span>
+                                    {(d.dineInQty > 0 || d.roomDeliveryQty > 0) && (
+                                      <span className="text-[10px] text-slate-400 font-medium">
+                                        ({d.dineInQty > 0 ? `${d.dineInQty} tại căn tin` : ''}
+                                        {d.dineInQty > 0 && d.roomDeliveryQty > 0 ? ' · ' : ''}
+                                        {d.roomDeliveryQty > 0 ? `${d.roomDeliveryQty} giao phòng` : ''})
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -2580,9 +2956,8 @@ export function PortalDashboard({
                     </div>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            )}
 
           {/* ================= TAB: USERS ================= */}
           {tab === 'users' && (
@@ -2620,6 +2995,7 @@ export function PortalDashboard({
               <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
                 <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
                   <button
+                    type="button"
                     onClick={() => setUserStatusFilter('all')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
                       userStatusFilter === 'all'
@@ -2631,6 +3007,43 @@ export function PortalDashboard({
                   </button>
 
                   <button
+                    type="button"
+                    onClick={() => setUserStatusFilter('active')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
+                      userStatusFilter === 'active'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    Đang hoạt động ({activeUsersCount})
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setUserStatusFilter('disabled')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
+                      userStatusFilter === 'disabled'
+                        ? 'bg-rose-600 text-white shadow-2xs'
+                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    <span>Đã vô hiệu hóa</span>
+                    {disabledUsersCount > 0 && (
+                      <span
+                        className={`text-[10px] px-1.5 py-0.2 rounded-full font-extrabold ${
+                          userStatusFilter === 'disabled'
+                            ? 'bg-white text-rose-700'
+                            : 'bg-rose-100 text-rose-800'
+                        }`}
+                      >
+                        {disabledUsersCount}
+                      </span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={() => setUserStatusFilter('pending')}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer flex items-center gap-1.5 min-h-[38px] ${
                       userStatusFilter === 'pending'
@@ -2650,17 +3063,6 @@ export function PortalDashboard({
                         {pendingUsersCount}
                       </span>
                     )}
-                  </button>
-
-                  <button
-                    onClick={() => setUserStatusFilter('active')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[38px] ${
-                      userStatusFilter === 'active'
-                        ? 'bg-emerald-600 text-white shadow-2xs'
-                        : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    Đang hoạt động ({users.length - pendingUsersCount})
                   </button>
                 </div>
 
@@ -2711,11 +3113,14 @@ export function PortalDashboard({
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedUsers.map((u) => {
-                        const isPending = u.isActive === false;
+                        const isUserDisabled = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+                        const isPending = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+                        const isSelf = u.id === currentUser.id;
+
                         return (
-                          <tr key={u.id} className={`hover:bg-slate-50/70 ${isPending ? 'bg-amber-50/30' : ''}`}>
+                          <tr key={u.id} className={`hover:bg-slate-50/70 ${isUserDisabled ? 'bg-rose-50/30' : isPending ? 'bg-amber-50/30' : ''}`}>
                             <td className="py-3 px-4">
-                              <p className="font-bold text-slate-900">{u.name}</p>
+                              <p className={`font-bold ${isUserDisabled ? 'text-slate-500 line-through decoration-rose-400' : 'text-slate-900'}`}>{u.name}</p>
                               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
                                 {u.role === 'admin'
                                   ? 'Quản trị viên'
@@ -2734,7 +3139,12 @@ export function PortalDashboard({
                               )}
                             </td>
                             <td className="py-3 px-4">
-                              {isPending ? (
+                              {isUserDisabled ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                                  <Ban className="w-3 h-3 text-rose-600" />
+                                  <span>Đã vô hiệu hóa</span>
+                                </span>
+                              ) : isPending ? (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-bold bg-amber-100/80 text-amber-800 border border-amber-300">
                                   <Clock className="w-3 h-3 text-amber-600 animate-spin" />
                                   <span>Chờ duyệt & cấp ví</span>
@@ -2753,29 +3163,56 @@ export function PortalDashboard({
                               {formatVnd(u.monthlyAllowance)}
                             </td>
                             <td className="py-3 px-4 text-center">
-                              {isPending ? (
-                                <button
-                                  onClick={() => {
-                                    setApprovingUser(u);
-                                    setApprovalWalletAmount(1000000);
-                                    setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
-                                  }}
-                                  className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-amber-500/20 transition min-h-[36px] mx-auto"
-                                >
-                                  <Sparkles className="w-3.5 h-3.5" />
-                                  <span>Duyệt & Nạp ví</span>
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setWalletModalUser(u);
-                                    setWalletAmountChange(50000);
-                                  }}
-                                  className="px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-indigo-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-indigo-200 transition cursor-pointer min-h-[36px]"
-                                >
-                                  Nạp / Chỉnh ví
-                                </button>
-                              )}
+                              <div className="flex items-center justify-center gap-1.5">
+                                {isPending ? (
+                                  <button
+                                    onClick={() => {
+                                      setApprovingUser(u);
+                                      setApprovalWalletAmount(1000000);
+                                      setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
+                                    }}
+                                    className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-amber-500/20 transition min-h-[36px]"
+                                  >
+                                    <Sparkles className="w-3.5 h-3.5" />
+                                    <span>Duyệt & Nạp ví</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      onClick={() => {
+                                        setWalletModalUser(u);
+                                        setWalletAmountChange(50000);
+                                      }}
+                                      disabled={isUserDisabled}
+                                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-indigo-50 text-indigo-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-indigo-200 transition cursor-pointer min-h-[34px] disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                      Nạp / Chỉnh ví
+                                    </button>
+
+                                    {isUserDisabled ? (
+                                      <button
+                                        onClick={() => setDisablingUser({ user: u, willDisable: false })}
+                                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-xl text-[11px] border border-emerald-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
+                                        title="Kích hoạt lại tài khoản này để cán bộ có thể đăng nhập và đặt suất ăn"
+                                      >
+                                        <Unlock className="w-3 h-3 text-emerald-600" />
+                                        <span>Mở lại</span>
+                                      </button>
+                                    ) : (
+                                      !isSelf && (
+                                        <button
+                                          onClick={() => setDisablingUser({ user: u, willDisable: true })}
+                                          className="px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-rose-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
+                                          title="Vô hiệu hóa tài khoản: cán bộ sẽ không thể đăng nhập hoặc đặt món"
+                                        >
+                                          <Ban className="w-3 h-3 text-rose-500" />
+                                          <span>Vô hiệu hóa</span>
+                                        </button>
+                                      )
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         );
@@ -2808,124 +3245,305 @@ export function PortalDashboard({
           {/* ================= TAB: QR TOKENS ================= */}
           {tab === 'qr' && (
             <div className="space-y-4">
-              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 mb-1">Mã QR Ngoại Lệ (Exception Tokens)</h3>
-                  <p className="text-xs text-slate-500">
-                    Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Cán bộ nhập mã này để được phép đặt suất ăn bổ sung.
-                  </p>
+              {/* Header & Quick Stats */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                      <QrCode className="w-5 h-5 text-indigo-600" />
+                      <span>Quản lý Mã QR Ngoại Lệ (Exception Tokens)</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Quản trị viên cấp mã để cán bộ đặt suất ăn bổ sung ngoài giờ quy định.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setIsCreateQROpen(true)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0 transition"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Tạo mã mới</span>
+                  </button>
                 </div>
-                <button
-                  onClick={() => setIsCreateQROpen(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Tạo mã mới</span>
-                </button>
+
+                {/* Quick Summary Cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 pt-1">
+                  <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                    <p className="text-[11px] text-slate-500 font-semibold">Tổng số mã</p>
+                    <p className="text-lg font-extrabold text-slate-900 mt-0.5">{enrichedTokens.length}</p>
+                  </div>
+                  <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl">
+                    <p className="text-[11px] text-emerald-700 font-semibold">🟢 Còn hiệu lực</p>
+                    <p className="text-lg font-extrabold text-emerald-800 mt-0.5">
+                      {enrichedTokens.filter((t) => !t.isDisabled && !t.isExpired && !t.isFullyUsed).length}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-rose-50/70 border border-rose-200 rounded-xl">
+                    <p className="text-[11px] text-rose-700 font-semibold">⛔ Đã vô hiệu hóa</p>
+                    <p className="text-lg font-extrabold text-rose-800 mt-0.5">
+                      {enrichedTokens.filter((t) => t.isDisabled).length}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-xl">
+                    <p className="text-[11px] text-amber-700 font-semibold">⚪ Đã dùng hết</p>
+                    <p className="text-lg font-extrabold text-amber-800 mt-0.5">
+                      {enrichedTokens.filter((t) => t.isFullyUsed).length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Search & Filter Toolbar */}
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-slate-100">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="relative min-w-[220px]">
+                      <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                      <input
+                        type="text"
+                        value={qrSearch}
+                        onChange={(e) => setQrSearch(e.target.value)}
+                        placeholder="Tìm theo mã, người dùng, ghi chú..."
+                        className="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                      />
+                    </div>
+
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                      {[
+                        { id: 'all', label: 'Tất cả' },
+                        { id: 'active', label: 'Còn hiệu lực' },
+                        { id: 'disabled', label: 'Đã vô hiệu hóa' },
+                        { id: 'used', label: 'Đã dùng hết' },
+                        { id: 'expired', label: 'Hết hạn' },
+                      ].map((f) => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setQrStatusFilter(f.id as any)}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition cursor-pointer ${
+                            qrStatusFilter === f.id
+                              ? 'bg-white text-indigo-700 shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {f.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="text-xs text-slate-500 font-medium self-end sm:self-center">
+                    Hiển thị <strong className="text-slate-900">{filteredTokens.length}</strong> mã QR
+                  </div>
+                </div>
               </div>
 
+              {/* Table List */}
               <div className="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs min-w-[600px]">
+                  <table className="w-full text-left text-xs min-w-[820px]">
                     <thead className="bg-slate-50 text-slate-600 border-b border-slate-200">
                       <tr>
                         <th className="py-3 px-4">Mã Token</th>
                         <th className="py-3 px-3 text-center">Số lượt cấp</th>
-                        <th className="py-3 px-3 text-center">Đã dùng / Còn lại</th>
-                        <th className="py-3 px-4">Ghi chú</th>
-                        <th className="py-3 px-4">Tạo bởi / Người dùng</th>
+                        <th className="py-3 px-3 text-center">Tiến độ sử dụng</th>
+                        <th className="py-3 px-4">Cán bộ đã sử dụng</th>
+                        <th className="py-3 px-4">Ghi chú / Mục đích</th>
                         <th className="py-3 px-4">Hạn sử dụng</th>
                         <th className="py-3 px-4 text-center">Trạng thái</th>
-                        <th className="py-3 px-4 text-center">Sao chép</th>
+                        <th className="py-3 px-4 text-center">Thao tác</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {paginatedTokens.map((t) => {
-                        const isExpired = new Date(t.expiresAt) < new Date();
-                        const qty = Number(t.quantity) || 1;
-                        const used = Number(t.usedCount) || 0;
-                        const remaining = Math.max(0, qty - used);
-                        const isFullyUsed = t.isUsed || remaining <= 0;
+                        const qty = t.quantity || 1;
+                        const used = t.usedCount || 0;
+                        const remaining = t.remaining;
+                        const isDisabled = t.isDisabled;
+                        const isFullyUsed = t.isFullyUsed;
+                        const isExpired = t.isExpired;
+                        const isToggling = togglingQRToken === t.token;
+                        const isDeleting = deletingQRToken === t.token;
 
                         return (
-                          <tr key={t.token} className="hover:bg-slate-50/70">
-                            <td className="py-3 px-4 font-mono font-extrabold text-indigo-700">
-                              {t.token}
-                            </td>
-                            <td className="py-3 px-3 text-center">
-                              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200">
-                                {qty} lượt
+                          <tr
+                            key={t.token}
+                            className={`hover:bg-slate-50/80 transition-colors ${
+                              isDisabled ? 'bg-rose-50/20' : ''
+                            }`}
+                          >
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-mono font-extrabold text-xs ${
+                                  isDisabled ? 'text-slate-400 line-through' : 'text-indigo-700'
+                                }`}>
+                                  {t.token}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyText(t.token)}
+                                  className="p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-slate-100 transition cursor-pointer"
+                                  title="Sao chép mã"
+                                >
+                                  {copiedToken === t.token ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                              <span className="text-[10px] text-slate-400 block mt-0.5">
+                                Tạo: {new Date(t.createdAt).toLocaleTimeString('vi-VN')} {new Date(t.createdAt).toLocaleDateString('vi-VN')} ({t.createdByName || 'Admin'})
                               </span>
                             </td>
+
                             <td className="py-3 px-3 text-center">
-                              <div className="inline-flex flex-col items-center gap-0.5">
+                              <span className="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 font-extrabold text-[11px] border border-indigo-200 inline-flex items-center gap-1">
+                                <span>{qty} lượt đặt</span>
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-3 text-center">
+                              <div className="inline-flex flex-col items-center gap-1">
                                 <span className="font-bold text-slate-800 text-xs">
-                                  Đã dùng: <strong className="text-orange-600 font-mono">{used}</strong> / {qty}
+                                  Đã dùng: <strong className="text-orange-600 font-mono text-xs">{used}</strong> / {qty} lượt
                                 </span>
                                 <span
                                   className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
-                                    remaining > 0
+                                    isDisabled
+                                      ? 'bg-rose-50 text-rose-700 border border-rose-200'
+                                      : remaining > 0
                                       ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                       : 'bg-slate-100 text-slate-500 border border-slate-200'
                                   }`}
                                 >
-                                  {remaining > 0 ? `Còn lại: ${remaining} lượt` : 'Hết lượt'}
+                                  {isDisabled
+                                    ? 'Đang bị khóa'
+                                    : remaining > 0
+                                    ? `Còn lại: ${remaining} lượt`
+                                    : 'Hết lượt đặt'}
                                 </span>
                               </div>
                             </td>
-                            <td className="py-3 px-4 text-slate-700">{t.note || '—'}</td>
+
                             <td className="py-3 px-4 text-slate-700">
-                              <p className="font-bold text-slate-800">{t.createdByName || 'Admin'}</p>
-                              {t.usedBy && (
-                                <p className="text-[10px] text-indigo-600 mt-0.5 font-medium">
-                                  Đã dùng bởi: {t.usedBy}
-                                </p>
+                              {t.usedUserNames && t.usedUserNames.length > 0 ? (
+                                <div className="space-y-0.5">
+                                  {t.usedUserNames.map((name, idx) => (
+                                    <div key={idx} className="flex items-center gap-1 text-[11px] font-bold text-indigo-700">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500"></span>
+                                      <span>{name}</span>
+                                    </div>
+                                  ))}
+                                  {t.matchingOrdersCount > 0 && (
+                                    <span className="text-[10px] text-slate-400 block">
+                                      ({t.matchingOrdersCount} đơn hàng đã đặt)
+                                    </span>
+                                  )}
+                                </div>
+                              ) : t.usedBy ? (
+                                <p className="text-[11px] font-bold text-slate-800">{t.usedBy}</p>
+                              ) : (
+                                <span className="text-slate-400 italic text-[11px]">Chưa ai sử dụng</span>
                               )}
                             </td>
-                            <td className="py-3 px-4 text-slate-700">
-                              {new Date(t.expiresAt).toLocaleString('vi-VN')}
+
+                            <td className="py-3 px-4 text-slate-700 max-w-[180px]">
+                              <span className="text-xs line-clamp-2" title={t.note || ''}>
+                                {t.note || '—'}
+                              </span>
                             </td>
+
+                            <td className="py-3 px-4 text-slate-700">
+                              <span className="text-xs font-medium">
+                                {new Date(t.expiresAt).toLocaleTimeString('vi-VN')}
+                              </span>
+                              <span className="text-[10px] text-slate-400 block">
+                                {new Date(t.expiresAt).toLocaleDateString('vi-VN')}
+                              </span>
+                            </td>
+
                             <td className="py-3 px-4 text-center">
-                              {isFullyUsed ? (
+                              {isDisabled ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-extrabold bg-rose-50 text-rose-700 border border-rose-300 shadow-xs">
+                                  <Ban className="w-3 h-3 text-rose-600" />
+                                  <span>Đã vô hiệu hóa</span>
+                                </span>
+                              ) : isFullyUsed ? (
                                 <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-slate-100 text-slate-500 border border-slate-200">
                                   Đã dùng hết ({used}/{qty})
                                 </span>
                               ) : isExpired ? (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-rose-50 text-rose-600 border border-rose-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-medium bg-amber-50 text-amber-700 border border-amber-200">
                                   Hết hạn giờ
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
                                   🟢 Còn hiệu lực ({remaining}/{qty} lượt)
                                 </span>
                               )}
                             </td>
+
                             <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => copyText(t.token)}
-                                className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer min-h-[38px] min-w-[38px] inline-flex items-center justify-center"
-                                title="Sao chép Token"
-                              >
-                                {copiedToken === t.token ? (
-                                  <Check className="w-4 h-4 text-emerald-600" />
-                                ) : (
-                                  <Copy className="w-4 h-4" />
-                                )}
-                              </button>
+                              <div className="inline-flex items-center justify-center gap-1.5">
+                                {/* Toggle Disable / Enable Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleToggleQRDisable(t.token, isDisabled)}
+                                  disabled={isToggling}
+                                  className={`px-2.5 py-1.5 rounded-xl font-bold text-[11px] flex items-center gap-1 transition cursor-pointer border ${
+                                    isDisabled
+                                      ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border-emerald-300'
+                                      : 'bg-rose-50 hover:bg-rose-100 text-rose-700 border-rose-200'
+                                  }`}
+                                  title={isDisabled ? 'Mở khóa / Kích hoạt lại mã QR' : 'Vô hiệu hóa mã QR (khóa không cho dùng nữa)'}
+                                >
+                                  {isToggling ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : isDisabled ? (
+                                    <>
+                                      <Unlock className="w-3.5 h-3.5 text-emerald-600" />
+                                      <span>Mở khóa</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ban className="w-3.5 h-3.5 text-rose-600" />
+                                      <span>Vô hiệu hóa</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                {/* Delete Button */}
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteQR(t.token)}
+                                  disabled={isDeleting}
+                                  className="p-1.5 rounded-xl bg-slate-100 hover:bg-rose-100 text-slate-500 hover:text-rose-700 transition cursor-pointer min-h-[32px] min-w-[32px] inline-flex items-center justify-center"
+                                  title="Xóa vĩnh viễn mã QR"
+                                >
+                                  {isDeleting ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-600" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  )}
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
-                  {tokens.length === 0 && (
-                    <div className="p-8 text-center text-slate-400 text-xs">Chưa có mã QR ngoại lệ nào.</div>
+                  {filteredTokens.length === 0 && (
+                    <div className="p-8 text-center text-slate-400 text-xs">
+                      {qrSearch || qrStatusFilter !== 'all'
+                        ? 'Không tìm thấy mã QR nào phù hợp với bộ lọc.'
+                        : 'Chưa có mã QR ngoại lệ nào.'}
+                    </div>
                   )}
                 </div>
 
                 <PaginationControls
                   currentPage={qrPage}
-                  totalItems={tokens.length}
+                  totalItems={filteredTokens.length}
                   pageSize={qrPageSize}
                   pageSizeOptions={[10, 20, 50]}
                   onPageChange={setQrPage}
@@ -3496,6 +4114,97 @@ export function PortalDashboard({
         </div>
       )}
 
+      {/* ================= MODAL: VÔ HIỆU HÓA HOẶC MỞ LẠI TÀI KHOẢN CÁN BỘ ================= */}
+      {disablingUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl border border-slate-200 shadow-2xl p-5 sm:p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 border ${
+                  disablingUser.willDisable
+                    ? 'bg-rose-50 text-rose-600 border-rose-200'
+                    : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                }`}
+              >
+                {disablingUser.willDisable ? (
+                  <Ban className="w-6 h-6" />
+                ) : (
+                  <Unlock className="w-6 h-6" />
+                )}
+              </div>
+              <div>
+                <h3 className="font-extrabold text-slate-900 text-base">
+                  {disablingUser.willDisable
+                    ? 'Vô hiệu hóa tài khoản cán bộ?'
+                    : 'Mở lại tài khoản cán bộ?'}
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5 font-medium">
+                  {disablingUser.user.name} ({disablingUser.user.email})
+                </p>
+              </div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-2xl text-xs space-y-2 ${
+                disablingUser.willDisable
+                  ? 'bg-rose-50 border border-rose-200 text-rose-800'
+                  : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+              }`}
+            >
+              {disablingUser.willDisable ? (
+                <>
+                  <p className="font-bold">Khi vô hiệu hóa tài khoản này:</p>
+                  <ul className="list-disc list-inside space-y-1 text-[11px] leading-relaxed">
+                    <li>Cán bộ này sẽ <strong>không thể đăng nhập</strong> vào hệ thống.</li>
+                    <li>Cán bộ này sẽ <strong>không thể đặt suất ăn</strong> (bị chặn tại giao diện và máy chủ).</li>
+                    <li>Số dư ví hiện tại ({formatVnd(disablingUser.user.walletBalance)}) vẫn được bảo lưu an toàn.</li>
+                    <li>Bạn có thể bấm <strong>"Mở lại"</strong> bất kỳ lúc nào để cán bộ hoạt động bình thường.</li>
+                  </ul>
+                </>
+              ) : (
+                <p className="leading-relaxed">
+                  Tài khoản của cán bộ sẽ được <strong>kích hoạt lại trạng thái hoạt động bình thường</strong> ngay lập tức. Cán bộ có thể đăng nhập và đặt suất ăn bằng số dư ví ({formatVnd(disablingUser.user.walletBalance)}).
+                </p>
+              )}
+            </div>
+
+            <div className="flex gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setDisablingUser(null)}
+                disabled={isTogglingUserDisabled}
+                className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer min-h-[44px]"
+              >
+                Hủy bỏ
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmToggleUserDisabled}
+                disabled={isTogglingUserDisabled}
+                className={`flex-1 py-3 rounded-xl text-white text-xs font-bold cursor-pointer transition flex items-center justify-center gap-1.5 min-h-[44px] ${
+                  disablingUser.willDisable
+                    ? 'bg-rose-600 hover:bg-rose-700 shadow-md shadow-rose-600/20'
+                    : 'bg-emerald-600 hover:bg-emerald-700 shadow-md shadow-emerald-600/20'
+                }`}
+              >
+                {isTogglingUserDisabled ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Đang cập nhật...</span>
+                  </>
+                ) : (
+                  <span>
+                    {disablingUser.willDisable
+                      ? 'Xác nhận Vô hiệu hóa'
+                      : 'Xác nhận Mở lại tài khoản'}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ================= MODAL: CREATE QR TOKEN ================= */}
       {isCreateQROpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
@@ -3513,8 +4222,11 @@ export function PortalDashboard({
             <div className="space-y-3">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Số lượt đặt cho phép (Suất ăn)
+                  Số lượt đặt đơn hàng cho phép <span className="text-rose-500">*</span>
                 </label>
+                <p className="text-[11px] text-slate-500 mb-2 leading-relaxed">
+                  Ví dụ: Cấp <strong>2 lượt đặt</strong> thì cán bộ có thể thực hiện <strong>2 đơn hàng</strong> khác nhau. Trong mỗi đơn hàng, cán bộ có thể chọn đặt <strong>nhiều suất ăn/món ăn tùy ý</strong>.
+                </p>
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
