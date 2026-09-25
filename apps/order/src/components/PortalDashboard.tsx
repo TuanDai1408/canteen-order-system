@@ -21,6 +21,7 @@ import {
   getCachedOrders,
   setCachedOrders,
   DEFAULT_MENU_ITEMS,
+  broadcastSyncChannel,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -475,23 +476,35 @@ export function PortalDashboard({
     }
   }, [availableOrderDates, orderDateFilter]);
 
-  // Tự động tải lại dữ liệu tức thì (Realtime & Event-based) khi khách đặt món hoặc thay đổi trạng thái
+  // Tự động tải lại dữ liệu tức thì (Realtime & Event-based) khi có bất kỳ thay đổi nào
   useEffect(() => {
-    // Lắng nghe sự kiện tức thì (Custom Event & Storage)
-    const handleImmediateOrderSync = () => {
+    const handleImmediateSync = () => {
       onRefresh();
     };
 
-    window.addEventListener('canteen_order_created', handleImmediateOrderSync);
-    window.addEventListener('canteen_order_updated', handleImmediateOrderSync);
-    window.addEventListener('canteen_order_cancelled', handleImmediateOrderSync);
-    window.addEventListener('storage', handleImmediateOrderSync);
+    const SYNC_EVENTS = [
+      'canteen_order_created',
+      'canteen_order_placed',
+      'canteen_order_updated',
+      'canteen_order_cancelled',
+      'canteen_menu_updated',
+      'canteen_wallet_updated',
+      'canteen_user_status_changed',
+      'canteen_qr_token_updated',
+      'storage',
+    ];
+
+    SYNC_EVENTS.forEach((evt) => window.addEventListener(evt, handleImmediateSync));
+
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.addEventListener('message', handleImmediateSync);
+    }
 
     return () => {
-      window.removeEventListener('canteen_order_created', handleImmediateOrderSync);
-      window.removeEventListener('canteen_order_updated', handleImmediateOrderSync);
-      window.removeEventListener('canteen_order_cancelled', handleImmediateOrderSync);
-      window.removeEventListener('storage', handleImmediateOrderSync);
+      SYNC_EVENTS.forEach((evt) => window.removeEventListener(evt, handleImmediateSync));
+      if (broadcastSyncChannel) {
+        broadcastSyncChannel.removeEventListener('message', handleImmediateSync);
+      }
     };
   }, [onRefresh]);
 

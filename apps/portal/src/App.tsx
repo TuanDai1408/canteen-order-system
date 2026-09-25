@@ -34,9 +34,13 @@ export default function App() {
 
   const isMountedRef = useRef(true);
   const isRefreshingRef = useRef(false);
+  const pendingRefreshRef = useRef(false);
 
   const refresh = useCallback(async () => {
-    if (isRefreshingRef.current) return;
+    if (isRefreshingRef.current) {
+      pendingRefreshRef.current = true;
+      return;
+    }
     isRefreshingRef.current = true;
     try {
       const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
@@ -68,6 +72,10 @@ export default function App() {
       console.warn('Portal refresh note:', e);
     } finally {
       isRefreshingRef.current = false;
+      if (pendingRefreshRef.current && isMountedRef.current) {
+        pendingRefreshRef.current = false;
+        refresh();
+      }
     }
   }, []);
 
@@ -134,24 +142,32 @@ export default function App() {
       }
     };
 
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'canteen_time_gate_config' || !e.key) {
-        if (isMountedRef.current) {
-          setTimeStatus(getTimeGateStatus());
-        }
-      }
-    };
-
-    const handleOrderCreated = () => {
+    const handleSync = () => {
       if (isMountedRef.current) {
+        setTimeStatus(getTimeGateStatus());
         refresh();
       }
     };
 
-    window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
-    window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-    window.addEventListener('canteen_order_created', handleOrderCreated);
-    window.addEventListener('canteen_order_placed', handleOrderCreated);
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'canteen_time_gate_config' || !e.key || e.key.includes('canteen')) {
+        handleSync();
+      }
+    };
+
+    const SYNC_EVENTS = [
+      'canteen_order_created',
+      'canteen_order_placed',
+      'canteen_order_updated',
+      'canteen_order_cancelled',
+      'canteen_menu_updated',
+      'canteen_wallet_updated',
+      'canteen_user_status_changed',
+      'canteen_qr_token_updated',
+      'canteen_time_gate_updated',
+    ];
+
+    SYNC_EVENTS.forEach((evt) => window.addEventListener(evt, handleSync));
     window.addEventListener('storage', handleStorage);
 
     // Cập nhật trạng thái giờ (time-gate) local với chu kỳ thưa (30 giây), không gọi API
@@ -164,8 +180,7 @@ export default function App() {
     // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
     const handleVisibilityChange = () => {
       if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden) {
-        setTimeStatus(getTimeGateStatus());
-        refresh();
+        handleSync();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -173,10 +188,7 @@ export default function App() {
     return () => {
       isMountedRef.current = false;
       unsub();
-      window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
-      window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-      window.removeEventListener('canteen_order_created', handleOrderCreated);
-      window.removeEventListener('canteen_order_placed', handleOrderCreated);
+      SYNC_EVENTS.forEach((evt) => window.removeEventListener(evt, handleSync));
       window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);

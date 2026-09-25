@@ -47,10 +47,15 @@ export default function App() {
   const currentViewRef = useRef<'order' | 'portal'>(currentView);
   currentViewRef.current = currentView;
   const isRefreshingOrderRef = useRef(false);
+  const pendingRefreshOrderRef = useRef(false);
   const isRefreshingPortalRef = useRef(false);
+  const pendingRefreshPortalRef = useRef(false);
 
   const refreshOrderData = useCallback(async (profile: UserProfile) => {
-    if (isRefreshingOrderRef.current) return;
+    if (isRefreshingOrderRef.current) {
+      pendingRefreshOrderRef.current = true;
+      return;
+    }
     isRefreshingOrderRef.current = true;
     try {
       const [profileRes, menuRes, ordersRes] = await Promise.allSettled([
@@ -61,6 +66,7 @@ export default function App() {
       ]);
       if (profileRes.status === 'fulfilled' && profileRes.value) {
         setUser(profileRes.value);
+        userRef.current = profileRes.value;
       }
       if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
         setMenu(menuRes.value);
@@ -74,11 +80,19 @@ export default function App() {
       console.warn('[refreshOrderData notice]:', e);
     } finally {
       isRefreshingOrderRef.current = false;
+      if (pendingRefreshOrderRef.current) {
+        pendingRefreshOrderRef.current = false;
+        const targetProfile = userRef.current || profile;
+        refreshOrderData(targetProfile);
+      }
     }
   }, []);
 
   const refreshPortalData = useCallback(async () => {
-    if (isRefreshingPortalRef.current) return;
+    if (isRefreshingPortalRef.current) {
+      pendingRefreshPortalRef.current = true;
+      return;
+    }
     isRefreshingPortalRef.current = true;
     try {
       const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
@@ -91,6 +105,7 @@ export default function App() {
       ]);
       if (profileRes.status === 'fulfilled' && profileRes.value) {
         setUser(profileRes.value);
+        userRef.current = profileRes.value;
       }
       if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
         setPortalMenu(mRes.value);
@@ -109,6 +124,10 @@ export default function App() {
       console.warn('[refreshPortalData notice]:', e);
     } finally {
       isRefreshingPortalRef.current = false;
+      if (pendingRefreshPortalRef.current) {
+        pendingRefreshPortalRef.current = false;
+        refreshPortalData();
+      }
     }
   }, []);
 
@@ -154,18 +173,28 @@ export default function App() {
     }
     init();
 
+    const handleSync = async () => {
+      if (!mounted) return;
+      setTimeStatus(getTimeGateStatus());
+      const currentUser = userRef.current;
+      if (currentViewRef.current === 'portal') {
+        refreshPortalData();
+      } else if (currentUser) {
+        refreshOrderData(currentUser);
+      } else {
+        const profile = await getCurrentUserProfile();
+        if (profile && mounted) {
+          setUser(profile);
+          userRef.current = profile;
+          refreshOrderData(profile);
+        }
+      }
+    };
+
     const unsub = subscribeRealtime(async () => {
       if (!mounted) return;
       await fetchTimeGateConfig().catch(() => {});
-      setTimeStatus(getTimeGateStatus());
-      const currentUser = userRef.current;
-      if (currentUser) {
-        if (currentViewRef.current === 'portal') {
-          refreshPortalData();
-        } else {
-          refreshOrderData(currentUser);
-        }
-      }
+      handleSync();
     });
 
     const handleWalletUpdated = (e: Event) => {
@@ -174,45 +203,37 @@ export default function App() {
         const newBalance = customEvent.detail.walletBalance;
         setUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : prev));
       }
+      handleSync();
     };
 
     const handleTimeGateUpdated = () => {
       setTimeStatus(getTimeGateStatus());
+      handleSync();
     };
 
     const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'canteen_time_gate_config' || !e.key) {
+      if (e.key === 'canteen_time_gate_config' || !e.key || e.key.includes('canteen')) {
         setTimeStatus(getTimeGateStatus());
-      }
-    };
-
-    const handleOrderCreated = () => {
-      if (!mounted) return;
-      const currentUser = userRef.current;
-      if (currentUser) {
-        if (currentViewRef.current === 'portal') {
-          refreshPortalData();
-        } else {
-          refreshOrderData(currentUser);
-        }
+        handleSync();
       }
     };
 
     const handleUserStatusChanged = () => {
-      if (!mounted) return;
-      const currentUser = userRef.current;
-      if (currentUser) {
-        refreshOrderData(currentUser);
-        if (currentViewRef.current === 'portal') {
-          refreshPortalData();
-        }
-      }
+      handleSync();
     };
 
+    const SYNC_EVENTS = [
+      'canteen_order_created',
+      'canteen_order_placed',
+      'canteen_order_updated',
+      'canteen_order_cancelled',
+      'canteen_menu_updated',
+      'canteen_qr_token_updated',
+    ];
+
+    SYNC_EVENTS.forEach((evt) => window.addEventListener(evt, handleSync));
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
     window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-    window.addEventListener('canteen_order_created', handleOrderCreated);
-    window.addEventListener('canteen_order_placed', handleOrderCreated);
     window.addEventListener('canteen_user_status_changed', handleUserStatusChanged);
     window.addEventListener('storage', handleStorage);
 
@@ -226,15 +247,7 @@ export default function App() {
     const handleVisibilityChange = () => {
       if (!mounted) return;
       if (typeof document !== 'undefined' && !document.hidden) {
-        setTimeStatus(getTimeGateStatus());
-        const currentUser = userRef.current;
-        if (currentUser) {
-          if (currentViewRef.current === 'portal') {
-            refreshPortalData();
-          } else {
-            refreshOrderData(currentUser);
-          }
-        }
+        handleSync();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -249,10 +262,9 @@ export default function App() {
     return () => {
       mounted = false;
       unsub();
+      SYNC_EVENTS.forEach((evt) => window.removeEventListener(evt, handleSync));
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
       window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-      window.removeEventListener('canteen_order_created', handleOrderCreated);
-      window.removeEventListener('canteen_order_placed', handleOrderCreated);
       window.removeEventListener('canteen_user_status_changed', handleUserStatusChanged);
       window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
