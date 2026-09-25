@@ -191,9 +191,8 @@ export default function App() {
       }
     };
 
-    const unsub = subscribeRealtime(async () => {
+    const unsub = subscribeRealtime(() => {
       if (!mounted) return;
-      await fetchTimeGateConfig().catch(() => {});
       handleSync();
     });
 
@@ -237,13 +236,13 @@ export default function App() {
     window.addEventListener('canteen_user_status_changed', handleUserStatusChanged);
     window.addEventListener('storage', handleStorage);
 
-    // Cập nhật trạng thái giờ (time-gate) trên máy client, chu kỳ thưa hơn (30 giây), không gọi API
+    // Cập nhật trạng thái giờ (time-gate) trên máy client, tính toán thuần local (không gọi API)
     const clock = setInterval(() => {
       if (!mounted) return;
       setTimeStatus(getTimeGateStatus());
     }, 30_000);
 
-    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần (bổ sung cho realtime)
+    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
     const handleVisibilityChange = () => {
       if (!mounted) return;
       if (typeof document !== 'undefined' && !document.hidden) {
@@ -251,13 +250,6 @@ export default function App() {
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    // Vòng đồng bộ cấu hình time-gate định kỳ chạy khoảng 1 phút
-    const configSyncInterval = setInterval(async () => {
-      if (!mounted) return;
-      await fetchTimeGateConfig().catch(() => {});
-      setTimeStatus(getTimeGateStatus());
-    }, 60_000);
 
     return () => {
       mounted = false;
@@ -269,7 +261,6 @@ export default function App() {
       window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);
-      clearInterval(configSyncInterval);
     };
   }, [refreshOrderData, refreshPortalData]);
 
