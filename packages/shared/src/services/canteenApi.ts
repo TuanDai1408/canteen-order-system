@@ -2134,6 +2134,7 @@ export async function getOrders(filters?: {
   authUserId?: string;
   userEmail?: string;
   status?: string;
+  limit?: number;
 }): Promise<Order[]> {
   checkSupabase();
 
@@ -2158,11 +2159,11 @@ export async function getOrders(filters?: {
       query = query.eq('user_id', filters.authUserId);
     }
 
-    if (filters?.userId || filters?.authUserId) {
-      query = query.limit(100);
-    } else {
-      query = query.limit(300);
-    }
+    // Giảm giới hạn số dòng mỗi lần tải (user và portal) xuống mức đủ dùng vận hành để giảm egress Supabase
+    const userLimit = filters?.limit ?? 40;
+    const portalLimit = filters?.limit ?? 100;
+    const effectiveLimit = (filters?.userId || filters?.authUserId) ? userLimit : portalLimit;
+    query = query.limit(effectiveLimit);
 
     let data: any[] | null = null;
     let queryError: any = null;
@@ -2196,7 +2197,7 @@ export async function getOrders(filters?: {
         } else if (filters?.authUserId) {
           fallbackQuery = fallbackQuery.eq('user_id', filters.authUserId);
         }
-        fallbackQuery = fallbackQuery.limit(filters?.userId || filters?.authUserId ? 100 : 300);
+        fallbackQuery = fallbackQuery.limit(effectiveLimit);
 
         const fbRes = await withQueryTimeout(fallbackQuery, 10000, 'Fallback getOrders timeout');
         if (fbRes.data) {
@@ -2899,7 +2900,7 @@ export function subscribeRealtime(callback: () => void) {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
         callback();
-      }, 200);
+      }, 500);
     };
 
     const channel = supabase

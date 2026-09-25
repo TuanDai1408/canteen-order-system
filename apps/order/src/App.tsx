@@ -216,11 +216,17 @@ export default function App() {
     window.addEventListener('canteen_user_status_changed', handleUserStatusChanged);
     window.addEventListener('storage', handleStorage);
 
-    // Chu kỳ cập nhật trạng thái thời gian và tự động đồng bộ đơn hàng khi tab hiển thị
-    const clock = setInterval(async () => {
+    // Cập nhật trạng thái giờ (time-gate) trên máy client, chu kỳ thưa hơn (30 giây), không gọi API
+    const clock = setInterval(() => {
       if (!mounted) return;
       setTimeStatus(getTimeGateStatus());
+    }, 30_000);
+
+    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần (bổ sung cho realtime)
+    const handleVisibilityChange = () => {
+      if (!mounted) return;
       if (typeof document !== 'undefined' && !document.hidden) {
+        setTimeStatus(getTimeGateStatus());
         const currentUser = userRef.current;
         if (currentUser) {
           if (currentViewRef.current === 'portal') {
@@ -230,13 +236,15 @@ export default function App() {
           }
         }
       }
-    }, 2_500);
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // Vòng đồng bộ cấu hình time-gate định kỳ chạy khoảng 1 phút
     const configSyncInterval = setInterval(async () => {
       if (!mounted) return;
       await fetchTimeGateConfig().catch(() => {});
       setTimeStatus(getTimeGateStatus());
-    }, 10_000);
+    }, 60_000);
 
     return () => {
       mounted = false;
@@ -247,6 +255,7 @@ export default function App() {
       window.removeEventListener('canteen_order_placed', handleOrderCreated);
       window.removeEventListener('canteen_user_status_changed', handleUserStatusChanged);
       window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);
       clearInterval(configSyncInterval);
     };

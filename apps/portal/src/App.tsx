@@ -154,15 +154,21 @@ export default function App() {
     window.addEventListener('canteen_order_placed', handleOrderCreated);
     window.addEventListener('storage', handleStorage);
 
-    // Tự động làm mới dữ liệu đơn hàng và thực đơn định kỳ (2.5 giây khi tab đang xem)
+    // Cập nhật trạng thái giờ (time-gate) local với chu kỳ thưa (30 giây), không gọi API
     const clock = setInterval(() => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
-        if (typeof document !== 'undefined' && !document.hidden) {
-          refresh();
-        }
       }
-    }, 2_500);
+    }, 30_000);
+
+    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
+    const handleVisibilityChange = () => {
+      if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden) {
+        setTimeStatus(getTimeGateStatus());
+        refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       isMountedRef.current = false;
@@ -172,6 +178,7 @@ export default function App() {
       window.removeEventListener('canteen_order_created', handleOrderCreated);
       window.removeEventListener('canteen_order_placed', handleOrderCreated);
       window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);
     };
   }, [refresh]);

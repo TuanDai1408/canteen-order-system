@@ -475,14 +475,9 @@ export function PortalDashboard({
     }
   }, [availableOrderDates, orderDateFilter]);
 
-  // Tự động tải lại dữ liệu tức thì (Realtime auto-refresh) khi khách đặt món hoặc thay đổi trạng thái
+  // Tự động tải lại dữ liệu tức thì (Realtime & Event-based) khi khách đặt món hoặc thay đổi trạng thái
   useEffect(() => {
-    // 1. Polling nhẹ 3 giây một lần khi đang mở ứng dụng quản lý
-    const pollInterval = setInterval(() => {
-      onRefresh();
-    }, 3000);
-
-    // 2. Lắng nghe sự kiện tức thì (Custom Event & Storage)
+    // Lắng nghe sự kiện tức thì (Custom Event & Storage)
     const handleImmediateOrderSync = () => {
       onRefresh();
     };
@@ -493,7 +488,6 @@ export function PortalDashboard({
     window.addEventListener('storage', handleImmediateOrderSync);
 
     return () => {
-      clearInterval(pollInterval);
       window.removeEventListener('canteen_order_created', handleImmediateOrderSync);
       window.removeEventListener('canteen_order_updated', handleImmediateOrderSync);
       window.removeEventListener('canteen_order_cancelled', handleImmediateOrderSync);
