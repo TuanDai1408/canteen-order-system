@@ -124,53 +124,12 @@ export default function App() {
 
     const unsub = subscribeRealtime(() => {
       if (isMountedRef.current) {
+        setTimeStatus(getTimeGateStatus());
         refresh();
       }
     });
 
-    const handleWalletUpdated = (e: Event) => {
-      const customEvent = e as CustomEvent<{ walletBalance?: number }>;
-      if (customEvent.detail && customEvent.detail.walletBalance !== undefined) {
-        const newBalance = customEvent.detail.walletBalance;
-        setUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : prev));
-      }
-    };
-
-    const handleTimeGateUpdated = () => {
-      if (isMountedRef.current) {
-        setTimeStatus(getTimeGateStatus());
-      }
-    };
-
-    const handleSync = () => {
-      if (isMountedRef.current) {
-        setTimeStatus(getTimeGateStatus());
-        refresh();
-      }
-    };
-
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'canteen_time_gate_config' || !e.key || e.key.includes('canteen')) {
-        handleSync();
-      }
-    };
-
-    const SYNC_EVENTS = [
-      'canteen_order_created',
-      'canteen_order_placed',
-      'canteen_order_updated',
-      'canteen_order_cancelled',
-      'canteen_menu_updated',
-      'canteen_wallet_updated',
-      'canteen_user_status_changed',
-      'canteen_qr_token_updated',
-      'canteen_time_gate_updated',
-    ];
-
-    SYNC_EVENTS.forEach((evt) => window.addEventListener(evt, handleSync));
-    window.addEventListener('storage', handleStorage);
-
-    // Cập nhật trạng thái giờ (time-gate) local với chu kỳ thưa (30 giây), không gọi API
+    // Cập nhật trạng thái giờ (time-gate) local với chu kỳ thưa (30 giây), thuần logic client không gọi API
     const clock = setInterval(() => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
@@ -180,7 +139,8 @@ export default function App() {
     // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
     const handleVisibilityChange = () => {
       if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden) {
-        handleSync();
+        setTimeStatus(getTimeGateStatus());
+        refresh();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -188,8 +148,6 @@ export default function App() {
     return () => {
       isMountedRef.current = false;
       unsub();
-      SYNC_EVENTS.forEach((evt) => window.removeEventListener(evt, handleSync));
-      window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);
     };

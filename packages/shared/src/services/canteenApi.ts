@@ -2848,14 +2848,26 @@ export function fileToBase64(file: File): Promise<string> {
 // ============================================================
 
 export function subscribeRealtime(callback: () => void) {
-  // Lắng nghe sự kiện tức thì nội bộ giữa các tabs / components
+  let debounceTimer: any = null;
+
+  // Hợp nhất (coalesce) mọi sự kiện trong cửa sổ 60ms thành đúng 1 lần tải lại duy nhất
+  const triggerDebounced = (payload?: any) => {
+    if (payload?.table === 'settings' || payload?.table === 'system_settings') {
+      fetchTimeGateConfig().catch(() => {});
+    }
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      callback();
+    }, 60);
+  };
+
   const localHandler = () => {
-    callback();
+    triggerDebounced();
   };
 
   const broadcastHandler = (ev: MessageEvent) => {
     if (ev.data) {
-      callback();
+      triggerDebounced(ev.data);
     }
   };
 
@@ -2880,63 +2892,42 @@ export function subscribeRealtime(callback: () => void) {
     broadcastSyncChannel.addEventListener('message', broadcastHandler);
   }
 
+  const cleanupLocal = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (typeof window !== 'undefined') {
+      EVENT_NAMES.forEach((evt) => window.removeEventListener(evt, localHandler));
+    }
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.removeEventListener('message', broadcastHandler);
+    }
+  };
+
   if (!isSupabaseConfigured || !supabase) {
-    return () => {
-      if (typeof window !== 'undefined') {
-        EVENT_NAMES.forEach((evt) => window.removeEventListener(evt, localHandler));
-      }
-      if (broadcastSyncChannel) {
-        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
-      }
-    };
+    return cleanupLocal;
   }
 
   try {
-    let debounceTimer: any = null;
-    const debouncedCallback = (payload?: any) => {
-      // Nếu là bảng settings hoặc system_settings, chủ động tải lại config ngay
-      if (payload?.table === 'settings' || payload?.table === 'system_settings') {
-        fetchTimeGateConfig().catch(() => {});
-      }
-      if (debounceTimer) clearTimeout(debounceTimer);
-      // Cập nhật tức thì (80ms) khi có bất kỳ thay đổi nào từ user hoặc admin
-      debounceTimer = setTimeout(() => {
-        callback();
-      }, 80);
-    };
-
     const channelName = `canteen-realtime-${Math.random().toString(36).substring(2, 9)}`;
     const channel = supabase
       .channel(channelName, { config: { broadcast: { self: false } } })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (p) => debouncedCallback(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => debouncedCallback(p))
-      .on('broadcast', { event: 'canteen_sync' }, (p) => debouncedCallback(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => triggerDebounced(p))
+      .on('broadcast', { event: 'canteen_sync' }, (p) => triggerDebounced(p))
       .subscribe();
 
     return () => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      supabase.removeChannel(channel);
-      if (typeof window !== 'undefined') {
-        EVENT_NAMES.forEach((evt) => window.removeEventListener(evt, localHandler));
-      }
-      if (broadcastSyncChannel) {
-        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
-      }
+      cleanupLocal();
+      try {
+        supabase.removeChannel(channel);
+      } catch {}
     };
   } catch {
-    return () => {
-      if (typeof window !== 'undefined') {
-        EVENT_NAMES.forEach((evt) => window.removeEventListener(evt, localHandler));
-      }
-      if (broadcastSyncChannel) {
-        broadcastSyncChannel.removeEventListener('message', broadcastHandler);
-      }
-    };
+    return cleanupLocal;
   }
 }
 

@@ -196,45 +196,15 @@ export default function App() {
       handleSync();
     });
 
+    // Cập nhật số dư ví lạc quan (optimistic) trên UI tức thì trước khi dữ liệu từ server về
     const handleWalletUpdated = (e: Event) => {
       const customEvent = e as CustomEvent<{ walletBalance?: number }>;
       if (customEvent.detail && customEvent.detail.walletBalance !== undefined) {
         const newBalance = customEvent.detail.walletBalance;
         setUser((prev) => (prev ? { ...prev, walletBalance: newBalance } : prev));
       }
-      handleSync();
     };
-
-    const handleTimeGateUpdated = () => {
-      setTimeStatus(getTimeGateStatus());
-      handleSync();
-    };
-
-    const handleStorage = (e: StorageEvent) => {
-      if (e.key === 'canteen_time_gate_config' || !e.key || e.key.includes('canteen')) {
-        setTimeStatus(getTimeGateStatus());
-        handleSync();
-      }
-    };
-
-    const handleUserStatusChanged = () => {
-      handleSync();
-    };
-
-    const SYNC_EVENTS = [
-      'canteen_order_created',
-      'canteen_order_placed',
-      'canteen_order_updated',
-      'canteen_order_cancelled',
-      'canteen_menu_updated',
-      'canteen_qr_token_updated',
-    ];
-
-    SYNC_EVENTS.forEach((evt) => window.addEventListener(evt, handleSync));
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
-    window.addEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-    window.addEventListener('canteen_user_status_changed', handleUserStatusChanged);
-    window.addEventListener('storage', handleStorage);
 
     // Cập nhật trạng thái giờ (time-gate) trên máy client, tính toán thuần local (không gọi API)
     const clock = setInterval(() => {
@@ -254,11 +224,7 @@ export default function App() {
     return () => {
       mounted = false;
       unsub();
-      SYNC_EVENTS.forEach((evt) => window.removeEventListener(evt, handleSync));
       window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
-      window.removeEventListener('canteen_time_gate_updated', handleTimeGateUpdated);
-      window.removeEventListener('canteen_user_status_changed', handleUserStatusChanged);
-      window.removeEventListener('storage', handleStorage);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       clearInterval(clock);
     };
