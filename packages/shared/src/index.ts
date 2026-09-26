@@ -46,6 +46,8 @@ export {
   getCachedOrders,
   setCachedOrders,
   updateOrderStatus,
+  getLatestOrderStatus,
+  getLatestMenuItemState,
   createUserByAdmin,
   approveUserAndFundWallet,
   fileToBase64,

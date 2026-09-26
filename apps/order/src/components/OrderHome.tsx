@@ -327,6 +327,7 @@ export function OrderHome({
           message: result.error || 'Hệ thống không thể xử lý đơn đặt món của bạn lúc này. Vui lòng thử lại.',
           type: 'error',
         });
+        await onRefresh();
       } else {
         if (result.new_balance !== undefined) {
           currentUser.walletBalance = result.new_balance;
@@ -359,6 +360,18 @@ export function OrderHome({
   const handleCancelOrder = async (orderId: string) => {
     const targetOrder = orders.find((o) => o.id === orderId);
     if (targetOrder) {
+      if (targetOrder.status === 'preparing') {
+        setFeedbackModal({
+          title: 'Không thể hủy đơn',
+          message:
+            'Món ăn của bạn đã được chuyển xuống Bếp và đang được chế biến. Không thể hủy đơn ở giai đoạn này. Vui lòng liên hệ trực tiếp Canteen nếu cần hỗ trợ.',
+          type: 'warning',
+        });
+        setCancellingOrderId(null);
+        await onRefresh();
+        return;
+      }
+
       const orderCreatedTime = new Date(targetOrder.createdAt).getTime();
       const elapsed = Date.now() - orderCreatedTime;
       // Nếu quá 5 phút (cho phép 10 giây độ trễ mạng)
@@ -370,6 +383,7 @@ export function OrderHome({
           type: 'warning',
         });
         setCancellingOrderId(null);
+        await onRefresh();
         return;
       }
     }
@@ -394,6 +408,7 @@ export function OrderHome({
           message: result.error || 'Đơn hàng không thể hủy vào thời điểm này.',
           type: 'error',
         });
+        await onRefresh();
       }
     } catch (err: any) {
       setFeedbackModal({
@@ -401,6 +416,7 @@ export function OrderHome({
         message: err.message || 'Lỗi kết nối khi gửi yêu cầu hủy đơn.',
         type: 'error',
       });
+      await onRefresh();
     } finally {
       setSubmitting(false);
       setCancellingOrderId(null);

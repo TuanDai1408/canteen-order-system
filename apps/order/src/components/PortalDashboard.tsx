@@ -1058,10 +1058,14 @@ export function PortalDashboard({
   const handleUpdateOrderStatus = async (orderId: string, status: OrderStatus) => {
     setUpdatingOrderId(orderId);
     try {
-      await updateOrderStatus(orderId, status, currentUser);
+      const result = await updateOrderStatus(orderId, status, currentUser);
+      if (result && !result.success) {
+        setMsg({ type: 'err', text: result.error || 'Không thể cập nhật trạng thái đơn hàng.' });
+      }
       onRefresh();
     } catch (err: any) {
       setMsg({ type: 'err', text: err?.message || 'Lỗi khi cập nhật trạng thái đơn hàng' });
+      onRefresh();
     } finally {
       setUpdatingOrderId(null);
     }

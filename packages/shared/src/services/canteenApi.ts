@@ -1176,10 +1176,10 @@ export async function placeOrder(params: {
   }
 
   // Kiểm tra tài khoản đã kích hoạt chưa
-  if (userData.is_active === false) {
+  if (userData.is_active === false || userData.is_disabled === true) {
     return {
       success: false,
-      error: 'Tài khoản của bạn đang chờ Ban Quản Trị Canteen duyệt và cấp hạn mức ví. Vui lòng liên hệ Quản lý Căn tin để được kích hoạt.',
+      error: 'Tài khoản của bạn đang chờ Ban Quản Trị Canteen duyệt hoặc đã bị tạm khóa. Vui lòng liên hệ Quản lý Căn tin để được hỗ trợ.',
     };
   }
 
@@ -1234,6 +1234,14 @@ export async function placeOrder(params: {
     const itemPrice = Number(requestedItem.price ?? menuItem?.price ?? 35000);
     const itemImg = requestedItem.imageUrl || menuItem?.image_url || menuItem?.imageUrl || '';
     const itemStock = menuItem ? Number(menuItem.current_stock ?? menuItem.currentStock ?? 999) : 999;
+    const itemIsActive = menuItem ? (menuItem.is_active !== false && menuItem.isActive !== false) : true;
+
+    if (!itemIsActive) {
+      return {
+        success: false,
+        error: `Món "${itemName}" hiện đã ngừng bán / không còn hiển thị. Vui lòng bỏ món này khỏi giỏ hàng và thử lại.`,
+      };
+    }
 
     if (itemStock < requestedItem.quantity) {
       return {
@@ -1823,6 +1831,13 @@ export async function cancelOrder(
       return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
     }
 
+    if (order.status === 'preparing') {
+      return {
+        success: false,
+        error: 'Món ăn của bạn đã được chuyển xuống Bếp và đang được chế biến. Không thể hủy đơn ở giai đoạn này. Vui lòng liên hệ trực tiếp Canteen nếu cần hỗ trợ.',
+      };
+    }
+
     // Kiểm tra giới hạn 5 phút đối với yêu cầu hủy bởi người dùng
     const isUserCancellation =
       !reason ||
@@ -2075,6 +2090,12 @@ export async function cancelOrder(
     if (cachedOrder.status === 'completed') {
       return { success: false, error: 'Đơn hàng đã hoàn thành, không thể hủy.' };
     }
+    if (cachedOrder.status === 'preparing') {
+      return {
+        success: false,
+        error: 'Món ăn của bạn đã được chuyển xuống Bếp và đang được chế biến. Không thể hủy đơn ở giai đoạn này. Vui lòng liên hệ trực tiếp Canteen nếu cần hỗ trợ.',
+      };
+    }
 
     // Cập nhật cache thành đã hủy
     const updatedAll = cachedList.map((o) =>
@@ -2303,19 +2324,81 @@ export async function getOrders(filters?: {
   }
 }
 
+// Lấy trạng thái mới nhất của 1 đơn hàng trực tiếp từ Supabase (không dùng cache),
+// chỉ select đúng cột cần thiết để nhẹ, tránh tốn egress không cần thiết.
+export async function getLatestOrderStatus(
+  orderId: string
+): Promise<{ status: string; cancelledAt?: string } | null> {
+  checkSupabase();
+  try {
+    const { data } = await supabase
+      .from('orders')
+      .select('status, cancelled_at')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!data) return null;
+    return { status: data.status, cancelledAt: data.cancelled_at };
+  } catch (e) {
+    console.warn('[getLatestOrderStatus note]:', e);
+    return null;
+  }
+}
+
+// Lấy trạng thái tồn kho + hiển thị mới nhất của 1 món trực tiếp từ Supabase.
+export async function getLatestMenuItemState(
+  menuItemId: string
+): Promise<{ currentStock: number; isActive: boolean } | null> {
+  checkSupabase();
+  try {
+    const { data } = await supabase
+      .from('menu_items')
+      .select('current_stock, is_active')
+      .eq('id', menuItemId)
+      .maybeSingle();
+    if (!data) return null;
+    return { currentStock: Number(data.current_stock ?? 0), isActive: data.is_active !== false };
+  } catch (e) {
+    console.warn('[getLatestMenuItemState note]:', e);
+    return null;
+  }
+}
+
 export async function updateOrderStatus(
   orderId: string,
   status: string,
   actor: UserProfile
-) {
+): Promise<{ success: boolean; error?: string }> {
   checkSupabase();
+
+  // Kiểm tra trạng thái mới nhất trước khi ghi đè, tránh xung đột với hành động của khách hàng
+  const latest = await getLatestOrderStatus(orderId);
+  if (latest) {
+    if (latest.status === 'cancelled') {
+      return {
+        success: false,
+        error: 'Đơn hàng này vừa bị khách hàng hủy. Không thể chuyển sang trạng thái này nữa. Danh sách đơn sẽ được tự động làm mới.',
+      };
+    }
+    if (latest.status === 'completed' && status !== 'completed') {
+      return {
+        success: false,
+        error: 'Đơn hàng này đã ở trạng thái Hoàn thành, không thể chuyển ngược lại trạng thái trước đó.',
+      };
+    }
+  }
+
   try {
-    await supabase
+    const { error: updErr } = await supabase
       .from('orders')
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', orderId);
+    if (updErr) {
+      console.warn('Update order status remote error:', updErr);
+      return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng: ' + updErr.message };
+    }
   } catch (e) {
     console.warn('Update order status remote note:', e);
+    return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng. Vui lòng thử lại.' };
   }
 
   // Cập nhật trạng thái trong cache cục bộ
@@ -2327,6 +2410,7 @@ export async function updateOrderStatus(
 
   // Phát tín hiệu broadcast cập nhật trạng thái đơn tức thì toàn hệ thống
   broadcastSystemEvent('canteen_order_updated', { orderId, status });
+  return { success: true };
 }
 
 // ============================================================
