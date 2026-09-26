@@ -61,9 +61,7 @@ export function LoginPage({ onSuccess }: Props) {
       <div className="w-full max-w-md relative z-10">
         {/* Brand header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center p-2.5 bg-white/95 rounded-2xl border border-slate-200/80 shadow-md mb-2">
-            <BrandLogo height={72} />
-          </div>
+          <BrandLogo height={72} className="mb-2" />
           <p className="text-slate-600 font-medium text-xs sm:text-sm mt-1 max-w-sm mx-auto">
             Portal Quản trị & Điều hành Hệ thống Suất ăn Cơm ngon Siba
           </p>

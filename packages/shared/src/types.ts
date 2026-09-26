@@ -112,3 +112,15 @@ export interface WalletTransaction {
   createdBy?: string;
   createdAt: string;
 }
+
+export interface PrinterConfig {
+  tongPrinterName: string;
+  comPrinterName: string;
+  nuocPrinterName: string;
+}
+
+export interface AutoPrintConfig {
+  enabled: boolean;
+  updatedBy?: string;
+  updatedAt?: string;
+}

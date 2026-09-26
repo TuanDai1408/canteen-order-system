@@ -5,6 +5,7 @@ import {
   UtensilsCrossed,
   Mail,
   Lock,
+  Phone,
   ArrowRight,
   ShieldCheck,
   Eye,
@@ -22,6 +23,7 @@ interface Props {
 export function LoginPage({ onSuccess }: Props) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [fullName, setFullName] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -37,11 +39,29 @@ export function LoginPage({ onSuccess }: Props) {
 
     try {
       if (mode === 'signup') {
-        await signUp(email.trim(), password, fullName.trim(), 'teacher');
+        const cleanPhone = phoneNumber.trim().replace(/[\s.-]/g, '');
+        if (!cleanPhone) {
+          setError('Vui lòng nhập số điện thoại liên hệ của cán bộ / giáo viên.');
+          setLoading(false);
+          return;
+        }
+        const vnPhoneRegex = /^(0|\+84)[0-9]{9}$/;
+        if (!vnPhoneRegex.test(cleanPhone)) {
+          setError('Số điện thoại không hợp lệ. Vui lòng nhập số điện thoại Việt Nam gồm 10 chữ số bắt đầu bằng 0 (hoặc +84).');
+          setLoading(false);
+          return;
+        }
+
+        const standardPhone = cleanPhone.startsWith('+84') ? '0' + cleanPhone.slice(3) : cleanPhone;
+        await signUp(email.trim(), password, fullName.trim(), 'teacher', standardPhone);
         setSuccessMsg(
           'Đăng ký tài khoản thành công! Hồ sơ đã được đồng bộ lên Supabase. Tài khoản mới sẽ có hiệu lực sau khi Ban Quản Trị Canteen duyệt và cấp hạn mức ví. Hãy đăng nhập để theo dõi trạng thái.'
         );
         setMode('login');
+        setFullName('');
+        setPhoneNumber('');
+        setEmail('');
+        setPassword('');
         setLoading(false);
         return;
       }
@@ -74,9 +94,7 @@ export function LoginPage({ onSuccess }: Props) {
       <div className="w-full max-w-md relative z-10">
         {/* Brand header */}
         <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center p-2.5 bg-white/95 rounded-2xl border border-slate-200/80 shadow-md mb-2">
-            <BrandLogo height={72} />
-          </div>
+          <BrandLogo height={72} className="mb-2" />
           <p className="text-slate-600 font-medium text-xs sm:text-sm mt-1 max-w-sm mx-auto">
             Hệ thống đặt suất ăn trực tuyến dành cho Cán bộ, Giảng viên & Nhân viên
           </p>
@@ -126,19 +144,41 @@ export function LoginPage({ onSuccess }: Props) {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Họ và tên cán bộ / giáo viên
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Ví dụ: Cô Nguyễn Thị Mai"
-                  className="w-full px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:bg-white transition"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Họ và tên cán bộ / giáo viên <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Ví dụ: Cô Nguyễn Thị Mai"
+                    className="w-full px-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:bg-white transition"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Số điện thoại liên hệ <span className="text-rose-500">*</span>
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Phone className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="tel"
+                      required
+                      value={phoneNumber}
+                      onChange={(e) => setPhoneNumber(e.target.value)}
+                      placeholder="0901 234 567"
+                      className="w-full pl-10 pr-4 py-2.5 sm:py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:bg-white transition"
+                      autoComplete="tel"
+                    />
+                  </div>
+                </div>
+              </>
             )}
 
             <div>

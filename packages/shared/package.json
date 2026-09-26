@@ -9,7 +9,8 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.49.1"
+    "@supabase/supabase-js": "^2.49.1",
+    "qz-tray": "^2.3.0"
   },
   "devDependencies": {
     "typescript": "^5.8.2"

@@ -10,6 +10,8 @@ export type {
   QRExceptionToken,
   TimeGateStatus,
   WalletTransaction,
+  PrinterConfig,
+  AutoPrintConfig,
 } from './types';
 
 // Supabase client
@@ -74,7 +76,29 @@ export {
   type OrderTicket,
   isValidUuid,
   generateUUID,
+  AUTO_PRINT_STORAGE_KEY,
+  getCustomAutoPrintConfig,
+  fetchAutoPrintConfig,
+  setAutoPrintEnabled,
+  PRINTER_CONFIG_STORAGE_KEY,
+  getCustomPrinterConfig,
+  fetchPrinterConfig,
+  setPrinterConfig,
 } from './services/canteenApi';
+
+// QZ Tray Multi-Printer POS Service
+export {
+  connectQz,
+  disconnectQz,
+  isQzConnected,
+  listAvailablePrinters,
+  buildEscPosCommands,
+  printBillToPrinter,
+  printTestTicket,
+  printOrderToAllPrinters,
+  type PrintBillResult,
+  type MultiPrinterPrintResult,
+} from './services/qzPrintService';
 
 // Utils
 export { detectCurrentDevice } from './utils/deviceDetector';

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   formatVnd,
@@ -29,6 +29,18 @@ import {
   type TimeGateStatus,
   type OrderStatus,
   type UserRole,
+  type PrinterConfig,
+  type AutoPrintConfig,
+  getCustomAutoPrintConfig,
+  fetchAutoPrintConfig,
+  setAutoPrintEnabled,
+  getCustomPrinterConfig,
+  fetchPrinterConfig,
+  setPrinterConfig,
+  connectQz,
+  listAvailablePrinters,
+  printTestTicket,
+  printOrderToAllPrinters,
 } from '@canteen/shared';
 import { PosReceiptTicket, type PaperSize } from './PosReceiptTicket';
 import { BrandLogo } from './BrandLogo';
@@ -69,6 +81,7 @@ import {
   Loader2,
   ShieldCheck,
   Wallet,
+  CreditCard,
   FileSpreadsheet,
   Calendar,
   StickyNote,
@@ -167,7 +180,7 @@ interface Props {
   onSwitchToOrder?: () => void;
 }
 
-type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr';
+type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr' | 'printers';
 
 export function PortalDashboard({
   currentUser,
@@ -235,6 +248,19 @@ export function PortalDashboard({
   const [receiptPaperSize, setReceiptPaperSize] = useState<PaperSize>('k80');
   const [batchTestCount, setBatchTestCount] = useState<number | null>(null);
 
+  // Đa máy in POS (QZ Tray) & Tự động in khi có đơn mới
+  const [printerConfig, setPrinterConfigState] = useState<PrinterConfig>(getCustomPrinterConfig());
+  const [autoPrintConfig, setAutoPrintConfigState] = useState<AutoPrintConfig>(getCustomAutoPrintConfig());
+  const [qzStatus, setQzStatus] = useState<{ isConnected: boolean; isChecking: boolean; message?: string }>({
+    isConnected: false,
+    isChecking: false,
+  });
+  const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+  const [isSavingPrinters, setIsSavingPrinters] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
+  const [testPrintStatus, setTestPrintStatus] = useState<Record<string, { loading: boolean; success?: boolean; error?: string }>>({});
+  const printedOrderIdsRef = useRef<Set<string>>(new Set());
+
   // Filtered batch orders (for testing preset count: 2, 10, or all)
   const displayedBatchOrders = useMemo(() => {
     if (!batchPrintOrders) return [];
@@ -260,6 +286,7 @@ export function PortalDashboard({
 
   // Add User state (Cán bộ & Ví suất ăn)
   const [isAddUserOpen, setIsAddUserOpen] = useState(false);
+  const [viewingUser, setViewingUser] = useState<UserProfile | null>(null);
   const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [userStatusFilter, setUserStatusFilter] = useState<'all' | 'pending' | 'active' | 'disabled'>('all');
   const [disablingUser, setDisablingUser] = useState<{ user: UserProfile; willDisable: boolean } | null>(null);
@@ -297,6 +324,299 @@ export function PortalDashboard({
     walletBalance: 1000000,
     monthlyAllowance: 1000000,
   });
+
+  // Kiểm tra kết nối QZ Tray và tải danh sách máy in từ hệ điều hành
+  const checkQzAndLoadPrinters = useCallback(async () => {
+    setQzStatus((prev) => ({ ...prev, isChecking: true }));
+    try {
+      const conn = await connectQz();
+      if (conn.success) {
+        const printers = await listAvailablePrinters();
+        setAvailablePrinters(printers);
+        setQzStatus({
+          isConnected: true,
+          isChecking: false,
+          message: `Đã kết nối QZ Tray. Tìm thấy ${printers.length} máy in trên hệ thống.`,
+        });
+      } else {
+        setQzStatus({
+          isConnected: false,
+          isChecking: false,
+          message: conn.error || 'Chưa thể kết nối tới QZ Tray.',
+        });
+      }
+    } catch (err: any) {
+      setQzStatus({
+        isConnected: false,
+        isChecking: false,
+        message: err?.message || 'Lỗi khi kiểm tra kết nối QZ Tray.',
+      });
+    }
+  }, []);
+
+  // Khởi tạo và lắng nghe đồng bộ cấu hình máy in & auto-print đa tab
+  useEffect(() => {
+    fetchPrinterConfig().then((cfg) => setPrinterConfigState(cfg)).catch(() => {});
+    fetchAutoPrintConfig().then((cfg) => setAutoPrintConfigState(cfg)).catch(() => {});
+    checkQzAndLoadPrinters();
+
+    const handlePrinterConfigUpdate = (e: Event) => {
+      const cfg = (e as CustomEvent)?.detail;
+      if (cfg) setPrinterConfigState(cfg);
+    };
+
+    const handleAutoPrintUpdate = (e: Event) => {
+      const cfg = (e as CustomEvent)?.detail;
+      if (cfg) setAutoPrintConfigState(cfg);
+    };
+
+    window.addEventListener('canteen_printer_config_updated', handlePrinterConfigUpdate);
+    window.addEventListener('canteen_auto_print_updated', handleAutoPrintUpdate);
+
+    return () => {
+      window.removeEventListener('canteen_printer_config_updated', handlePrinterConfigUpdate);
+      window.removeEventListener('canteen_auto_print_updated', handleAutoPrintUpdate);
+    };
+  }, [checkQzAndLoadPrinters]);
+
+  // Lắng nghe sự kiện ĐƠN HÀNG MỚI (INSERT) để tự động in bill ra 3 máy in nếu Auto-print đang BẬT
+  useEffect(() => {
+    const handleNewOrderInserted = async (e: Event) => {
+      const rawOrder = (e as CustomEvent)?.detail;
+      if (!rawOrder) return;
+      const orderId = rawOrder.id || rawOrder.order_code || rawOrder.orderCode;
+      if (!orderId) return;
+
+      const currentAutoCfg = getCustomAutoPrintConfig();
+      if (!currentAutoCfg.enabled) {
+        return;
+      }
+
+      // Guard chống in trùng lặp đơn hàng
+      if (printedOrderIdsRef.current.has(orderId)) {
+        return;
+      }
+      printedOrderIdsRef.current.add(orderId);
+
+      try {
+        let orderToPrint: Order | undefined;
+
+        if (Array.isArray(rawOrder.items) && rawOrder.items.length > 0) {
+          orderToPrint = rawOrder;
+        } else {
+          const matchInState = orders.find((o) => o.id === orderId || o.orderCode === orderId);
+          if (matchInState && matchInState.items && matchInState.items.length > 0) {
+            orderToPrint = matchInState;
+          } else {
+            const cachedList = getCachedOrders();
+            const matchInCache = cachedList.find((o) => o.id === orderId || o.orderCode === orderId);
+            if (matchInCache && matchInCache.items && matchInCache.items.length > 0) {
+              orderToPrint = matchInCache;
+            }
+          }
+        }
+
+        if (!orderToPrint) {
+          const itemsFromNote = parseItemsFromNote(rawOrder.note || rawOrder.notes);
+          orderToPrint = {
+            id: rawOrder.id,
+            orderCode: rawOrder.order_code || rawOrder.orderCode || 'ORD-NEW',
+            userId: rawOrder.user_id || rawOrder.userId || '',
+            userName: rawOrder.user_name || rawOrder.userName || 'Cán bộ',
+            userPhone: rawOrder.user_phone || rawOrder.userPhone || '',
+            userDepartment: rawOrder.user_department || rawOrder.userDepartment || '',
+            items:
+              itemsFromNote.length > 0
+                ? itemsFromNote
+                : [{ menuItemId: '', name: 'Suất ăn Căn tin', price: Number(rawOrder.total_amount || 35000), quantity: 1, imageUrl: '' }],
+            totalAmount: Number(rawOrder.total_amount || rawOrder.totalAmount || 0),
+            deliveryMethod: rawOrder.delivery_method || rawOrder.deliveryMethod || 'dine_in',
+            roomNumber: rawOrder.room_number || rawOrder.roomNumber,
+            pickupTime: rawOrder.pickup_time || rawOrder.pickupTime || '11:30',
+            targetDate: rawOrder.target_date || rawOrder.targetDate || getTomorrowStr(),
+            createdAt: rawOrder.created_at || rawOrder.createdAt || new Date().toISOString(),
+            status: (rawOrder.status as OrderStatus) || 'confirmed',
+            cancellationDeadline: '16:00',
+            note: rawOrder.note || rawOrder.notes,
+          };
+        }
+
+        console.info('[Auto-Print] Tự động in đơn hàng mới vừa đặt:', orderToPrint.orderCode);
+        const currPrinters = getCustomPrinterConfig();
+        const res = await printOrderToAllPrinters(orderToPrint, menu, currPrinters);
+
+        if (res.success) {
+          const count = res.results.filter((r) => r.success).length;
+          setMsg({
+            type: 'ok',
+            text: `[Tự động in POS] Đã in thành công ${count} phiếu cho đơn mới ${orderToPrint.orderCode}!`,
+          });
+        } else if (res.fallbackNeeded) {
+          console.warn('[Auto-Print] QZ Tray chưa mở. Không thể tự động in.');
+          setMsg({
+            type: 'err',
+            text: `[Tự động in POS] Chưa mở QZ Tray trên máy tính để tự động in đơn ${orderToPrint.orderCode}. Vui lòng mở QZ Tray.`,
+          });
+        } else if (res.hasErrors) {
+          setMsg({
+            type: 'err',
+            text: `[Tự động in POS] Lỗi máy in đơn ${orderToPrint.orderCode}: ${res.errorMessage}`,
+          });
+        }
+      } catch (err: any) {
+        console.error('[Auto-Print Error]:', err);
+      }
+    };
+
+    window.addEventListener('canteen_new_order_inserted', handleNewOrderInserted);
+    return () => {
+      window.removeEventListener('canteen_new_order_inserted', handleNewOrderInserted);
+    };
+  }, [menu, orders]);
+
+  // Bật/tắt chế độ tự động in
+  const handleToggleAutoPrint = async () => {
+    const nextState = !autoPrintConfig.enabled;
+    try {
+      await setAutoPrintEnabled(nextState, currentUser);
+      setAutoPrintConfigState({
+        enabled: nextState,
+        updatedBy: currentUser?.name || 'Admin',
+        updatedAt: new Date().toISOString(),
+      });
+      setMsg({
+        type: 'ok',
+        text: `Đã ${nextState ? 'BẬT' : 'TẮT'} chế độ Tự động in bill khi có đơn hàng mới!`,
+      });
+    } catch (err: any) {
+      setMsg({
+        type: 'err',
+        text: 'Không thể cập nhật cấu hình tự động in: ' + (err?.message || err),
+      });
+    }
+  };
+
+  // Lưu cấu hình tên 3 máy in POS
+  const handleSavePrinterConfig = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSavingPrinters(true);
+    try {
+      await setPrinterConfig(printerConfig, currentUser);
+      setMsg({
+        type: 'ok',
+        text: 'Đã lưu và đồng bộ cấu hình đa máy in POS thành công!',
+      });
+    } catch (err: any) {
+      setMsg({
+        type: 'err',
+        text: 'Lỗi lưu cấu hình máy in: ' + (err?.message || err),
+      });
+    } finally {
+      setIsSavingPrinters(false);
+    }
+  };
+
+  // Gửi lệnh in thử cho từng máy in riêng lẻ
+  const handleTestPrint = async (roleKey: 'tong' | 'com' | 'nuoc', printerName: string, roleTitle: string) => {
+    if (!printerName || !printerName.trim()) {
+      setMsg({ type: 'err', text: `Vui lòng chọn hoặc nhập tên máy in cho "${roleTitle}" trước khi in thử.` });
+      return;
+    }
+
+    setTestPrintStatus((prev) => ({ ...prev, [roleKey]: { loading: true } }));
+    try {
+      await printTestTicket(printerName.trim(), roleTitle);
+      setTestPrintStatus((prev) => ({
+        ...prev,
+        [roleKey]: { loading: false, success: true },
+      }));
+      setMsg({
+        type: 'ok',
+        text: `Đã gửi lệnh in thử thành công tới máy in "${printerName.trim()}"!`,
+      });
+    } catch (err: any) {
+      const errTxt = err?.message || 'Lỗi in thử';
+      setTestPrintStatus((prev) => ({
+        ...prev,
+        [roleKey]: { loading: false, success: false, error: errTxt },
+      }));
+      setMsg({
+        type: 'err',
+        text: `Không thể in thử máy "${printerName}": ${errTxt}`,
+      });
+    }
+  };
+
+  // Xử lý in 1 đơn hàng qua QZ Tray (fallback window.print nếu chưa mở QZ Tray)
+  const handlePrintSingleReceipt = async (order: Order) => {
+    setIsPrinting(true);
+    try {
+      const res = await printOrderToAllPrinters(order, menu, printerConfig);
+      if (res.success) {
+        const count = res.results.filter((r) => r.success).length;
+        setMsg({
+          type: 'ok',
+          text: `Đã gửi in ${count} phiếu POS thành công tới các máy in quầy & bếp!`,
+        });
+        setPrintReceiptOrder(null);
+        return;
+      }
+
+      if (res.fallbackNeeded) {
+        console.info('[Print Fallback] QZ Tray chưa mở hoặc chưa cấu hình. Fallback về window.print()');
+        setMsg({
+          type: 'ok',
+          text: 'Đang mở hộp thoại in trình duyệt (QZ Tray chưa mở trên máy này)...',
+        });
+        window.print();
+        return;
+      }
+
+      if (res.hasErrors) {
+        setMsg({
+          type: 'err',
+          text: res.errorMessage || 'Một số máy in gặp sự cố khi in.',
+        });
+      }
+    } catch (err: any) {
+      console.warn('[Print Error] Fallback to window.print():', err);
+      window.print();
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
+  // Xử lý in hàng loạt nhiều đơn qua QZ Tray (fallback window.print nếu chưa mở QZ Tray)
+  const handlePrintBatchReceipts = async (batchOrders: Order[]) => {
+    setIsPrinting(true);
+    try {
+      const conn = await connectQz();
+      if (!conn.success) {
+        console.info('[Batch Print Fallback] QZ Tray không khả dụng, dùng window.print()');
+        window.print();
+        return;
+      }
+
+      let totalPrinted = 0;
+      for (const ord of batchOrders) {
+        const res = await printOrderToAllPrinters(ord, menu, printerConfig);
+        if (res.success) {
+          totalPrinted += res.results.filter((r) => r.success).length;
+        }
+      }
+
+      setMsg({
+        type: 'ok',
+        text: `Đã in hàng loạt thành công ${totalPrinted} phiếu POS qua QZ Tray!`,
+      });
+      setBatchPrintOrders(null);
+      setBatchTestCount(null);
+    } catch (err) {
+      window.print();
+    } finally {
+      setIsPrinting(false);
+    }
+  };
 
   // Overview metrics
   const activeOrders = useMemo(() => orders.filter((o) => o.status !== 'cancelled'), [orders]);
@@ -1083,6 +1403,9 @@ export function PortalDashboard({
       isPendingBadge: pendingUsersCount > 0,
     },
     { id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode },
+    ...(currentUser?.role === 'admin'
+      ? [{ id: 'printers' as Tab, label: 'Cài đặt máy in', icon: Printer }]
+      : []),
   ];
 
   const handleSelectTab = (selectedTab: Tab) => {
@@ -1270,6 +1593,29 @@ export function PortalDashboard({
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Quick Auto-Print Toggle in Header */}
+            <button
+              onClick={handleToggleAutoPrint}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition cursor-pointer border shadow-2xs min-h-[40px] ${
+                autoPrintConfig.enabled
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300'
+                  : 'bg-white hover:bg-slate-50 text-slate-600 border-slate-200'
+              }`}
+              title={`Tự động in bill khi có đơn mới: ${
+                autoPrintConfig.enabled ? 'Đang BẬT' : 'Đang TẮT'
+              }. Bấm để thay đổi.`}
+            >
+              <Printer className={`w-3.5 h-3.5 ${autoPrintConfig.enabled ? 'text-emerald-600' : 'text-slate-400'}`} />
+              <span>Auto-in:</span>
+              <span
+                className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold ${
+                  autoPrintConfig.enabled ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-700'
+                }`}
+              >
+                {autoPrintConfig.enabled ? 'BẬT' : 'TẮT'}
+              </span>
+            </button>
+
             <button
               onClick={handleRefresh}
               disabled={isRefreshing}
@@ -3079,6 +3425,7 @@ export function PortalDashboard({
                       <tr>
                         <th className="py-3 px-4">Họ và tên</th>
                         <th className="py-3 px-4">Email</th>
+                        <th className="py-3 px-4">Số điện thoại</th>
                         <th className="py-3 px-4">Phòng ban</th>
                         <th className="py-3 px-4">Trạng thái</th>
                         <th className="py-3 px-4 text-right">Số dư ví</th>
@@ -3093,7 +3440,13 @@ export function PortalDashboard({
                         const isSelf = u.id === currentUser.id;
 
                         return (
-                          <tr key={u.id} className={`hover:bg-slate-50/70 ${isUserDisabled ? 'bg-rose-50/30' : isPending ? 'bg-amber-50/30' : ''}`}>
+                          <tr
+                            key={u.id}
+                            onClick={() => setViewingUser(u)}
+                            className={`cursor-pointer hover:bg-indigo-50/40 transition-colors ${
+                              isUserDisabled ? 'bg-rose-50/30' : isPending ? 'bg-amber-50/30' : ''
+                            }`}
+                          >
                             <td className="py-3 px-4">
                               <p className={`font-bold ${isUserDisabled ? 'text-slate-500 line-through decoration-rose-400' : 'text-slate-900'}`}>{u.name}</p>
                               <span className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">
@@ -3107,6 +3460,9 @@ export function PortalDashboard({
                               </span>
                             </td>
                             <td className="py-3 px-4 text-slate-500 font-mono text-[11px]">{u.email}</td>
+                            <td className="py-3 px-4 text-slate-700 font-mono text-[11px]">
+                              {u.phoneNumber || <span className="text-slate-300">—</span>}
+                            </td>
                             <td className="py-3 px-4 text-slate-700">
                               <div>{u.department || 'Nhà trường'}</div>
                               {u.defaultRoom && (
@@ -3137,11 +3493,12 @@ export function PortalDashboard({
                             <td className="py-3 px-4 text-right text-slate-500 font-semibold">
                               {formatVnd(u.monthlyAllowance)}
                             </td>
-                            <td className="py-3 px-4 text-center">
+                            <td className="py-3 px-4 text-center" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-center gap-1.5">
                                 {isPending ? (
                                   <button
-                                    onClick={() => {
+                                    onClick={(e) => {
+                                      e.stopPropagation();
                                       setApprovingUser(u);
                                       setApprovalWalletAmount(1000000);
                                       setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
@@ -3154,7 +3511,8 @@ export function PortalDashboard({
                                 ) : (
                                   <>
                                     <button
-                                      onClick={() => {
+                                      onClick={(e) => {
+                                        e.stopPropagation();
                                         setWalletModalUser(u);
                                         setWalletAmountChange(50000);
                                       }}
@@ -3166,7 +3524,10 @@ export function PortalDashboard({
 
                                     {isUserDisabled ? (
                                       <button
-                                        onClick={() => setDisablingUser({ user: u, willDisable: false })}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setDisablingUser({ user: u, willDisable: false });
+                                        }}
                                         className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold rounded-xl text-[11px] border border-emerald-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
                                         title="Kích hoạt lại tài khoản này để cán bộ có thể đăng nhập và đặt suất ăn"
                                       >
@@ -3176,7 +3537,10 @@ export function PortalDashboard({
                                     ) : (
                                       !isSelf && (
                                         <button
-                                          onClick={() => setDisablingUser({ user: u, willDisable: true })}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setDisablingUser({ user: u, willDisable: true });
+                                          }}
                                           className="px-2.5 py-1.5 bg-slate-50 hover:bg-rose-50 text-slate-500 hover:text-rose-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-rose-200 transition cursor-pointer flex items-center gap-1 min-h-[34px]"
                                           title="Vô hiệu hóa tài khoản: cán bộ sẽ không thể đăng nhập hoặc đặt món"
                                         >
@@ -3529,6 +3893,385 @@ export function PortalDashboard({
                   itemName="mã QR"
                 />
               </div>
+            </div>
+          )}
+
+          {/* ================= TAB 7: SETUP MÁY IN POS (QZ TRAY) ================= */}
+          {tab === 'printers' && currentUser?.role === 'admin' && (
+            <div className="space-y-6 max-w-5xl mx-auto">
+              {/* Header & QZ Tray Connection Status Card */}
+              <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs space-y-5">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">
+                        Cấu hình Đa Máy in POS & Tự Động In
+                      </h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                        QZ Tray ESC/POS
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Định tuyến in độc lập 3 loại bill (Tổng / Bếp Cơm / Bếp Nước) ra 3 máy in vật lý khác nhau qua giao thức raw ESC/POS
+                    </p>
+                  </div>
+
+                  {/* QZ Tray Status Badge + Reconnect Button */}
+                  <div className="flex items-center gap-2 self-start md:self-auto">
+                    {qzStatus.isConnected ? (
+                      <div className="px-3.5 py-2 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center gap-2 shadow-2xs">
+                        <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+                        <span>QZ Tray: Đang kết nối</span>
+                      </div>
+                    ) : (
+                      <div className="px-3.5 py-2 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2 shadow-2xs">
+                        <span className="w-2.5 h-2.5 rounded-full bg-rose-500" />
+                        <span>QZ Tray: Chưa kết nối</span>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={checkQzAndLoadPrinters}
+                      disabled={qzStatus.isChecking}
+                      className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl transition cursor-pointer min-h-[40px] min-w-[40px] flex items-center justify-center border border-slate-200 shadow-2xs"
+                      title="Làm mới trạng thái kết nối và danh sách máy in"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${qzStatus.isChecking ? 'animate-spin text-indigo-600' : ''}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {!qzStatus.isConnected && (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-bold">Không tìm thấy phần mềm QZ Tray đang chạy trên máy tính này.</p>
+                      <p className="text-[11px] text-amber-800 leading-relaxed">
+                        Vui lòng mở ứng dụng <strong>QZ Tray</strong> trên máy tính quầy để hệ thống tự động nhận diện danh sách máy in POS và gửi lệnh in trực tiếp. Nếu chưa mở, bạn vẫn có thể nhập tên máy in thủ công bên dưới.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Section 2: Auto-Print Toggle Switch Card */}
+              <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base font-extrabold text-slate-900">
+                        Tự động in bill khi có đơn hàng mới (Auto-Print)
+                      </span>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                          autoPrintConfig.enabled
+                            ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                            : 'bg-slate-100 text-slate-500 border border-slate-200'
+                        }`}
+                      >
+                        {autoPrintConfig.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+                      Khi <strong>Bật</strong>, mỗi khi cán bộ đặt suất ăn mới từ webapp, hệ thống tại quầy sẽ tự động in ngay 3 bill (hoặc 2 bill nếu chỉ có cơm/nước) ra đúng các máy in đã cấu hình mà không cần nhân viên bấm in thủ công.
+                    </p>
+                    {autoPrintConfig.updatedAt && (
+                      <p className="text-[11px] text-slate-400 italic pt-1">
+                        Cập nhật gần nhất bởi: <strong className="text-slate-600">{autoPrintConfig.updatedBy || 'Admin'}</strong> lúc{' '}
+                        {new Date(autoPrintConfig.updatedAt).toLocaleString('vi-VN')}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Toggle Switch Component */}
+                  <button
+                    type="button"
+                    onClick={handleToggleAutoPrint}
+                    className={`relative inline-flex h-8 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                      autoPrintConfig.enabled ? 'bg-emerald-600' : 'bg-slate-300'
+                    }`}
+                    role="switch"
+                    aria-checked={autoPrintConfig.enabled}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                        autoPrintConfig.enabled ? 'translate-x-8' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
+              {/* Section 3: 3 Physical Printers Setup */}
+              <form onSubmit={handleSavePrinterConfig} className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {/* Máy in 1: Bill Tổng */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between space-y-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-black bg-indigo-50 text-indigo-700 border border-indigo-200">
+                          1. MÁY IN BILL TỔNG
+                        </span>
+                        <Receipt className="w-5 h-5 text-indigo-600" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-extrabold text-slate-900 text-sm">Quầy Thu Ngân & Giao Món</h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          In toàn bộ danh sách món, số lượng, đơn giá, tổng cộng và phương thức thanh toán ví Căn tin.
+                        </p>
+                      </div>
+
+                      {/* Dropdown Selector */}
+                      <div className="space-y-1.5 pt-2">
+                        <label className="block text-[11px] font-bold text-slate-700">Chọn máy in từ hệ thống:</label>
+                        <select
+                          value={availablePrinters.includes(printerConfig.tongPrinterName) ? printerConfig.tongPrinterName : ''}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setPrinterConfigState((prev) => ({ ...prev, tongPrinterName: e.target.value }));
+                            }
+                          }}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-600 focus:outline-hidden"
+                        >
+                          <option value="">-- Chọn máy in ({availablePrinters.length} máy) --</option>
+                          {availablePrinters.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Text Input (Manual) */}
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-bold text-slate-700">Tên máy in thực tế:</label>
+                        <input
+                          type="text"
+                          value={printerConfig.tongPrinterName}
+                          onChange={(e) =>
+                            setPrinterConfigState((prev) => ({ ...prev, tongPrinterName: e.target.value }))
+                          }
+                          placeholder="VD: XP-80C hoặc POS-80 hoặc Epson_TM_T82"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-indigo-600 focus:outline-hidden"
+                        />
+                        <span className="text-[10px] text-slate-400 block">
+                          Khuyên dùng: Chọn từ dropdown trên hoặc nhập chính xác tên máy in trong Windows/macOS.
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Test Print Button & Status */}
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleTestPrint('tong', printerConfig.tongPrinterName, 'Máy in Bill Tổng')}
+                        disabled={testPrintStatus['tong']?.loading}
+                        className="px-3.5 py-2 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-slate-200 min-h-[38px]"
+                      >
+                        {testPrintStatus['tong']?.loading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                        ) : (
+                          <Printer className="w-3.5 h-3.5" />
+                        )}
+                        <span>In thử máy này</span>
+                      </button>
+
+                      {testPrintStatus['tong']?.success && (
+                        <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" /> In OK
+                        </span>
+                      )}
+                      {testPrintStatus['tong']?.error && (
+                        <span className="text-[10px] font-semibold text-rose-600 truncate max-w-[130px]" title={testPrintStatus['tong'].error}>
+                          Lỗi in
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Máy in 2: Bill Món Cơm */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between space-y-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-black bg-amber-50 text-amber-700 border border-amber-200">
+                          2. MÁY IN BẾP CƠM
+                        </span>
+                        <ChefHat className="w-5 h-5 text-amber-600" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-extrabold text-slate-900 text-sm">Khu Vực Bếp Cơm & Món Mặn</h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          In danh sách món cơm, bún, phở, món mặn (kèm món tách từ combo). Không hiển thị giá tiền.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5 pt-2">
+                        <label className="block text-[11px] font-bold text-slate-700">Chọn máy in từ hệ thống:</label>
+                        <select
+                          value={availablePrinters.includes(printerConfig.comPrinterName) ? printerConfig.comPrinterName : ''}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setPrinterConfigState((prev) => ({ ...prev, comPrinterName: e.target.value }));
+                            }
+                          }}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                        >
+                          <option value="">-- Chọn máy in ({availablePrinters.length} máy) --</option>
+                          {availablePrinters.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-bold text-slate-700">Tên máy in thực tế:</label>
+                        <input
+                          type="text"
+                          value={printerConfig.comPrinterName}
+                          onChange={(e) =>
+                            setPrinterConfigState((prev) => ({ ...prev, comPrinterName: e.target.value }))
+                          }
+                          placeholder="VD: Kitchen_Rice_Printer hoặc XP-58"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-amber-500 focus:outline-hidden"
+                        />
+                        <span className="text-[10px] text-slate-400 block">
+                          Nếu đơn không có món cơm/món mặn, máy này sẽ tự động không in bill rỗng.
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleTestPrint('com', printerConfig.comPrinterName, 'Máy in Bếp Cơm')}
+                        disabled={testPrintStatus['com']?.loading}
+                        className="px-3.5 py-2 bg-slate-100 hover:bg-amber-50 text-slate-700 hover:text-amber-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-slate-200 min-h-[38px]"
+                      >
+                        {testPrintStatus['com']?.loading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-600" />
+                        ) : (
+                          <Printer className="w-3.5 h-3.5" />
+                        )}
+                        <span>In thử máy này</span>
+                      </button>
+
+                      {testPrintStatus['com']?.success && (
+                        <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" /> In OK
+                        </span>
+                      )}
+                      {testPrintStatus['com']?.error && (
+                        <span className="text-[10px] font-semibold text-rose-600 truncate max-w-[130px]" title={testPrintStatus['com'].error}>
+                          Lỗi in
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Máy in 3: Bill Món Nước */}
+                  <div className="bg-white rounded-3xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between space-y-4">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-1 rounded-xl text-xs font-black bg-cyan-50 text-cyan-700 border border-cyan-200">
+                          3. MÁY IN BẾP NƯỚC
+                        </span>
+                        <UtensilsCrossed className="w-5 h-5 text-cyan-600" />
+                      </div>
+
+                      <div>
+                        <h3 className="font-extrabold text-slate-900 text-sm">Khu Vực Pha Chế & Đồ Uống</h3>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          In danh sách trà đào, nước ngọt, tráng miệng (kèm phần tách từ combo). Không hiển thị giá tiền.
+                        </p>
+                      </div>
+
+                      <div className="space-y-1.5 pt-2">
+                        <label className="block text-[11px] font-bold text-slate-700">Chọn máy in từ hệ thống:</label>
+                        <select
+                          value={availablePrinters.includes(printerConfig.nuocPrinterName) ? printerConfig.nuocPrinterName : ''}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              setPrinterConfigState((prev) => ({ ...prev, nuocPrinterName: e.target.value }));
+                            }
+                          }}
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-cyan-500 focus:outline-hidden"
+                        >
+                          <option value="">-- Chọn máy in ({availablePrinters.length} máy) --</option>
+                          {availablePrinters.map((p) => (
+                            <option key={p} value={p}>
+                              {p}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="block text-[11px] font-bold text-slate-700">Tên máy in thực tế:</label>
+                        <input
+                          type="text"
+                          value={printerConfig.nuocPrinterName}
+                          onChange={(e) =>
+                            setPrinterConfigState((prev) => ({ ...prev, nuocPrinterName: e.target.value }))
+                          }
+                          placeholder="VD: Bar_Drink_Printer hoặc POS-58"
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-semibold text-slate-900 focus:ring-2 focus:ring-cyan-500 focus:outline-hidden"
+                        />
+                        <span className="text-[10px] text-slate-400 block">
+                          Nếu đơn không có đồ uống, máy này sẽ tự động không in bill rỗng.
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleTestPrint('nuoc', printerConfig.nuocPrinterName, 'Máy in Bếp Nước')}
+                        disabled={testPrintStatus['nuoc']?.loading}
+                        className="px-3.5 py-2 bg-slate-100 hover:bg-cyan-50 text-slate-700 hover:text-cyan-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer border border-slate-200 min-h-[38px]"
+                      >
+                        {testPrintStatus['nuoc']?.loading ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-cyan-600" />
+                        ) : (
+                          <Printer className="w-3.5 h-3.5" />
+                        )}
+                        <span>In thử máy này</span>
+                      </button>
+
+                      {testPrintStatus['nuoc']?.success && (
+                        <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
+                          <Check className="w-3.5 h-3.5" /> In OK
+                        </span>
+                      )}
+                      {testPrintStatus['nuoc']?.error && (
+                        <span className="text-[10px] font-semibold text-rose-600 truncate max-w-[130px]" title={testPrintStatus['nuoc'].error}>
+                          Lỗi in
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save Button */}
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="submit"
+                    disabled={isSavingPrinters}
+                    className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-2xl shadow-md shadow-indigo-600/20 flex items-center gap-2 transition cursor-pointer min-h-[46px]"
+                  >
+                    {isSavingPrinters ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-4 h-4" />
+                    )}
+                    <span>Lưu Cấu Hình Máy In (Toàn Hệ Thống)</span>
+                  </button>
+                </div>
+              </form>
             </div>
           )}
         </main>
@@ -4471,6 +5214,152 @@ export function PortalDashboard({
         </div>
       )}
 
+      {/* ================= MODAL: XEM CHI TIẾT CÁN BỘ / NGƯỜI DÙNG ================= */}
+      {viewingUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div className="w-full max-w-lg bg-white rounded-3xl border border-slate-200 shadow-2xl overflow-hidden p-5 sm:p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center font-bold text-base">
+                  {viewingUser.name ? viewingUser.name.charAt(0).toUpperCase() : 'U'}
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    {viewingUser.name}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    {viewingUser.roleTitle || (
+                      viewingUser.role === 'admin'
+                        ? 'Quản trị viên'
+                        : viewingUser.role === 'data_entry'
+                        ? 'Nhân viên Căn tin / Nhập liệu'
+                        : viewingUser.role === 'executive'
+                        ? 'Ban Giám hiệu'
+                        : 'Giáo viên / Cán bộ'
+                    )}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingUser(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 min-h-[44px] min-w-[44px] flex items-center justify-center cursor-pointer rounded-xl hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Thông tin chi tiết */}
+            <div className="space-y-3">
+              <div className="bg-slate-50 rounded-2xl border border-slate-200 p-4 space-y-2.5 text-xs">
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Mail className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Email công vụ:</span>
+                  </span>
+                  <span className="font-mono font-semibold text-slate-800">{viewingUser.email}</span>
+                </div>
+
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Phone className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Số điện thoại:</span>
+                  </span>
+                  <span className="font-mono font-bold text-indigo-700">
+                    {viewingUser.phoneNumber || <span className="text-slate-400 font-normal">Chưa cập nhật</span>}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Đơn vị / Phòng ban:</span>
+                  </span>
+                  <span className="font-semibold text-slate-800">{viewingUser.department || 'Nhà trường'}</span>
+                </div>
+
+                {viewingUser.defaultRoom && (
+                  <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                    <span className="text-slate-500 flex items-center gap-2">
+                      <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Phòng mặc định:</span>
+                    </span>
+                    <span className="font-semibold text-slate-800">{viewingUser.defaultRoom}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <ShieldCheck className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Trạng thái tài khoản:</span>
+                  </span>
+                  <div>
+                    {Boolean(viewingUser.isDisabled || (viewingUser.isActive === false && Number(viewingUser.walletBalance ?? 0) > 0)) ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                        <Ban className="w-3 h-3 text-rose-600" />
+                        <span>Đã vô hiệu hóa</span>
+                      </span>
+                    ) : Boolean(!viewingUser.isDisabled && viewingUser.isActive === false && Number(viewingUser.walletBalance ?? 0) === 0) ? (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        <Clock className="w-3 h-3 text-amber-600" />
+                        <span>Chờ duyệt & cấp ví</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                        <span>Đang hoạt động</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <Wallet className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Số dư ví hiện tại:</span>
+                  </span>
+                  <span className="font-extrabold text-emerald-600 font-mono text-sm">
+                    {formatVnd(viewingUser.walletBalance)}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                  <span className="text-slate-500 flex items-center gap-2">
+                    <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Hạn mức suất ăn / tháng:</span>
+                  </span>
+                  <span className="font-semibold text-slate-700 font-mono">
+                    {formatVnd(viewingUser.monthlyAllowance)}
+                  </span>
+                </div>
+
+                {viewingUser.createdAt && (
+                  <div className="flex justify-between items-center py-1">
+                    <span className="text-slate-500 flex items-center gap-2">
+                      <Clock className="w-3.5 h-3.5 text-slate-400" />
+                      <span>Ngày tạo tài khoản:</span>
+                    </span>
+                    <span className="text-slate-600 font-medium">
+                      {new Date(viewingUser.createdAt).toLocaleString('vi-VN')}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingUser(null)}
+                className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl cursor-pointer transition min-h-[40px]"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* POS Thermal Bill Modal (K80 / K58 Monospace) */}
       {printReceiptOrder &&
         (() => {
@@ -4516,6 +5405,27 @@ export function PortalDashboard({
                       </button>
                     </div>
 
+                    {/* Auto-print toggle inside preview modal */}
+                    <div className="flex items-center gap-2 pl-2 border-l border-slate-700">
+                      <button
+                        type="button"
+                        onClick={handleToggleAutoPrint}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                          autoPrintConfig.enabled
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                        }`}
+                        title="Bật/Tắt tự động in đơn mới"
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            autoPrintConfig.enabled ? 'bg-white animate-pulse' : 'bg-slate-400'
+                          }`}
+                        />
+                        <span>Auto-in: {autoPrintConfig.enabled ? 'BẬT' : 'TẮT'}</span>
+                      </button>
+                    </div>
+
                     <button
                       onClick={() => setPrintReceiptOrder(null)}
                       className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
@@ -4550,10 +5460,15 @@ export function PortalDashboard({
                     Đóng
                   </button>
                   <button
-                    onClick={() => window.print()}
+                    onClick={() => handlePrintSingleReceipt(printReceiptOrder)}
+                    disabled={isPrinting}
                     className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
                   >
-                    <Printer className="w-4 h-4" />
+                    {isPrinting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Printer className="w-4 h-4" />
+                    )}
                     <span>In Phiếu Nhiệt POS ({tickets.length} Phiếu)</span>
                   </button>
                 </div>
@@ -4707,10 +5622,15 @@ export function PortalDashboard({
                       Đóng
                     </button>
                     <button
-                      onClick={() => window.print()}
+                      onClick={() => handlePrintBatchReceipts(displayedBatchOrders)}
+                      disabled={isPrinting}
                       className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
                     >
-                      <Printer className="w-4 h-4" />
+                      {isPrinting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Printer className="w-4 h-4" />
+                      )}
                       <span>In Tất Cả {allTickets.length} Phiếu POS</span>
                     </button>
                   </div>

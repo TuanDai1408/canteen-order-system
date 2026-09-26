@@ -5,6 +5,7 @@
     "": {
       "name": "canteen-system",
       "dependencies": {
+        "qz-tray": "^2.3.0",
         "xlsx": "^0.18.5",
       },
     },
@@ -19,6 +20,7 @@
         "qrcode": "^1.5.4",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
+        "xlsx": "^0.18.5",
       },
       "devDependencies": {
         "@tailwindcss/vite": "^4.0.14",
@@ -42,6 +44,7 @@
         "qrcode": "^1.5.4",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
+        "xlsx": "^0.18.5",
       },
       "devDependencies": {
         "@tailwindcss/vite": "^4.0.14",
@@ -427,6 +430,8 @@
     "postcss": ["postcss@8.5.28", "", { "dependencies": { "nanoid": "^3.3.18", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A=="],
 
     "qrcode": ["qrcode@1.5.4", "", { "dependencies": { "dijkstrajs": "^1.0.1", "pngjs": "^5.0.0", "yargs": "^15.3.1" }, "bin": { "qrcode": "bin/qrcode" } }, "sha512-1ca71Zgiu6ORjHqFBDpnSMTR2ReToX4l1Au1VFLyVeBTFavzQnv5JxMFr3ukHVKpSrSA2MCk0lNJSykjUfz7Zg=="],
+
+    "qz-tray": ["qz-tray@2.3.0", "", {}, "sha512-hviWThaaUHdjSTjs1q7D8ow8F7l1iBUhbM3J+sOL2DgkTlXO5DmxQewMdirdQgnUQAuaiSzVB9wIhiltOn1aaQ=="],
 
     "react": ["react@19.3.0", "", {}, "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog=="],
 

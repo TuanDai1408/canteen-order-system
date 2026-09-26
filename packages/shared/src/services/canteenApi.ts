@@ -6,6 +6,8 @@ import type {
   QRExceptionToken,
   DeliveryMethod,
   TimeGateStatus,
+  AutoPrintConfig,
+  PrinterConfig,
 } from '../types';
 import { detectCurrentDevice } from '../utils/deviceDetector';
 import { getTomorrowStr, formatVnd } from '../utils/date';
@@ -119,7 +121,8 @@ export async function signUp(
   email: string,
   password: string,
   fullName?: string,
-  role: string = 'teacher'
+  role: string = 'teacher',
+  phoneNumber?: string
 ) {
   checkSupabase();
   const cleanEmail = email.trim();
@@ -131,6 +134,7 @@ export async function signUp(
         full_name: fullName || cleanEmail.split('@')[0],
         role,
         is_active: false,
+        phone_number: phoneNumber?.trim() || '',
       },
     },
   });
@@ -157,6 +161,7 @@ export async function signUp(
         auth_user_id: data.user.id,
         name: fullName || cleanEmail.split('@')[0],
         email: cleanEmail,
+        phone_number: phoneNumber?.trim() || '',
         role: 'teacher',
         role_title: 'Giáo viên',
         wallet_balance: 0,
@@ -1725,6 +1730,7 @@ export async function placeOrder(params: {
   // Phát tín hiệu broadcast tức thì toàn hệ thống cho tab, window và thiết bị khác cập nhật ví, thực đơn và đơn hàng
   broadcastSystemEvent('canteen_order_created', { order: localOrder, userId: userData.id });
   broadcastSystemEvent('canteen_order_placed', { order: localOrder, userId: userData.id });
+  broadcastSystemEvent('canteen_new_order_inserted', localOrder);
   broadcastSystemEvent('canteen_wallet_updated', { walletBalance: newBalance, userId: userData.id });
   broadcastSystemEvent('canteen_menu_updated');
 
@@ -2748,6 +2754,279 @@ export async function setCustomTimeGateConfig(
   }
 }
 
+// ============================================================
+// CẤU HÌNH TỰ ĐỘNG IN BILL KHI CÓ ĐƠN HÀNG MỚI (AUTO-PRINT)
+// ============================================================
+
+export const AUTO_PRINT_STORAGE_KEY = 'canteen_auto_print_enabled';
+
+export function getCustomAutoPrintConfig(): AutoPrintConfig {
+  try {
+    const saved = localStorage.getItem(AUTO_PRINT_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (typeof parsed.enabled === 'boolean') return parsed;
+    }
+  } catch {}
+  return { enabled: false };
+}
+
+export async function fetchAutoPrintConfig(): Promise<AutoPrintConfig> {
+  try {
+    if (isSupabaseConfigured && supabase) {
+      let matchedRow: any = null;
+
+      try {
+        const { data: sData, error: sErr } = await supabase
+          .from('settings')
+          .select('*');
+        if (!sErr && Array.isArray(sData) && sData.length > 0) {
+          matchedRow = sData.find(
+            (r) => r.key === 'auto_print_enabled' || r.key === 'auto_print'
+          );
+        }
+      } catch (err) {
+        console.warn('Fetch auto print from settings notice:', err);
+      }
+
+      if (!matchedRow) {
+        try {
+          const { data: sysData, error: sysErr } = await supabase
+            .from('system_settings')
+            .select('*');
+          if (!sysErr && Array.isArray(sysData) && sysData.length > 0) {
+            matchedRow = sysData.find(
+              (r) => r.key === 'auto_print_enabled' || r.key === 'auto_print'
+            );
+          }
+        } catch (err) {
+          console.warn('Fetch auto print from system_settings notice:', err);
+        }
+      }
+
+      if (matchedRow?.value) {
+        let val = matchedRow.value;
+        if (typeof val === 'string') {
+          try {
+            val = JSON.parse(val);
+          } catch {}
+        }
+        const enabled = Boolean(val.enabled);
+        const cfg: AutoPrintConfig = {
+          enabled,
+          updatedBy: val.updatedBy || val.updated_by || 'Admin',
+          updatedAt: val.updatedAt || val.updated_at || new Date().toISOString(),
+        };
+
+        const oldCfg = getCustomAutoPrintConfig();
+        if (oldCfg.enabled !== cfg.enabled || oldCfg.updatedAt !== cfg.updatedAt) {
+          localStorage.setItem(AUTO_PRINT_STORAGE_KEY, JSON.stringify(cfg));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_auto_print_updated', { detail: cfg }));
+          }
+        }
+        return cfg;
+      }
+    }
+  } catch (e) {
+    console.warn('Fetch auto print config notice:', e);
+  }
+  return getCustomAutoPrintConfig();
+}
+
+export async function setAutoPrintEnabled(
+  enabled: boolean,
+  actor?: UserProfile
+): Promise<void> {
+  const cfg: AutoPrintConfig = {
+    enabled,
+    updatedBy: actor?.name || 'Admin',
+    updatedAt: new Date().toISOString(),
+  };
+
+  localStorage.setItem(AUTO_PRINT_STORAGE_KEY, JSON.stringify(cfg));
+  broadcastSystemEvent('canteen_auto_print_updated', { cfg });
+
+  if (isSupabaseConfigured && supabase) {
+    const payload = {
+      enabled,
+      updated_by: actor?.name || 'Admin',
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      await Promise.allSettled([
+        supabase.from('settings').upsert({
+          key: 'auto_print_enabled',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('settings').upsert({
+          key: 'auto_print',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'auto_print_enabled',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'auto_print',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+      ]);
+    } catch (e) {
+      console.warn('Sync auto print config to supabase warning:', e);
+    }
+  }
+}
+
+// ============================================================
+// CẤU HÌNH ĐA MÁY IN POS CHO QUẦY THU NGÂN & BẾP (PRINTER CONFIG)
+// ============================================================
+
+export const PRINTER_CONFIG_STORAGE_KEY = 'canteen_printer_config';
+
+export function getCustomPrinterConfig(): PrinterConfig {
+  try {
+    const saved = localStorage.getItem(PRINTER_CONFIG_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          tongPrinterName: parsed.tongPrinterName || parsed.tong_printer || '',
+          comPrinterName: parsed.comPrinterName || parsed.com_printer || '',
+          nuocPrinterName: parsed.nuocPrinterName || parsed.nuoc_printer || '',
+        };
+      }
+    }
+  } catch {}
+  return {
+    tongPrinterName: '',
+    comPrinterName: '',
+    nuocPrinterName: '',
+  };
+}
+
+export async function fetchPrinterConfig(): Promise<PrinterConfig> {
+  try {
+    if (isSupabaseConfigured && supabase) {
+      let matchedRow: any = null;
+
+      try {
+        const { data: sData, error: sErr } = await supabase
+          .from('settings')
+          .select('*');
+        if (!sErr && Array.isArray(sData) && sData.length > 0) {
+          matchedRow = sData.find(
+            (r) => r.key === 'printer_config' || r.key === 'pos_printers'
+          );
+        }
+      } catch (err) {
+        console.warn('Fetch printer config from settings notice:', err);
+      }
+
+      if (!matchedRow) {
+        try {
+          const { data: sysData, error: sysErr } = await supabase
+            .from('system_settings')
+            .select('*');
+          if (!sysErr && Array.isArray(sysData) && sysData.length > 0) {
+            matchedRow = sysData.find(
+              (r) => r.key === 'printer_config' || r.key === 'pos_printers'
+            );
+          }
+        } catch (err) {
+          console.warn('Fetch printer config from system_settings notice:', err);
+        }
+      }
+
+      if (matchedRow?.value) {
+        let val = matchedRow.value;
+        if (typeof val === 'string') {
+          try {
+            val = JSON.parse(val);
+          } catch {}
+        }
+
+        const cfg: PrinterConfig = {
+          tongPrinterName: val.tongPrinterName || val.tong_printer || '',
+          comPrinterName: val.comPrinterName || val.com_printer || '',
+          nuocPrinterName: val.nuocPrinterName || val.nuoc_printer || '',
+        };
+
+        const oldCfg = getCustomPrinterConfig();
+        const hasChanged =
+          oldCfg.tongPrinterName !== cfg.tongPrinterName ||
+          oldCfg.comPrinterName !== cfg.comPrinterName ||
+          oldCfg.nuocPrinterName !== cfg.nuocPrinterName;
+
+        if (hasChanged) {
+          localStorage.setItem(PRINTER_CONFIG_STORAGE_KEY, JSON.stringify(cfg));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_printer_config_updated', { detail: cfg }));
+          }
+        }
+        return cfg;
+      }
+    }
+  } catch (e) {
+    console.warn('Fetch printer config notice:', e);
+  }
+  return getCustomPrinterConfig();
+}
+
+export async function setPrinterConfig(
+  config: PrinterConfig,
+  actor?: UserProfile
+): Promise<void> {
+  const cleanCfg: PrinterConfig = {
+    tongPrinterName: (config.tongPrinterName || '').trim(),
+    comPrinterName: (config.comPrinterName || '').trim(),
+    nuocPrinterName: (config.nuocPrinterName || '').trim(),
+  };
+
+  localStorage.setItem(PRINTER_CONFIG_STORAGE_KEY, JSON.stringify(cleanCfg));
+  broadcastSystemEvent('canteen_printer_config_updated', { config: cleanCfg });
+
+  if (isSupabaseConfigured && supabase) {
+    const payload = {
+      ...cleanCfg,
+      updated_by: actor?.name || 'Admin',
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      await Promise.allSettled([
+        supabase.from('settings').upsert({
+          key: 'printer_config',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('settings').upsert({
+          key: 'pos_printers',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'printer_config',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+        supabase.from('system_settings').upsert({
+          key: 'pos_printers',
+          value: payload,
+          updated_at: new Date().toISOString(),
+        }),
+      ]);
+    } catch (e) {
+      console.warn('Sync printer config to supabase warning:', e);
+    }
+  }
+}
+
 /**
  * Lấy giờ & phút chuẩn theo múi giờ Việt Nam (UTC+7)
  */
@@ -2889,6 +3168,8 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
       changedTables.clear();
       if (tables.includes('settings') || tables.includes('system_settings')) {
         fetchTimeGateConfig().catch(() => {});
+        fetchAutoPrintConfig().catch(() => {});
+        fetchPrinterConfig().catch(() => {});
       }
       try {
         callback({ tables, payload: lastPayload });
@@ -2905,6 +3186,21 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
 
   const broadcastHandler = (ev: MessageEvent) => {
     if (ev.data) {
+      if (ev.data.type === 'canteen_new_order_inserted' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('canteen_new_order_inserted', { detail: ev.data.payload || ev.data })
+        );
+      }
+      if (ev.data.type === 'canteen_auto_print_updated' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('canteen_auto_print_updated', { detail: ev.data.cfg || ev.data })
+        );
+      }
+      if (ev.data.type === 'canteen_printer_config_updated' && typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('canteen_printer_config_updated', { detail: ev.data.config || ev.data })
+        );
+      }
       triggerDebounced(ev.data);
     }
   };
@@ -2914,10 +3210,13 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
     'canteen_order_placed',
     'canteen_order_updated',
     'canteen_order_cancelled',
+    'canteen_new_order_inserted',
     'canteen_menu_updated',
     'canteen_wallet_updated',
     'canteen_user_status_changed',
     'canteen_time_gate_updated',
+    'canteen_auto_print_updated',
+    'canteen_printer_config_updated',
     'canteen_qr_token_updated',
   ];
 
@@ -2956,6 +3255,14 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
       .channel(channelName, { config: { broadcast: { self: false } } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, (p) => triggerDebounced(p))
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'orders' }, (payload) => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('canteen_new_order_inserted', { detail: payload.new }));
+        }
+        if (broadcastSyncChannel) {
+          broadcastSyncChannel.postMessage({ type: 'canteen_new_order_inserted', payload: payload.new });
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => triggerDebounced(p))
