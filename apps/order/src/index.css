@@ -28,7 +28,7 @@
 /* POS Thermal Receipt Printing rules (K80 / K58 roll) */
 @page {
   size: 80mm auto;
-  margin: 0;
+  margin: 0 !important;
 }
 
 #pos-print-root {
@@ -53,6 +53,9 @@
     min-height: 0 !important;
     height: auto !important;
     overflow: visible !important;
+    -webkit-font-smoothing: antialiased !important;
+    -moz-osx-font-smoothing: grayscale !important;
+    text-rendering: geometricPrecision !important;
   }
 
   /* 3. Dedicated print root rendered directly into document.body */
@@ -64,9 +67,10 @@
     width: 100% !important;
     background: #ffffff !important;
     overflow: visible !important;
+    transform: none !important;
   }
 
-  /* 4. Thermal ticket page layout rules */
+  /* 4. Thermal ticket page layout rules - Sắc nét chuẩn POS nhiệt, không mờ nhòe */
   .pos-receipt-ticket {
     display: block !important;
     position: relative !important;
@@ -79,30 +83,78 @@
     page-break-after: always !important;
     break-after: page !important;
     font-family: 'JetBrains Mono', 'Courier New', Courier, monospace !important;
+    font-feature-settings: 'tnum' 1 !important;
+    font-weight: 600 !important;
     color: #000000 !important;
     background: #ffffff !important;
     box-sizing: border-box !important;
+    transform: none !important;
+    -webkit-font-smoothing: antialiased !important;
+    -moz-osx-font-smoothing: grayscale !important;
+    text-rendering: geometricPrecision !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
   }
 
-  /* K80 Roll (80mm width, 72mm printable width) */
+  /* Toàn bộ chữ, số, viền trong phiếu in ép đen 100% (#000000) chống dithering chấm hạt gây mờ */
+  .pos-receipt-ticket,
+  .pos-receipt-ticket * {
+    color: #000000 !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Viền đứt/liền đen sắc nét */
+  .pos-receipt-ticket [class*="border-"] {
+    border-color: #000000 !important;
+  }
+
+  /* Độ đậm chữ khi in nhiệt: chữ thường tối thiểu 600, tiêu đề/số lượng/tổng cộng 800 */
+  .pos-receipt-ticket p,
+  .pos-receipt-ticket span,
+  .pos-receipt-ticket div {
+    font-weight: 600 !important;
+  }
+
+  .pos-receipt-ticket strong,
+  .pos-receipt-ticket b,
+  .pos-receipt-ticket h4,
+  .pos-receipt-ticket .font-bold,
+  .pos-receipt-ticket .font-extrabold,
+  .pos-receipt-ticket .font-black {
+    font-weight: 800 !important;
+  }
+
+  /* Logo SVG in đen nét căng, không bị loang xám do màu đỏ */
+  .pos-receipt-ticket img {
+    filter: brightness(0) !important;
+    image-rendering: -webkit-optimize-contrast !important;
+    image-rendering: crisp-edges !important;
+  }
+
+  /* K80 Roll (80mm width, 72mm printable width) - Giảm sát lề trên (1mm) xóa khoảng trắng thừa */
   .pos-receipt-ticket.pos-k80 {
     width: 72mm !important;
     max-width: 72mm !important;
-    padding: 4mm 2mm 3mm 2mm !important;
+    padding: 1mm 2mm 2.5mm 2mm !important;
     font-size: 11px !important;
     line-height: 1.35 !important;
   }
 
-  /* K58 Roll (58mm width, 48mm printable width) */
+  /* K58 Roll (58mm width, 48mm printable width) - Giảm sát lề trên (0.8mm) */
   .pos-receipt-ticket.pos-k58 {
     width: 48mm !important;
     max-width: 48mm !important;
-    padding: 3mm 1.5mm 2mm 1.5mm !important;
+    padding: 0.8mm 1.5mm 2mm 1.5mm !important;
     font-size: 10px !important;
     line-height: 1.25 !important;
   }
 
-  /* Prevent trailing empty page on the final ticket */
+  /* Tránh trang trắng dư thừa ở phiếu in cuối cùng */
   .pos-receipt-ticket.is-last,
   .pos-receipt-ticket:last-child {
     page-break-after: auto !important;
@@ -121,7 +173,7 @@
     width: 72mm !important;
     max-width: 72mm !important;
     margin: 0 auto !important;
-    padding: 2mm 1mm !important;
+    padding: 1mm 1mm !important;
   }
 
   .pos-printable:last-child {

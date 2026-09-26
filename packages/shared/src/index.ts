@@ -66,6 +66,12 @@ export {
   withQueryTimeout,
   parseItemsFromNote,
   getOrderDisplayItems,
+  parseComboItem,
+  isDrinkItem,
+  getOrderTickets,
+  type TicketType,
+  type TicketItem,
+  type OrderTicket,
   isValidUuid,
   generateUUID,
 } from './services/canteenApi';

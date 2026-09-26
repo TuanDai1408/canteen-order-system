@@ -3096,8 +3096,8 @@ export function parseItemsFromNote(noteText?: string): { menuItemId: string; nam
 export function getOrderDisplayItems(
   order: Partial<Order> & { note?: string },
   menuList: MenuItem[] = []
-): { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string }[] {
-  let items: { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string }[] = [];
+): { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string; category?: string }[] {
+  let items: { menuItemId: string; name: string; quantity: number; price: number; imageUrl: string; category?: string }[] = [];
   const fullMenu = (menuList && menuList.length > 0) ? menuList : getCachedMenu();
 
   if (Array.isArray(order.items) && order.items.length > 0) {
@@ -3113,6 +3113,7 @@ export function getOrderDisplayItems(
         quantity: it.quantity || 1,
         price: it.price || foundInMenu?.price || 35000,
         imageUrl: it.imageUrl || foundInMenu?.imageUrl || '',
+        category: foundInMenu?.category || '',
       };
     });
   }
@@ -3133,6 +3134,7 @@ export function getOrderDisplayItems(
           quantity: it.quantity || 1,
           price: it.price || foundInMenu?.price || 35000,
           imageUrl: it.imageUrl || foundInMenu?.imageUrl || '',
+          category: foundInMenu?.category || '',
         };
       });
     }
@@ -3144,16 +3146,296 @@ export function getOrderDisplayItems(
       const cached = getCachedOrders();
       const matched = cached.find((c) => c.id === order.id || c.orderCode === order.orderCode);
       if (matched && matched.items && matched.items.length > 0 && matched.items.some((it) => it.name && it.name !== 'Suất ăn Căn tin')) {
-        items = matched.items;
+        items = matched.items.map((it) => {
+          const foundInMenu = fullMenu.find((m) => m.id === it.menuItemId || (it.name && m.name === it.name));
+          return {
+            menuItemId: it.menuItemId || foundInMenu?.id || '',
+            name: it.name || foundInMenu?.name || 'Suất ăn Căn tin',
+            quantity: it.quantity || 1,
+            price: it.price || foundInMenu?.price || 35000,
+            imageUrl: it.imageUrl || foundInMenu?.imageUrl || '',
+            category: foundInMenu?.category || '',
+          };
+        });
       }
     }
   }
 
   if (items.length === 0) {
-    items = [{ menuItemId: '', name: 'Suất ăn Căn tin', quantity: 1, price: order.totalAmount || 35000, imageUrl: '' }];
+    items = [{ menuItemId: '', name: 'Suất ăn Căn tin', quantity: 1, price: order.totalAmount || 35000, imageUrl: '', category: 'Cơm trưa' }];
   }
 
   return items;
+}
+
+/**
+ * Phân tích tên món Combo dạng "<Tên combo> ( <Món A> + <Món B> )"
+ * Trả về mainName và mảng các món thành phần parts
+ */
+export function parseComboItem(name: string): { mainName: string; parts: string[] } | null {
+  if (!name || typeof name !== 'string') return null;
+  // Match standard pattern: <Tên combo> ( <Món A> + <Món B> )
+  const match = name.match(/^(.*?)\s*[\(（]([^)）]+?\+[^)）]+?)[\)）]/);
+  if (match) {
+    const mainName = match[1].trim();
+    const parts = match[2].split('+').map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return { mainName: mainName || name.trim(), parts };
+    }
+  }
+
+  // Fallback pattern nếu không dùng ngoặc: "Combo ... : Món A + Món B"
+  if (name.toLowerCase().includes('combo') && name.includes('+')) {
+    const colonIdx = name.indexOf(':');
+    if (colonIdx !== -1) {
+      const mainName = name.substring(0, colonIdx).trim();
+      const parts = name.substring(colonIdx + 1).split('+').map((s) => s.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        return { mainName: mainName || name.trim(), parts };
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Nhận diện món ăn thuộc nhóm đồ uống / tráng miệng hay món cơm / thức ăn chính
+ */
+export function isDrinkItem(name: string, category?: string, menuList: MenuItem[] = []): boolean {
+  if (!name) return false;
+  const fullMenu = (menuList && menuList.length > 0) ? menuList : getCachedMenu();
+
+  // 1. Phân loại theo category truyền vào nếu có
+  if (category) {
+    const catLower = category.toLowerCase().trim();
+    if (
+      catLower.includes('đồ uống') ||
+      catLower.includes('tráng miệng') ||
+      catLower.includes('nước') ||
+      catLower.includes('drink') ||
+      catLower.includes('beverage')
+    ) {
+      return true;
+    }
+    if (
+      catLower.includes('cơm') ||
+      catLower.includes('bún') ||
+      catLower.includes('phở') ||
+      catLower.includes('chay') ||
+      catLower.includes('thức ăn') ||
+      catLower.includes('món ăn')
+    ) {
+      return false;
+    }
+  }
+
+  // 2. Tra cứu trong menu hệ thống theo tên món
+  const nameNorm = name.toLowerCase().trim();
+  const matched = fullMenu.find((m) => m.name.toLowerCase().trim() === nameNorm);
+  if (matched && matched.category) {
+    const catLower = matched.category.toLowerCase().trim();
+    if (
+      catLower.includes('đồ uống') ||
+      catLower.includes('tráng miệng') ||
+      catLower.includes('nước') ||
+      catLower.includes('drink') ||
+      catLower.includes('beverage')
+    ) {
+      return true;
+    }
+    if (
+      catLower.includes('cơm') ||
+      catLower.includes('bún') ||
+      catLower.includes('phở') ||
+      catLower.includes('chay')
+    ) {
+      return false;
+    }
+  }
+
+  // 3. Quy tắc ưu tiên món ăn chính (chống nhầm lẫn món ăn như "Gà hấp lá chanh", "Cá sốt chua ngọt")
+  const foodKeywords = [
+    'cơm', 'com', 'bún', 'bun', 'phở', 'pho', 'mì', 'mi', 'hủ tiếu', 'hu tieu',
+    'bánh canh', 'cháo', 'chao', 'xôi', 'xoi', 'nui', 'súp', 'canh', 'lẩu',
+    'bánh mì', 'gà', 'ga', 'heo', 'bò', 'bo', 'cá', 'tôm', 'mực', 'sườn', 'suon', 'chả'
+  ];
+  if (foodKeywords.some((kw) => nameNorm.startsWith(kw + ' ') || nameNorm.includes(' ' + kw + ' ') || nameNorm.includes(kw))) {
+    const strongDrinkPrefix = ['trà', 'tra', 'cà phê', 'ca phe', 'cafe', 'coffee', 'nước', 'nuoc', 'sinh tố', 'chè', 'soda'];
+    if (!strongDrinkPrefix.some((dp) => nameNorm.startsWith(dp))) {
+      return false;
+    }
+  }
+
+  // 4. Fallback bằng từ khóa đồ uống / tráng miệng phổ biến
+  const drinkKeywords = [
+    'trà', 'tra', 'nước', 'nuoc', 'sữa', 'sua', 'cà phê', 'ca phe', 'cafe', 'coffee',
+    'sinh tố', 'sinh to', 'nước ép', 'nuoc ep', 'chè', 'che', 'đá me', 'da me',
+    'soda', 'matcha', 'pepsi', 'coca', 'cocacola', 'sting',
+    'revive', 'aquafina', 'dasani', 'nước sâm', 'nuoc sam', 'mủ trôm', 'mu trom',
+    'nha đam', 'nha dam', 'yaourt', 'sữa chua', 'sua chua', 'trà chanh', 'trà tắc', 'trà đào',
+    'me đá', 'bò húc', 'redbull', 'nước suối', 'c2', 'trà ô long', 'oolong', 'nước mía', 'nước ngọt',
+    'nước sấu', 'nước khoáng'
+  ];
+
+  return drinkKeywords.some((kw) => nameNorm.includes(kw));
+}
+
+export type TicketType = 'total' | 'food' | 'drink';
+
+export interface TicketItem {
+  menuItemId?: string;
+  name: string;
+  quantity: number;
+  price?: number;
+  isFromCombo?: boolean;
+}
+
+export interface OrderTicket {
+  id: string;
+  ticketType: TicketType;
+  title: string;
+  subtitle: string;
+  items: TicketItem[];
+  order: Order;
+  totalQuantity: number;
+  totalAmount?: number;
+}
+
+/**
+ * Tách một đơn hàng thành các phiếu in nhiệt chuyên dụng:
+ * 1. Bill Tổng: luôn luôn được tạo (hiển thị đầy đủ tất cả món, giá tiền, tổng cộng).
+ * 2. Bill Món Cơm: chỉ tạo khi có ít nhất 1 món ăn chính / cơm (hoặc tách từ combo). Không có giá.
+ * 3. Bill Món Nước: chỉ tạo khi có ít nhất 1 món đồ uống / tráng miệng (hoặc tách từ combo). Không có giá.
+ */
+export function getOrderTickets(order: Order, menuList: MenuItem[] = []): OrderTicket[] {
+  const displayItems = getOrderDisplayItems(order, menuList);
+  const orderId = order.id || order.orderCode || 'ord';
+
+  // 1. Bill Tổng (luôn luôn có)
+  const totalTicket: OrderTicket = {
+    id: `${orderId}-total`,
+    ticketType: 'total',
+    title: 'CƠM NGON SIBA',
+    subtitle: 'ĂN SẠCH – SỐNG KHỎE · PHIẾU BẾP & XUẤT SUẤT ĂN',
+    items: displayItems.map((it) => ({
+      menuItemId: it.menuItemId,
+      name: it.name,
+      quantity: it.quantity || 1,
+      price: it.price,
+      isFromCombo: false,
+    })),
+    order,
+    totalQuantity: displayItems.reduce((acc, it) => acc + (it.quantity || 1), 0),
+    totalAmount: order.totalAmount,
+  };
+
+  // 2. Phân tách danh sách món ăn cho Bếp Cơm và Bếp Nước
+  const foodItems: TicketItem[] = [];
+  const drinkItems: TicketItem[] = [];
+
+  for (const it of displayItems) {
+    const combo = parseComboItem(it.name);
+    if (combo) {
+      // Món combo: tách các thành phần con trong ngoặc
+      for (const part of combo.parts) {
+        // Tách số lượng nếu phần tử con có dạng: "2x Trà đào" hoặc "2 Trà đào"
+        let partQty = it.quantity || 1;
+        let partCleanName = part.trim();
+        const partMatch = partCleanName.match(/^(\d+)\s*[xX*]?\s*(.+)$/);
+        if (partMatch) {
+          const mult = parseInt(partMatch[1], 10);
+          if (!isNaN(mult) && mult > 0) {
+            partQty *= mult;
+            partCleanName = partMatch[2].trim();
+          }
+        }
+
+        const isDrink = isDrinkItem(partCleanName, undefined, menuList);
+        if (isDrink) {
+          drinkItems.push({
+            name: partCleanName,
+            quantity: partQty,
+            isFromCombo: true,
+          });
+        } else {
+          foodItems.push({
+            name: partCleanName,
+            quantity: partQty,
+            isFromCombo: true,
+          });
+        }
+      }
+    } else {
+      // Món đơn thông thường
+      const isDrink = isDrinkItem(it.name, it.category, menuList);
+      if (isDrink) {
+        drinkItems.push({
+          menuItemId: it.menuItemId,
+          name: it.name,
+          quantity: it.quantity || 1,
+          price: it.price,
+          isFromCombo: false,
+        });
+      } else {
+        foodItems.push({
+          menuItemId: it.menuItemId,
+          name: it.name,
+          quantity: it.quantity || 1,
+          price: it.price,
+          isFromCombo: false,
+        });
+      }
+    }
+  }
+
+  // Gộp các món trùng tên và cùng thuộc tính combo để phiếu in gọn gàng
+  const aggregateItems = (items: TicketItem[]): TicketItem[] => {
+    const map = new Map<string, TicketItem>();
+    for (const it of items) {
+      const key = `${it.name.trim().toLowerCase()}__${it.isFromCombo ? '1' : '0'}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.quantity += it.quantity;
+      } else {
+        map.set(key, { ...it });
+      }
+    }
+    return Array.from(map.values());
+  };
+
+  const finalFoodItems = aggregateItems(foodItems);
+  const finalDrinkItems = aggregateItems(drinkItems);
+
+  const tickets: OrderTicket[] = [totalTicket];
+
+  // 3. Bill Món Cơm (chỉ thêm nếu có món ăn chính)
+  if (finalFoodItems.length > 0) {
+    tickets.push({
+      id: `${orderId}-food`,
+      ticketType: 'food',
+      title: 'CƠM NGON SIBA',
+      subtitle: 'PHIẾU BẾP – MÓN CƠM',
+      items: finalFoodItems,
+      order,
+      totalQuantity: finalFoodItems.reduce((acc, it) => acc + it.quantity, 0),
+    });
+  }
+
+  // 4. Bill Món Nước (chỉ thêm nếu có món đồ uống / tráng miệng)
+  if (finalDrinkItems.length > 0) {
+    tickets.push({
+      id: `${orderId}-drink`,
+      ticketType: 'drink',
+      title: 'CƠM NGON SIBA',
+      subtitle: 'PHIẾU BẾP – MÓN NƯỚC',
+      items: finalDrinkItems,
+      order,
+      totalQuantity: finalDrinkItems.reduce((acc, it) => acc + it.quantity, 0),
+    });
+  }
+
+  return tickets;
 }
 
 function mapOrder(row: any): Order {

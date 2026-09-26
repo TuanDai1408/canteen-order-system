@@ -18,6 +18,7 @@ import {
   getTodayStr,
   parseItemsFromNote,
   getOrderDisplayItems,
+  getOrderTickets,
   getCachedOrders,
   setCachedOrders,
   DEFAULT_MENU_ITEMS,
@@ -4471,234 +4472,253 @@ export function PortalDashboard({
       )}
 
       {/* POS Thermal Bill Modal (K80 / K58 Monospace) */}
-      {printReceiptOrder && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 pos-modal-overlay">
-          <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-indigo-400 flex-shrink-0" />
-                <div>
-                  <span className="font-bold text-sm block">Hóa đơn nhiệt POS</span>
-                  <span className="text-[10px] text-slate-400">
-                    Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} · Monospace
-                  </span>
-                </div>
-              </div>
+      {printReceiptOrder &&
+        (() => {
+          const tickets = getOrderTickets(printReceiptOrder, menu);
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 pos-modal-overlay">
+              <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+                <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Printer className="w-5 h-5 text-indigo-400 flex-shrink-0" />
+                    <div>
+                      <span className="font-bold text-sm block">Hóa đơn nhiệt POS</span>
+                      <span className="text-[10px] text-slate-400">
+                        Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} · {tickets.length} Phiếu in
+                      </span>
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-2">
-                {/* Paper size toggle */}
-                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl text-[11px] font-semibold">
+                  <div className="flex items-center gap-2">
+                    {/* Paper size toggle */}
+                    <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl text-[11px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptPaperSize('k80')}
+                        className={`px-2 py-0.5 rounded-lg transition cursor-pointer ${
+                          receiptPaperSize === 'k80'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        K80
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReceiptPaperSize('k58')}
+                        className={`px-2 py-0.5 rounded-lg transition cursor-pointer ${
+                          receiptPaperSize === 'k58'
+                            ? 'bg-indigo-600 text-white font-bold'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        K58
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={() => setPrintReceiptOrder(null)}
+                      className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto flex-1 space-y-6">
+                  {tickets.map((t, idx) => (
+                    <PosReceiptTicket
+                      key={`${printReceiptOrder.id}-${t.ticketType}`}
+                      order={printReceiptOrder}
+                      ticket={t}
+                      menu={menu}
+                      paperSize={receiptPaperSize}
+                      index={idx}
+                      totalCount={tickets.length}
+                      isPrintMode={false}
+                      isLast={idx === tickets.length - 1}
+                      isSingle={false}
+                    />
+                  ))}
+                </div>
+
+                <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
                   <button
-                    type="button"
-                    onClick={() => setReceiptPaperSize('k80')}
-                    className={`px-2 py-0.5 rounded-lg transition cursor-pointer ${
-                      receiptPaperSize === 'k80'
-                        ? 'bg-indigo-600 text-white font-bold'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
+                    onClick={() => setPrintReceiptOrder(null)}
+                    className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
                   >
-                    K80
+                    Đóng
                   </button>
                   <button
-                    type="button"
-                    onClick={() => setReceiptPaperSize('k58')}
-                    className={`px-2 py-0.5 rounded-lg transition cursor-pointer ${
-                      receiptPaperSize === 'k58'
-                        ? 'bg-indigo-600 text-white font-bold'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
+                    onClick={() => window.print()}
+                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
                   >
-                    K58
+                    <Printer className="w-4 h-4" />
+                    <span>In Phiếu Nhiệt POS ({tickets.length} Phiếu)</span>
                   </button>
                 </div>
-
-                <button
-                  onClick={() => setPrintReceiptOrder(null)}
-                  className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
-                >
-                  <X className="w-5 h-5" />
-                </button>
               </div>
             </div>
-
-            <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto flex-1">
-              <PosReceiptTicket
-                order={printReceiptOrder}
-                menu={menu}
-                paperSize={receiptPaperSize}
-                isPrintMode={false}
-                isSingle={true}
-              />
-            </div>
-
-            <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
-              <button
-                onClick={() => setPrintReceiptOrder(null)}
-                className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
-              >
-                Đóng
-              </button>
-              <button
-                onClick={() => window.print()}
-                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
-              >
-                <Printer className="w-4 h-4" />
-                <span>In Phiếu Nhiệt POS (1 Trang)</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+          );
+        })()}
 
       {/* ================= MODAL: BATCH POS RECEIPTS PRINT ================= */}
-      {batchPrintOrders && batchPrintOrders.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 pos-modal-overlay">
-          <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
-            <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Printer className="w-5 h-5 text-indigo-400 flex-shrink-0" />
-                <div>
-                  <h4 className="font-bold text-sm">
-                    In Hàng Loạt Hóa Đơn POS ({displayedBatchOrders.length}/{batchPrintOrders.length} đơn)
-                  </h4>
-                  <p className="text-[11px] text-slate-400">
-                    Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} · Monospace · 1 Phiếu / 1 Trang
-                  </p>
-                </div>
-              </div>
+      {batchPrintOrders &&
+        batchPrintOrders.length > 0 &&
+        (() => {
+          const allTickets = displayedBatchOrders.flatMap((ord) =>
+            getOrderTickets(ord, menu)
+          );
+          return (
+            <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 pos-modal-overlay">
+              <div className="bg-white rounded-3xl max-w-lg w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+                <div className="p-4 bg-slate-900 text-white flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Printer className="w-5 h-5 text-indigo-400 flex-shrink-0" />
+                    <div>
+                      <h4 className="font-bold text-sm">
+                        In Hàng Loạt Hóa Đơn POS ({displayedBatchOrders.length}/{batchPrintOrders.length} đơn)
+                      </h4>
+                      <p className="text-[11px] text-slate-400">
+                        Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} · Tổng {allTickets.length} Phiếu in
+                      </p>
+                    </div>
+                  </div>
 
-              <div className="flex items-center gap-2">
-                {/* Paper size toggle */}
-                <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl text-[11px] font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => setReceiptPaperSize('k80')}
-                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                      receiptPaperSize === 'k80'
-                        ? 'bg-indigo-600 text-white font-bold shadow-xs'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    K80 (80mm)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setReceiptPaperSize('k58')}
-                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
-                      receiptPaperSize === 'k58'
-                        ? 'bg-indigo-600 text-white font-bold shadow-xs'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    K58 (58mm)
-                  </button>
-                </div>
+                  <div className="flex items-center gap-2">
+                    {/* Paper size toggle */}
+                    <div className="flex items-center gap-1 bg-slate-800 p-1 rounded-xl text-[11px] font-semibold">
+                      <button
+                        type="button"
+                        onClick={() => setReceiptPaperSize('k80')}
+                        className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                          receiptPaperSize === 'k80'
+                            ? 'bg-indigo-600 text-white font-bold shadow-xs'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        K80 (80mm)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setReceiptPaperSize('k58')}
+                        className={`px-2.5 py-1 rounded-lg transition cursor-pointer ${
+                          receiptPaperSize === 'k58'
+                            ? 'bg-indigo-600 text-white font-bold shadow-xs'
+                            : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        K58 (58mm)
+                      </button>
+                    </div>
 
-                <button
-                  onClick={() => {
-                    setBatchPrintOrders(null);
-                    setBatchTestCount(null);
-                  }}
-                  className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-
-            {/* Chọn số lượng xuất in nhanh (2 đơn, 10 đơn, tất cả) */}
-            {batchPrintOrders.length > 2 && (
-              <div className="px-4 py-2 bg-slate-800 border-t border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className="text-slate-300 font-medium text-[11px]">
-                  Số lượng xuất in:
-                </span>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setBatchTestCount(2)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
-                      batchTestCount === 2
-                        ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
-                        : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                    }`}
-                  >
-                    2 đơn đầu
-                  </button>
-                  {batchPrintOrders.length >= 10 && (
                     <button
-                      type="button"
-                      onClick={() => setBatchTestCount(10)}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
-                        batchTestCount === 10
-                          ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
-                          : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                      }`}
+                      onClick={() => {
+                        setBatchPrintOrders(null);
+                        setBatchTestCount(null);
+                      }}
+                      className="p-1 text-slate-400 hover:text-white rounded-lg cursor-pointer min-h-[36px] min-w-[36px] flex items-center justify-center"
                     >
-                      10 đơn đầu
+                      <X className="w-5 h-5" />
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setBatchTestCount(null)}
-                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
-                      batchTestCount === null
-                        ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
-                        : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                    }`}
-                  >
-                    Tất cả ({batchPrintOrders.length} đơn)
-                  </button>
+                  </div>
+                </div>
+
+                {/* Chọn số lượng xuất in nhanh (2 đơn, 10 đơn, tất cả) */}
+                {batchPrintOrders.length > 2 && (
+                  <div className="px-4 py-2 bg-slate-800 border-t border-slate-700 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-300 font-medium text-[11px]">
+                      Số lượng xuất in:
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setBatchTestCount(2)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
+                          batchTestCount === 2
+                            ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
+                            : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                        }`}
+                      >
+                        2 đơn đầu
+                      </button>
+                      {batchPrintOrders.length >= 10 && (
+                        <button
+                          type="button"
+                          onClick={() => setBatchTestCount(10)}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
+                            batchTestCount === 10
+                              ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
+                              : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                          }`}
+                        >
+                          10 đơn đầu
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setBatchTestCount(null)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition ${
+                          batchTestCount === null
+                            ? 'bg-indigo-500 text-white ring-2 ring-indigo-300'
+                            : 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                        }`}
+                      >
+                        Tất cả ({batchPrintOrders.length} đơn)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Preview scroll container */}
+                <div className="p-4 sm:p-6 bg-slate-100/80 overflow-y-auto flex-1 space-y-6">
+                  {allTickets.map((t, idx) => (
+                    <PosReceiptTicket
+                      key={`${t.order.id}-${t.ticketType}-${idx}`}
+                      order={t.order}
+                      ticket={t}
+                      menu={menu}
+                      paperSize={receiptPaperSize}
+                      index={idx}
+                      totalCount={allTickets.length}
+                      isPrintMode={false}
+                      isLast={idx === allTickets.length - 1}
+                    />
+                  ))}
+                </div>
+
+                {/* Modal Footer */}
+                <div className="p-4 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs text-slate-600">
+                    <span>Xuất PDF/In: </span>
+                    <strong className="text-indigo-700 font-bold font-mono">
+                      {allTickets.length} trang
+                    </strong>
+                    <span className="text-slate-400"> ({displayedBatchOrders.length} đơn · mỗi trang 1 phiếu)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setBatchPrintOrders(null);
+                        setBatchTestCount(null);
+                      }}
+                      className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
+                    >
+                      Đóng
+                    </button>
+                    <button
+                      onClick={() => window.print()}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span>In Tất Cả {allTickets.length} Phiếu POS</span>
+                    </button>
+                  </div>
                 </div>
               </div>
-            )}
-
-            {/* Preview scroll container */}
-            <div className="p-4 sm:p-6 bg-slate-100/80 overflow-y-auto flex-1 space-y-6">
-              {displayedBatchOrders.map((ord, idx) => (
-                <PosReceiptTicket
-                  key={ord.id}
-                  order={ord}
-                  menu={menu}
-                  paperSize={receiptPaperSize}
-                  index={idx}
-                  totalCount={displayedBatchOrders.length}
-                  isPrintMode={false}
-                  isLast={idx === displayedBatchOrders.length - 1}
-                />
-              ))}
             </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs text-slate-600">
-                <span>Xuất PDF/In: </span>
-                <strong className="text-indigo-700 font-bold font-mono">
-                  {displayedBatchOrders.length} trang
-                </strong>
-                <span className="text-slate-400"> (mỗi trang 1 phiếu)</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setBatchPrintOrders(null);
-                    setBatchTestCount(null);
-                  }}
-                  className="px-4 py-2.5 text-slate-600 hover:text-slate-900 font-semibold text-xs rounded-xl hover:bg-slate-100 cursor-pointer min-h-[44px]"
-                >
-                  Đóng
-                </button>
-                <button
-                  onClick={() => window.print()}
-                  className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
-                >
-                  <Printer className="w-4 h-4" />
-                  <span>In Tất Cả {displayedBatchOrders.length} Phiếu POS</span>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+          );
+        })()}
 
       {/* ================= DEDICATED PRINT PORTAL CONTAINER ================= */}
       {/* Mounted directly to document.body, outside #root to completely bypass modal overflow & position constraints */}
@@ -4713,30 +4733,44 @@ export function PortalDashboard({
                 }
               }
             `}</style>
-            {printReceiptOrder && (
-              <PosReceiptTicket
-                order={printReceiptOrder}
-                menu={menu}
-                paperSize={receiptPaperSize}
-                isPrintMode={true}
-                isSingle={true}
-                isLast={true}
-              />
-            )}
+            {printReceiptOrder &&
+              (() => {
+                const tickets = getOrderTickets(printReceiptOrder, menu);
+                return tickets.map((t, idx) => (
+                  <PosReceiptTicket
+                    key={`${printReceiptOrder.id}-${t.ticketType}`}
+                    order={printReceiptOrder}
+                    ticket={t}
+                    menu={menu}
+                    paperSize={receiptPaperSize}
+                    index={idx}
+                    totalCount={tickets.length}
+                    isPrintMode={true}
+                    isSingle={true}
+                    isLast={idx === tickets.length - 1}
+                  />
+                ));
+              })()}
             {!printReceiptOrder &&
               displayedBatchOrders &&
-              displayedBatchOrders.map((ord, idx) => (
-                <PosReceiptTicket
-                  key={ord.id}
-                  order={ord}
-                  menu={menu}
-                  paperSize={receiptPaperSize}
-                  index={idx}
-                  totalCount={displayedBatchOrders.length}
-                  isPrintMode={true}
-                  isLast={idx === displayedBatchOrders.length - 1}
-                />
-              ))}
+              (() => {
+                const allTickets = displayedBatchOrders.flatMap((ord) =>
+                  getOrderTickets(ord, menu)
+                );
+                return allTickets.map((t, idx) => (
+                  <PosReceiptTicket
+                    key={`${t.order.id}-${t.ticketType}-${idx}`}
+                    order={t.order}
+                    ticket={t}
+                    menu={menu}
+                    paperSize={receiptPaperSize}
+                    index={idx}
+                    totalCount={allTickets.length}
+                    isPrintMode={true}
+                    isLast={idx === allTickets.length - 1}
+                  />
+                ));
+              })()}
           </div>,
           document.body
         )}
