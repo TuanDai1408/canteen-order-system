@@ -30,12 +30,6 @@ export const supabaseGlobalSyncChannel =
     ? supabase.channel('canteen-global-sync', { config: { broadcast: { self: false } } })
     : null;
 
-if (supabaseGlobalSyncChannel) {
-  try {
-    supabaseGlobalSyncChannel.subscribe();
-  } catch {}
-}
-
 /**
  * Phát tín hiệu đồng bộ hệ thống 3 tầng tức thì:
  * 1. Supabase Realtime WebSocket (cho các thiết bị, trình duyệt khác)
@@ -48,6 +42,9 @@ export function broadcastSystemEvent(type: string, payload?: any) {
   // 1. Supabase WebSocket Broadcast
   try {
     if (supabaseGlobalSyncChannel) {
+      if (supabaseGlobalSyncChannel.state !== 'joined' && supabaseGlobalSyncChannel.state !== 'joining') {
+        supabaseGlobalSyncChannel.subscribe();
+      }
       supabaseGlobalSyncChannel.send({
         type: 'broadcast',
         event: 'canteen_sync',
@@ -63,11 +60,10 @@ export function broadcastSystemEvent(type: string, payload?: any) {
     }
   } catch {}
 
-  // 3. Local CustomEvent & Storage
+  // 3. Local CustomEvent
   try {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent(type, { detail: payload }));
-      localStorage.setItem('canteen_last_sync_event', JSON.stringify(messageData));
     }
   } catch {}
 }
@@ -2671,10 +2667,17 @@ export async function fetchTimeGateConfig(): Promise<TimeGateConfig> {
         const isForceOpen = Boolean(val.isForceOpen || val.is_force_open || val.forceOpen);
 
         const cfg: TimeGateConfig = { openTime, closeTime, isForceOpen };
-        localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
-          window.dispatchEvent(new Event('storage'));
+        const oldCfg = getCustomTimeGateConfig();
+        const hasChanged =
+          oldCfg.openTime !== cfg.openTime ||
+          oldCfg.closeTime !== cfg.closeTime ||
+          Boolean(oldCfg.isForceOpen) !== Boolean(cfg.isForceOpen);
+
+        if (hasChanged) {
+          localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_time_gate_updated', { detail: cfg }));
+          }
         }
         return cfg;
       }
@@ -2702,9 +2705,6 @@ export async function setCustomTimeGateConfig(
 
   // Phát tín hiệu tức thì toàn hệ thống qua Supabase, BroadcastChannel và Window
   broadcastSystemEvent('canteen_time_gate_updated', { cfg });
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event('storage'));
-  }
 
   if (isSupabaseConfigured && supabase) {
     const payload = {
@@ -2847,22 +2847,60 @@ export function fileToBase64(file: File): Promise<string> {
 // REALTIME
 // ============================================================
 
-export function subscribeRealtime(callback: () => void) {
-  let debounceTimer: any = null;
+export interface RealtimeSyncInfo {
+  tables: string[];
+  payload?: any;
+}
 
-  // Hợp nhất (coalesce) mọi sự kiện trong cửa sổ 60ms thành đúng 1 lần tải lại duy nhất
+export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): () => void {
+  let debounceTimer: any = null;
+  const changedTables = new Set<string>();
+  let lastPayload: any = null;
+
+  // Hợp nhất (coalesce) mọi sự kiện trong cửa sổ 500ms thành đúng 1 lần tải lại duy nhất
   const triggerDebounced = (payload?: any) => {
-    if (payload?.table === 'settings' || payload?.table === 'system_settings') {
-      fetchTimeGateConfig().catch(() => {});
+    lastPayload = payload;
+    if (payload?.table) {
+      changedTables.add(String(payload.table));
     }
+    const eventType = payload?.type || payload?.event;
+    if (typeof eventType === 'string') {
+      if (eventType.includes('order')) {
+        changedTables.add('orders');
+        changedTables.add('menu_items');
+      }
+      if (eventType.includes('menu')) {
+        changedTables.add('menu_items');
+      }
+      if (eventType.includes('wallet') || eventType.includes('user')) {
+        changedTables.add('users');
+      }
+      if (eventType.includes('qr')) {
+        changedTables.add('qr_exception_tokens');
+      }
+      if (eventType.includes('time_gate')) {
+        changedTables.add('settings');
+      }
+    }
+
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      callback();
-    }, 60);
+      const tables = Array.from(changedTables);
+      changedTables.clear();
+      if (tables.includes('settings') || tables.includes('system_settings')) {
+        fetchTimeGateConfig().catch(() => {});
+      }
+      try {
+        callback({ tables, payload: lastPayload });
+      } catch (err) {
+        console.warn('[@canteen/shared] Realtime callback error:', err);
+      }
+    }, 500);
   };
 
-  const localHandler = () => {
-    triggerDebounced();
+  const localHandler = (e: Event) => {
+    const detail = (e as CustomEvent)?.detail;
+    triggerDebounced({ type: e.type, ...detail });
   };
 
   const broadcastHandler = (ev: MessageEvent) => {
@@ -2881,7 +2919,6 @@ export function subscribeRealtime(callback: () => void) {
     'canteen_user_status_changed',
     'canteen_time_gate_updated',
     'canteen_qr_token_updated',
-    'storage',
   ];
 
   if (typeof window !== 'undefined') {
@@ -2907,6 +2944,13 @@ export function subscribeRealtime(callback: () => void) {
   }
 
   try {
+    // Đảm bảo token auth đã được gán vào Supabase Realtime client nếu có session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.access_token && supabase?.realtime) {
+        supabase.realtime.setAuth(session.access_token).catch(() => {});
+      }
+    }).catch(() => {});
+
     const channelName = `canteen-realtime-${Math.random().toString(36).substring(2, 9)}`;
     const channel = supabase
       .channel(channelName, { config: { broadcast: { self: false } } })
@@ -2917,8 +2961,14 @@ export function subscribeRealtime(callback: () => void) {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => triggerDebounced(p))
-      .on('broadcast', { event: 'canteen_sync' }, (p) => triggerDebounced(p))
-      .subscribe();
+      .on('broadcast', { event: 'canteen_sync' }, (p) => triggerDebounced(p?.payload || p))
+      .subscribe((status, err) => {
+        if (status === 'SUBSCRIBED') {
+          console.info('[@canteen/shared] Supabase Realtime subscribed successfully:', channelName);
+        } else if (err || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[@canteen/shared] Supabase Realtime channel status:', status, err);
+        }
+      });
 
     return () => {
       cleanupLocal();
@@ -2926,7 +2976,8 @@ export function subscribeRealtime(callback: () => void) {
         supabase.removeChannel(channel);
       } catch {}
     };
-  } catch {
+  } catch (err) {
+    console.warn('[@canteen/shared] subscribeRealtime error:', err);
     return cleanupLocal;
   }
 }

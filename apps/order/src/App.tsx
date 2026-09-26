@@ -51,29 +51,52 @@ export default function App() {
   const isRefreshingPortalRef = useRef(false);
   const pendingRefreshPortalRef = useRef(false);
 
-  const refreshOrderData = useCallback(async (profile: UserProfile) => {
+  const refreshOrderData = useCallback(async (profile: UserProfile, tables?: string[]) => {
     if (isRefreshingOrderRef.current) {
       pendingRefreshOrderRef.current = true;
       return;
     }
     isRefreshingOrderRef.current = true;
     try {
-      const [profileRes, menuRes, ordersRes] = await Promise.allSettled([
-        getCurrentUserProfile(),
-        getMenu(),
-        getOrders({ userId: profile.id, authUserId: profile.authUserId }),
-        fetchTimeGateConfig(),
-      ]);
-      if (profileRes.status === 'fulfilled' && profileRes.value) {
-        setUser(profileRes.value);
-        userRef.current = profileRes.value;
+      const shouldFetchAll = !tables || tables.length === 0;
+      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
+      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
+      const needProfile = shouldFetchAll || tables.includes('users') || tables.includes('orders');
+      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+
+      const promises: Promise<any>[] = [];
+      const keys: string[] = [];
+
+      if (needProfile) {
+        promises.push(getCurrentUserProfile());
+        keys.push('profile');
       }
-      if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
-        setMenu(menuRes.value);
+      if (needMenu) {
+        promises.push(getMenu());
+        keys.push('menu');
       }
-      if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
-        setOrders(ordersRes.value);
+      if (needOrders) {
+        promises.push(getOrders({ userId: profile.id, authUserId: profile.authUserId }));
+        keys.push('orders');
       }
+      if (needTimeGate) {
+        promises.push(fetchTimeGateConfig());
+        keys.push('timeGate');
+      }
+
+      const results = await Promise.allSettled(promises);
+      results.forEach((res, idx) => {
+        if (res.status !== 'fulfilled') return;
+        const key = keys[idx];
+        if (key === 'profile' && res.value) {
+          setUser(res.value);
+          userRef.current = res.value;
+        } else if (key === 'menu' && Array.isArray(res.value) && res.value.length > 0) {
+          setMenu(res.value);
+        } else if (key === 'orders' && Array.isArray(res.value)) {
+          setOrders(res.value);
+        }
+      });
       setTimeStatus(getTimeGateStatus());
       setError(null);
     } catch (e: any) {
@@ -88,37 +111,58 @@ export default function App() {
     }
   }, []);
 
-  const refreshPortalData = useCallback(async () => {
+  const refreshPortalData = useCallback(async (tables?: string[]) => {
     if (isRefreshingPortalRef.current) {
       pendingRefreshPortalRef.current = true;
       return;
     }
     isRefreshingPortalRef.current = true;
     try {
-      const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
-        getCurrentUserProfile(),
-        getAllMenuItems(),
-        getOrders(),
-        getUsers(),
-        getQRTokens(),
-        fetchTimeGateConfig(),
-      ]);
-      if (profileRes.status === 'fulfilled' && profileRes.value) {
-        setUser(profileRes.value);
-        userRef.current = profileRes.value;
+      const shouldFetchAll = !tables || tables.length === 0;
+      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
+      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
+      const needUsers = shouldFetchAll || tables.includes('users');
+      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens');
+      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+
+      const promises: Promise<any>[] = [];
+      const keys: string[] = [];
+
+      if (needMenu) {
+        promises.push(getAllMenuItems());
+        keys.push('menu');
       }
-      if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
-        setPortalMenu(mRes.value);
+      if (needOrders) {
+        promises.push(getOrders());
+        keys.push('orders');
       }
-      if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
-        setAllOrders(oRes.value);
+      if (needUsers) {
+        promises.push(getUsers());
+        keys.push('users');
       }
-      if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
-        setAllUsers(uRes.value);
+      if (needTokens) {
+        promises.push(getQRTokens());
+        keys.push('tokens');
       }
-      if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
-        setTokens(tRes.value);
+      if (needTimeGate) {
+        promises.push(fetchTimeGateConfig());
+        keys.push('timeGate');
       }
+
+      const results = await Promise.allSettled(promises);
+      results.forEach((res, idx) => {
+        if (res.status !== 'fulfilled') return;
+        const key = keys[idx];
+        if (key === 'menu' && Array.isArray(res.value) && res.value.length > 0) {
+          setPortalMenu(res.value);
+        } else if (key === 'orders' && Array.isArray(res.value)) {
+          setAllOrders(res.value);
+        } else if (key === 'users' && Array.isArray(res.value)) {
+          setAllUsers(res.value);
+        } else if (key === 'tokens' && Array.isArray(res.value)) {
+          setTokens(res.value);
+        }
+      });
       setTimeStatus(getTimeGateStatus());
     } catch (e: any) {
       console.warn('[refreshPortalData notice]:', e);
@@ -131,11 +175,12 @@ export default function App() {
     }
   }, []);
 
+  // 1. Khởi tạo dữ liệu ban đầu
   useEffect(() => {
     let mounted = true;
     async function init() {
       try {
-        const [profileRes, menuRes, timeCfgRes] = await Promise.allSettled([
+        const [profileRes, menuRes, _] = await Promise.allSettled([
           getCurrentUserProfile(),
           getMenu(),
           fetchTimeGateConfig(),
@@ -147,6 +192,7 @@ export default function App() {
         setTimeStatus(getTimeGateStatus());
         const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
+        userRef.current = profile;
 
         if (profile) {
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
@@ -157,11 +203,8 @@ export default function App() {
             const [ordersRes] = await Promise.allSettled([
               getOrders({ userId: profile.id, authUserId: profile.authUserId }),
             ]);
-            if (mounted) {
-              if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
-                setOrders(ordersRes.value);
-              }
-              setTimeStatus(getTimeGateStatus());
+            if (mounted && ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+              setOrders(ordersRes.value);
             }
           }
         }
@@ -173,30 +216,35 @@ export default function App() {
     }
     init();
 
-    const handleSync = async () => {
-      if (!mounted) return;
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  // 2. Kênh Realtime Supabase: CHỈ kích hoạt sau khi đã có user đăng nhập, dọn dẹp khi logout/unmount
+  useEffect(() => {
+    if (!user) return;
+
+    const handleRealtimeSync = (info?: { tables?: string[]; payload?: any }) => {
       setTimeStatus(getTimeGateStatus());
-      const currentUser = userRef.current;
+      const currentUser = userRef.current || user;
+      const tables = info?.tables;
       if (currentViewRef.current === 'portal') {
-        refreshPortalData();
-      } else if (currentUser) {
-        refreshOrderData(currentUser);
+        refreshPortalData(tables);
       } else {
-        const profile = await getCurrentUserProfile();
-        if (profile && mounted) {
-          setUser(profile);
-          userRef.current = profile;
-          refreshOrderData(profile);
-        }
+        refreshOrderData(currentUser, tables);
       }
     };
 
-    const unsub = subscribeRealtime(() => {
-      if (!mounted) return;
-      handleSync();
-    });
+    const unsub = subscribeRealtime(handleRealtimeSync);
 
-    // Cập nhật số dư ví lạc quan (optimistic) trên UI tức thì trước khi dữ liệu từ server về
+    return () => {
+      unsub();
+    };
+  }, [user?.id, refreshOrderData, refreshPortalData]);
+
+  // Cập nhật số dư ví lạc quan (optimistic) trên UI tức thì trước khi dữ liệu từ server về
+  useEffect(() => {
     const handleWalletUpdated = (e: Event) => {
       const customEvent = e as CustomEvent<{ walletBalance?: number }>;
       if (customEvent.detail && customEvent.detail.walletBalance !== undefined) {
@@ -205,29 +253,31 @@ export default function App() {
       }
     };
     window.addEventListener('canteen_wallet_updated', handleWalletUpdated);
+    return () => window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
+  }, []);
 
-    // Cập nhật trạng thái giờ (time-gate) trên máy client, tính toán thuần local (không gọi API)
+  // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
+  useEffect(() => {
     const clock = setInterval(() => {
-      if (!mounted) return;
       setTimeStatus(getTimeGateStatus());
     }, 30_000);
+    return () => clearInterval(clock);
+  }, []);
 
-    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
+  // 4. Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
+  useEffect(() => {
     const handleVisibilityChange = () => {
-      if (!mounted) return;
-      if (typeof document !== 'undefined' && !document.hidden) {
-        handleSync();
+      if (typeof document !== 'undefined' && !document.hidden && userRef.current) {
+        setTimeStatus(getTimeGateStatus());
+        if (currentViewRef.current === 'portal') {
+          refreshPortalData();
+        } else {
+          refreshOrderData(userRef.current);
+        }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      mounted = false;
-      unsub();
-      window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(clock);
-    };
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [refreshOrderData, refreshPortalData]);
 
   const handleLogout = async () => {

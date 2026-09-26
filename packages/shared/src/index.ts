@@ -59,6 +59,7 @@ export {
   setCachedQRTokens,
   getTimeGateStatus,
   subscribeRealtime,
+  type RealtimeSyncInfo,
   broadcastSyncChannel,
   broadcastSystemEvent,
   supabaseGlobalSyncChannel,

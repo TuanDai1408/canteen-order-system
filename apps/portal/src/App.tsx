@@ -36,37 +36,60 @@ export default function App() {
   const isRefreshingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (tables?: string[]) => {
     if (isRefreshingRef.current) {
       pendingRefreshRef.current = true;
       return;
     }
     isRefreshingRef.current = true;
     try {
-      const [profileRes, mRes, oRes, uRes, tRes] = await Promise.allSettled([
-        getCurrentUserProfile(),
-        getAllMenuItems(),
-        getOrders(),
-        getUsers(),
-        getQRTokens(),
-        fetchTimeGateConfig(),
-      ]);
+      const shouldFetchAll = !tables || tables.length === 0;
+      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
+      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
+      const needUsers = shouldFetchAll || tables.includes('users');
+      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens');
+      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+
+      const promises: Promise<any>[] = [];
+      const keys: string[] = [];
+
+      if (needMenu) {
+        promises.push(getAllMenuItems());
+        keys.push('menu');
+      }
+      if (needOrders) {
+        promises.push(getOrders());
+        keys.push('orders');
+      }
+      if (needUsers) {
+        promises.push(getUsers());
+        keys.push('users');
+      }
+      if (needTokens) {
+        promises.push(getQRTokens());
+        keys.push('tokens');
+      }
+      if (needTimeGate) {
+        promises.push(fetchTimeGateConfig());
+        keys.push('timeGate');
+      }
+
+      const results = await Promise.allSettled(promises);
       if (!isMountedRef.current) return;
-      if (profileRes.status === 'fulfilled' && profileRes.value) {
-        setUser(profileRes.value);
-      }
-      if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
-        setMenu(mRes.value);
-      }
-      if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
-        setOrders(oRes.value);
-      }
-      if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
-        setUsers(uRes.value);
-      }
-      if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
-        setTokens(tRes.value);
-      }
+
+      results.forEach((res, idx) => {
+        if (res.status !== 'fulfilled') return;
+        const key = keys[idx];
+        if (key === 'menu' && Array.isArray(res.value) && res.value.length > 0) {
+          setMenu(res.value);
+        } else if (key === 'orders' && Array.isArray(res.value)) {
+          setOrders(res.value);
+        } else if (key === 'users' && Array.isArray(res.value)) {
+          setUsers(res.value);
+        } else if (key === 'tokens' && Array.isArray(res.value)) {
+          setTokens(res.value);
+        }
+      });
       setTimeStatus(getTimeGateStatus());
     } catch (e) {
       console.warn('Portal refresh note:', e);
@@ -79,11 +102,12 @@ export default function App() {
     }
   }, []);
 
+  // 1. Khởi tạo dữ liệu ban đầu
   useEffect(() => {
     isMountedRef.current = true;
     async function init() {
       try {
-        const [profileRes, mRes, timeCfgRes] = await Promise.allSettled([
+        const [profileRes, mRes, _] = await Promise.allSettled([
           getCurrentUserProfile(),
           getAllMenuItems(),
           fetchTimeGateConfig(),
@@ -122,36 +146,48 @@ export default function App() {
     }
     init();
 
-    const unsub = subscribeRealtime(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // 2. Kênh Realtime Supabase: CHỈ kích hoạt sau khi đã có user đăng nhập, dọn dẹp khi logout/unmount
+  useEffect(() => {
+    if (!user) return;
+
+    const unsub = subscribeRealtime((info) => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
-        refresh();
+        refresh(info?.tables);
       }
     });
 
-    // Cập nhật trạng thái giờ (time-gate) local với chu kỳ thưa (30 giây), thuần logic client không gọi API
+    return () => {
+      unsub();
+    };
+  }, [user?.id, refresh]);
+
+  // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
+  useEffect(() => {
     const clock = setInterval(() => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
       }
     }, 30_000);
+    return () => clearInterval(clock);
+  }, []);
 
-    // Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu một lần
+  // 4. Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu đúng 1 lần
+  useEffect(() => {
     const handleVisibilityChange = () => {
-      if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden) {
+      if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden && user) {
         setTimeStatus(getTimeGateStatus());
         refresh();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
-
-    return () => {
-      isMountedRef.current = false;
-      unsub();
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearInterval(clock);
-    };
-  }, [refresh]);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [user, refresh]);
 
   const handleLogout = async () => {
     await logout();
