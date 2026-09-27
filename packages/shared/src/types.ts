@@ -63,6 +63,9 @@ export interface Order {
   cancellationDeadline: string;
   cancelledAt?: string;
   cancelReason?: string;
+  printedTongAt?: string;
+  printedComAt?: string;
+  printedNuocAt?: string;
   note?: string;
   notes?: string;
   isExceptionOrder?: boolean;
@@ -124,3 +127,5 @@ export interface AutoPrintConfig {
   updatedBy?: string;
   updatedAt?: string;
 }
+
+export type BillType = 'tong' | 'com' | 'nuoc';

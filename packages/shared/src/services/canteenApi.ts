@@ -3829,6 +3829,104 @@ export function getOrderTickets(order: Order, menuList: MenuItem[] = []): OrderT
   return tickets;
 }
 
+// ============================================================
+// ĐÁNH DẤU TRẠNG THÁI IN BILL (TỔNG / CƠM / NƯỚC)
+// ============================================================
+
+export type BillType = 'tong' | 'com' | 'nuoc';
+
+/**
+ * Kiểm tra xem đơn hàng cần những loại bill nào (Tổng, Cơm, Nước)
+ */
+export function getOrderBillRequirements(order: Order, menuList: MenuItem[] = []): {
+  hasTotal: boolean;
+  hasFood: boolean;
+  hasDrink: boolean;
+} {
+  const tickets = getOrderTickets(order, menuList);
+  return {
+    hasTotal: true,
+    hasFood: tickets.some((t) => t.ticketType === 'food'),
+    hasDrink: tickets.some((t) => t.ticketType === 'drink'),
+  };
+}
+
+/**
+ * Kiểm tra xem một đơn hàng đã được in đủ tất cả các bill cần thiết hay chưa
+ */
+export function isOrderFullyPrinted(order: Order, menuList: MenuItem[] = []): boolean {
+  if (!order.printedTongAt) return false;
+  const { hasFood, hasDrink } = getOrderBillRequirements(order, menuList);
+  if (hasFood && !order.printedComAt) return false;
+  if (hasDrink && !order.printedNuocAt) return false;
+  return true;
+}
+
+/**
+ * Đánh dấu một loại bill của đơn hàng đã được in thành công
+ */
+export async function markBillPrinted(orderId: string, billType: BillType): Promise<void> {
+  const column = { tong: 'printed_tong_at', com: 'printed_com_at', nuoc: 'printed_nuoc_at' }[billType];
+  const fieldKey = { tong: 'printedTongAt', com: 'printedComAt', nuoc: 'printedNuocAt' }[billType] as keyof Order;
+  const now = new Date().toISOString();
+
+  // 1. Cập nhật cache cục bộ ngay lập tức để UI phản hồi tức thì
+  try {
+    const all = getCachedOrders();
+    const updated = all.map((o) => (o.id === orderId ? { ...o, [fieldKey]: now } : o));
+    setCachedOrders(updated);
+  } catch {}
+
+  // 2. Broadcast sự kiện đa tab & custom event
+  broadcastSystemEvent('canteen_order_updated', { orderId, billType, [fieldKey]: now });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('canteen_order_updated', { detail: { orderId, billType, [fieldKey]: now } })
+    );
+  }
+
+  // 3. Ghi vào bảng orders trên Supabase (nếu cấu hình)
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('orders').update({ [column]: now }).eq('id', orderId);
+    } catch (e) {
+      console.warn(`[markBillPrinted] Note updating ${column}:`, e);
+    }
+  }
+}
+
+/**
+ * Hủy đánh dấu đã in (chuyển về chưa in) cho một loại bill
+ */
+export async function unmarkBillPrinted(orderId: string, billType: BillType): Promise<void> {
+  const column = { tong: 'printed_tong_at', com: 'printed_com_at', nuoc: 'printed_nuoc_at' }[billType];
+  const fieldKey = { tong: 'printedTongAt', com: 'printedComAt', nuoc: 'printedNuocAt' }[billType] as keyof Order;
+
+  // 1. Cập nhật cache cục bộ
+  try {
+    const all = getCachedOrders();
+    const updated = all.map((o) => (o.id === orderId ? { ...o, [fieldKey]: undefined } : o));
+    setCachedOrders(updated);
+  } catch {}
+
+  // 2. Broadcast sự kiện đa tab & custom event
+  broadcastSystemEvent('canteen_order_updated', { orderId, billType, [fieldKey]: null });
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('canteen_order_updated', { detail: { orderId, billType, [fieldKey]: null } })
+    );
+  }
+
+  // 3. Ghi vào Supabase
+  if (isSupabaseConfigured && supabase) {
+    try {
+      await supabase.from('orders').update({ [column]: null }).eq('id', orderId);
+    } catch (e) {
+      console.warn(`[unmarkBillPrinted] Note updating ${column}:`, e);
+    }
+  }
+}
+
 function mapOrder(row: any): Order {
   let mappedItems: any[] = [];
   const cachedMenu = getCachedMenu();
@@ -3934,6 +4032,9 @@ function mapOrder(row: any): Order {
     cancellationDeadline: row.cancellation_deadline || '16:00',
     cancelledAt: row.cancelled_at,
     cancelReason: row.cancel_reason,
+    printedTongAt: row.printed_tong_at || row.printedTongAt,
+    printedComAt: row.printed_com_at || row.printedComAt,
+    printedNuocAt: row.printed_nuoc_at || row.printedNuocAt,
     note: finalNote,
     notes: finalNote,
     isExceptionOrder: Boolean(row.is_exception_order || row.used_qr_token),

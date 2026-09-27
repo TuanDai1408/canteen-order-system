@@ -12,6 +12,7 @@ export type {
   WalletTransaction,
   PrinterConfig,
   AutoPrintConfig,
+  BillType,
 } from './types';
 
 // Supabase client
@@ -73,6 +74,10 @@ export {
   parseComboItem,
   isDrinkItem,
   getOrderTickets,
+  getOrderBillRequirements,
+  isOrderFullyPrinted,
+  markBillPrinted,
+  unmarkBillPrinted,
   type TicketType,
   type TicketItem,
   type OrderTicket,

@@ -41,6 +41,11 @@ import {
   listAvailablePrinters,
   printTestTicket,
   printOrderToAllPrinters,
+  markBillPrinted,
+  unmarkBillPrinted,
+  getOrderBillRequirements,
+  isOrderFullyPrinted,
+  type BillType,
 } from '@canteen/shared';
 import { PosReceiptTicket, type PaperSize } from './PosReceiptTicket';
 import { BrandLogo } from './BrandLogo';
@@ -206,6 +211,7 @@ export function PortalDashboard({
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<'all' | 'dine_in' | 'room_delivery'>('all');
   const [orderDateFilter, setOrderDateFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
+  const [onlyUnprintedFilter, setOnlyUnprintedFilter] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
@@ -547,6 +553,32 @@ export function PortalDashboard({
     }
   };
 
+  // Đánh dấu / Hủy đánh dấu in bill thủ công
+  const handleToggleBillPrinted = async (orderId: string, billType: BillType, currentlyPrinted: boolean) => {
+    try {
+      const typeLabel = billType === 'tong' ? 'Bill Tổng' : billType === 'com' ? 'Bill Cơm' : 'Bill Nước';
+      if (currentlyPrinted) {
+        await unmarkBillPrinted(orderId, billType);
+        setMsg({
+          type: 'ok',
+          text: `Đã hủy đánh dấu in phiếu [${typeLabel}] cho đơn hàng!`,
+        });
+      } else {
+        await markBillPrinted(orderId, billType);
+        setMsg({
+          type: 'ok',
+          text: `Đã đánh dấu đã in phiếu [${typeLabel}] thành công!`,
+        });
+      }
+      onRefresh();
+    } catch (err: any) {
+      setMsg({
+        type: 'err',
+        text: 'Lỗi cập nhật trạng thái in: ' + (err?.message || err),
+      });
+    }
+  };
+
   // Xử lý in 1 đơn hàng qua QZ Tray (fallback window.print nếu chưa mở QZ Tray)
   const handlePrintSingleReceipt = async (order: Order) => {
     setIsPrinting(true);
@@ -554,11 +586,21 @@ export function PortalDashboard({
       const res = await printOrderToAllPrinters(order, menu, printerConfig);
       if (res.success) {
         const count = res.results.filter((r) => r.success).length;
-        setMsg({
-          type: 'ok',
-          text: `Đã gửi in ${count} phiếu POS thành công tới các máy in quầy & bếp!`,
-        });
+        const failedItems = res.results.filter((r) => !r.success);
+        if (failedItems.length > 0) {
+          const failMsg = failedItems.map((f) => `${f.ticketTitle}: ${f.error || 'lỗi'}`).join('; ');
+          setMsg({
+            type: 'err',
+            text: `⚠️ Đã in ${count} phiếu thành công. Chú ý: ${failMsg}`,
+          });
+        } else {
+          setMsg({
+            type: 'ok',
+            text: `Đã gửi in toàn bộ ${count} phiếu POS thành công tới các máy in quầy & bếp!`,
+          });
+        }
         setPrintReceiptOrder(null);
+        onRefresh();
         return;
       }
 
@@ -566,8 +608,20 @@ export function PortalDashboard({
         console.info('[Print Fallback] QZ Tray chưa mở hoặc chưa cấu hình. Fallback về window.print()');
         setMsg({
           type: 'ok',
-          text: 'Đang mở hộp thoại in trình duyệt (QZ Tray chưa mở trên máy này)...',
+          text: 'Không tìm thấy QZ Tray — đang in theo cách thông thường (chọn máy in thủ công). Trạng thái đã in ở chế độ dự phòng dựa trên việc đóng hộp thoại in, có thể không phản ánh chính xác 100% việc in vật lý.',
         });
+
+        // Đánh dấu đã in dựa trên window.onafterprint ở chế độ fallback
+        const handleAfterPrint = () => {
+          window.removeEventListener('afterprint', handleAfterPrint);
+          markBillPrinted(order.id, 'tong').catch(() => {});
+          const reqs = getOrderBillRequirements(order, menu);
+          if (reqs.hasFood) markBillPrinted(order.id, 'com').catch(() => {});
+          if (reqs.hasDrink) markBillPrinted(order.id, 'nuoc').catch(() => {});
+          onRefresh();
+        };
+        window.addEventListener('afterprint', handleAfterPrint, { once: true });
+
         window.print();
         return;
       }
@@ -577,9 +631,23 @@ export function PortalDashboard({
           type: 'err',
           text: res.errorMessage || 'Một số máy in gặp sự cố khi in.',
         });
+        onRefresh();
       }
     } catch (err: any) {
       console.warn('[Print Error] Fallback to window.print():', err);
+      setMsg({
+        type: 'ok',
+        text: 'Không tìm thấy QZ Tray — đang in theo cách thông thường (chọn máy in thủ công). Trạng thái đã in ở chế độ dự phòng dựa trên việc đóng hộp thoại in.',
+      });
+      const handleAfterPrint = () => {
+        window.removeEventListener('afterprint', handleAfterPrint);
+        markBillPrinted(order.id, 'tong').catch(() => {});
+        const reqs = getOrderBillRequirements(order, menu);
+        if (reqs.hasFood) markBillPrinted(order.id, 'com').catch(() => {});
+        if (reqs.hasDrink) markBillPrinted(order.id, 'nuoc').catch(() => {});
+        onRefresh();
+      };
+      window.addEventListener('afterprint', handleAfterPrint, { once: true });
       window.print();
     } finally {
       setIsPrinting(false);
@@ -593,29 +661,143 @@ export function PortalDashboard({
       const conn = await connectQz();
       if (!conn.success) {
         console.info('[Batch Print Fallback] QZ Tray không khả dụng, dùng window.print()');
+        setMsg({
+          type: 'ok',
+          text: 'Không tìm thấy QZ Tray — đang in hàng loạt theo cách thông thường (chọn máy in thủ công).',
+        });
+        const handleAfterPrint = () => {
+          window.removeEventListener('afterprint', handleAfterPrint);
+          for (const ord of batchOrders) {
+            markBillPrinted(ord.id, 'tong').catch(() => {});
+            const reqs = getOrderBillRequirements(ord, menu);
+            if (reqs.hasFood) markBillPrinted(ord.id, 'com').catch(() => {});
+            if (reqs.hasDrink) markBillPrinted(ord.id, 'nuoc').catch(() => {});
+          }
+          onRefresh();
+        };
+        window.addEventListener('afterprint', handleAfterPrint, { once: true });
         window.print();
         return;
       }
 
       let totalPrinted = 0;
+      let hasAnyErrors = false;
       for (const ord of batchOrders) {
         const res = await printOrderToAllPrinters(ord, menu, printerConfig);
         if (res.success) {
           totalPrinted += res.results.filter((r) => r.success).length;
         }
+        if (res.hasErrors) {
+          hasAnyErrors = true;
+        }
+        // Thêm khoảng nghỉ nhỏ ~300ms giữa các đơn để tránh tràn buffer máy in
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
       setMsg({
-        type: 'ok',
-        text: `Đã in hàng loạt thành công ${totalPrinted} phiếu POS qua QZ Tray!`,
+        type: hasAnyErrors ? 'err' : 'ok',
+        text: hasAnyErrors
+          ? `Đã in hàng loạt ${totalPrinted} phiếu POS (một số máy in có thể gặp lỗi).`
+          : `Đã in hàng loạt thành công toàn bộ ${totalPrinted} phiếu POS qua QZ Tray!`,
       });
       setBatchPrintOrders(null);
       setBatchTestCount(null);
+      onRefresh();
     } catch (err) {
       window.print();
     } finally {
       setIsPrinting(false);
     }
+  };
+
+  // Render badge trạng thái in bill (Tổng / Cơm / Nước) kèm nút đánh dấu thủ công
+  const renderBillPrintBadges = (o: Order) => {
+    const reqs = getOrderBillRequirements(o, menu);
+    return (
+      <div className="flex flex-wrap items-center gap-1 pt-1">
+        {/* Bill Tổng (Luôn áp dụng) */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            handleToggleBillPrinted(o.id, 'tong', Boolean(o.printedTongAt));
+          }}
+          title={
+            o.printedTongAt
+              ? `Bill Tổng: Đã in lúc ${new Date(o.printedTongAt).toLocaleTimeString('vi-VN')} (Bấm để hủy đánh dấu)`
+              : 'Bill Tổng: Chưa in (Bấm để đánh dấu đã in)'
+          }
+          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+            o.printedTongAt
+              ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+              : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200 hover:text-slate-600'
+          }`}
+        >
+          {o.printedTongAt ? (
+            <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[3]" />
+          ) : (
+            <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+          )}
+          <span>Tổng</span>
+        </button>
+
+        {/* Bill Cơm (chỉ hiện nếu có món cơm) */}
+        {reqs.hasFood && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggleBillPrinted(o.id, 'com', Boolean(o.printedComAt));
+            }}
+            title={
+              o.printedComAt
+                ? `Bill Cơm: Đã in lúc ${new Date(o.printedComAt).toLocaleTimeString('vi-VN')} (Bấm để hủy đánh dấu)`
+                : 'Bill Cơm: Chưa in (Bấm để đánh dấu đã in)'
+            }
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+              o.printedComAt
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200 hover:text-slate-600'
+            }`}
+          >
+            {o.printedComAt ? (
+              <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[3]" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+            )}
+            <span>Cơm</span>
+          </button>
+        )}
+
+        {/* Bill Nước (chỉ hiện nếu có món nước) */}
+        {reqs.hasDrink && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleToggleBillPrinted(o.id, 'nuoc', Boolean(o.printedNuocAt));
+            }}
+            title={
+              o.printedNuocAt
+                ? `Bill Nước: Đã in lúc ${new Date(o.printedNuocAt).toLocaleTimeString('vi-VN')} (Bấm để hủy đánh dấu)`
+                : 'Bill Nước: Chưa in (Bấm để đánh dấu đã in)'
+            }
+            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
+              o.printedNuocAt
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 shadow-2xs'
+                : 'bg-slate-100 text-slate-400 border-slate-200 hover:bg-slate-200 hover:text-slate-600'
+            }`}
+          >
+            {o.printedNuocAt ? (
+              <Check className="w-2.5 h-2.5 text-emerald-600 stroke-[3]" />
+            ) : (
+              <span className="w-1.5 h-1.5 rounded-full bg-slate-300" />
+            )}
+            <span>Nước</span>
+          </button>
+        )}
+      </div>
+    );
   };
 
   // Overview metrics
@@ -828,16 +1010,22 @@ export function PortalDashboard({
         const matchDelivery = orderDeliveryFilter === 'all' || o.deliveryMethod === orderDeliveryFilter;
         const orderDate = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
         const matchDate = !orderDateFilter || orderDateFilter === 'all' || orderDate === orderDateFilter;
+        const matchUnprinted = !onlyUnprintedFilter || !isOrderFullyPrinted(o, menu);
         const matchSearch =
           o.orderCode.toLowerCase().includes(orderSearch.toLowerCase()) ||
           o.userName.toLowerCase().includes(orderSearch.toLowerCase()) ||
           (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase())) ||
           (o.note && o.note.toLowerCase().includes(orderSearch.toLowerCase())) ||
           (o.notes && o.notes.toLowerCase().includes(orderSearch.toLowerCase()));
-        return matchStatus && matchDelivery && matchDate && matchSearch;
+        return matchStatus && matchDelivery && matchDate && matchSearch && matchUnprinted;
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
+  }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch, onlyUnprintedFilter, menu]);
+
+  // Đếm số đơn chưa in đủ bill (không tính đơn đã hủy)
+  const unprintedOrdersCount = useMemo(() => {
+    return orders.filter((o) => o.status !== 'cancelled' && !isOrderFullyPrinted(o, menu)).length;
+  }, [orders, menu]);
 
   // Disabled users count
   const disabledUsersCount = useMemo(() => {
@@ -915,7 +1103,7 @@ export function PortalDashboard({
   // Reset page numbers when search / filters change
   useEffect(() => {
     setOrderPage(1);
-  }, [orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch]);
+  }, [orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch, onlyUnprintedFilter]);
 
   useEffect(() => {
     setUserPage(1);
@@ -1880,6 +2068,7 @@ export function PortalDashboard({
                                   ⚡ QR Ngoại lệ
                                 </span>
                               )}
+                              {renderBillPrintBadges(o)}
                             </td>
 
                             {/* Cán bộ & Thông tin khách hàng chi tiết */}
@@ -2408,6 +2597,29 @@ export function PortalDashboard({
                       <option value="room_delivery">Giao tận phòng</option>
                     </select>
 
+                    <button
+                      type="button"
+                      onClick={() => setOnlyUnprintedFilter(!onlyUnprintedFilter)}
+                      className={`px-3 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-2xs ${
+                        onlyUnprintedFilter
+                          ? 'bg-amber-500 hover:bg-amber-600 text-white shadow-xs'
+                          : 'bg-white hover:bg-slate-50 text-slate-700 border border-slate-200'
+                      }`}
+                      title="Chỉ hiển thị các đơn hàng chưa in đủ bill Tổng, Cơm hoặc Nước"
+                    >
+                      <Printer className={`w-3.5 h-3.5 ${onlyUnprintedFilter ? 'text-white' : 'text-amber-600'}`} />
+                      <span>Chưa in đủ bill</span>
+                      {unprintedOrdersCount > 0 && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                            onlyUnprintedFilter ? 'bg-white text-amber-600' : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {unprintedOrdersCount}
+                        </span>
+                      )}
+                    </button>
+
                     <span className="text-xs text-slate-500 font-medium whitespace-nowrap">
                       Hiển thị <strong className="text-slate-900">{filteredOrders.length}</strong> đơn hàng
                       {orderDateFilter && orderDateFilter !== 'all' ? ` (${orderDateFilter})` : ''}
@@ -2585,6 +2797,7 @@ export function PortalDashboard({
                                   ? `${new Date(o.createdAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })} · ${new Date(o.createdAt).toLocaleDateString('vi-VN')}`
                                   : '11:30'}
                               </p>
+                              {renderBillPrintBadges(o)}
                             </td>
 
                             {/* Cán bộ & Phòng / Căn tin */}
@@ -5528,6 +5741,27 @@ export function PortalDashboard({
                         }`}
                       >
                         K58 (58mm)
+                      </button>
+                    </div>
+
+                    {/* Auto-print toggle inside batch modal */}
+                    <div className="flex items-center gap-2 pl-2 border-l border-slate-700">
+                      <button
+                        type="button"
+                        onClick={handleToggleAutoPrint}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold flex items-center gap-1.5 transition cursor-pointer ${
+                          autoPrintConfig.enabled
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                        }`}
+                        title="Bật/Tắt tự động in đơn mới"
+                      >
+                        <span
+                          className={`w-2 h-2 rounded-full ${
+                            autoPrintConfig.enabled ? 'bg-white animate-pulse' : 'bg-slate-400'
+                          }`}
+                        />
+                        <span>Auto-in: {autoPrintConfig.enabled ? 'BẬT' : 'TẮT'}</span>
                       </button>
                     </div>
 

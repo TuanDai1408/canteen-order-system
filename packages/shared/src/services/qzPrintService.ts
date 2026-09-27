@@ -1,11 +1,12 @@
 // @ts-ignore
 import qz from 'qz-tray';
-import { Order, MenuItem, PrinterConfig } from '../types';
-import { getOrderTickets, OrderTicket } from './canteenApi';
+import { Order, MenuItem, PrinterConfig, BillType } from '../types';
+import { getOrderTickets, OrderTicket, markBillPrinted } from './canteenApi';
 
 export interface PrintBillResult {
   printerName: string;
   ticketType: 'total' | 'food' | 'drink';
+  billType: BillType;
   ticketTitle: string;
   success: boolean;
   error?: string;
@@ -294,9 +295,13 @@ export async function printBillToPrinter(
 
   await qz.print(config, printData);
 
+  const billType: BillType =
+    ticket.ticketType === 'total' ? 'tong' : ticket.ticketType === 'food' ? 'com' : 'nuoc';
+
   return {
     printerName: printerName.trim(),
     ticketType: ticket.ticketType,
+    billType,
     ticketTitle,
     success: true,
   };
@@ -363,6 +368,7 @@ export async function printTestTicket(
   return {
     printerName: cleanPrinter,
     ticketType: 'total',
+    billType: 'tong',
     ticketTitle: `Phiếu in thử (${printerRole})`,
     success: true,
   };
@@ -431,11 +437,14 @@ export async function printOrderToAllPrinters(
   // 4. Thực thi in từng máy in độc lập bằng Promise.allSettled
   const settledPromises = tasks.map(async ({ ticket, printerName, roleName }): Promise<PrintBillResult> => {
     const ticketTitle = ticket.subtitle || ticket.title;
+    const billType: BillType =
+      ticket.ticketType === 'total' ? 'tong' : ticket.ticketType === 'food' ? 'com' : 'nuoc';
 
     if (!printerName || !printerName.trim()) {
       return {
         printerName: '(Chưa cấu hình)',
         ticketType: ticket.ticketType,
+        billType,
         ticketTitle,
         success: false,
         error: `Chưa cấu hình tên máy in cho [${roleName}]`,
@@ -443,12 +452,19 @@ export async function printOrderToAllPrinters(
     }
 
     try {
-      return await printBillToPrinter(printerName.trim(), ticket);
+      const res = await printBillToPrinter(printerName.trim(), ticket);
+      if (res.success && order.id) {
+        markBillPrinted(order.id, billType).catch((err) =>
+          console.warn('[qzPrintService] Auto markBillPrinted notice:', err)
+        );
+      }
+      return res;
     } catch (err: any) {
       console.warn(`[qzPrintService] Lỗi in tại ${roleName} ("${printerName}"):`, err);
       return {
         printerName: printerName.trim(),
         ticketType: ticket.ticketType,
+        billType,
         ticketTitle,
         success: false,
         error: err?.message || 'Lỗi gửi lệnh in ESC/POS tới máy in.',
@@ -459,13 +475,17 @@ export async function printOrderToAllPrinters(
   const settledResults = await Promise.allSettled(settledPromises);
 
   const results: PrintBillResult[] = settledResults.map((r, idx) => {
+    const t = tasks[idx];
+    const billType: BillType =
+      t.ticket.ticketType === 'total' ? 'tong' : t.ticket.ticketType === 'food' ? 'com' : 'nuoc';
+
     if (r.status === 'fulfilled') {
       return r.value;
     }
-    const t = tasks[idx];
     return {
       printerName: t.printerName || '(Không xác định)',
       ticketType: t.ticket.ticketType,
+      billType,
       ticketTitle: t.ticket.subtitle || t.ticket.title,
       success: false,
       error: r.reason?.message || String(r.reason),
