@@ -253,6 +253,20 @@ export function PortalDashboard({
   const [batchPrintOrders, setBatchPrintOrders] = useState<Order[] | null>(null);
   const [receiptPaperSize, setReceiptPaperSize] = useState<PaperSize>('k80');
   const [batchTestCount, setBatchTestCount] = useState<number | null>(null);
+  const [printSuccessInfo, setPrintSuccessInfo] = useState<{
+    orderCode: string;
+    printedCount: number;
+    message?: string;
+  } | null>(null);
+
+  // Tự động đóng popup "In thành công" sau 2.5 giây
+  useEffect(() => {
+    if (!printSuccessInfo) return;
+    const timer = setTimeout(() => {
+      setPrintSuccessInfo(null);
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [printSuccessInfo]);
 
   // Đa máy in POS (QZ Tray) & Tự động in khi có đơn mới
   const [printerConfig, setPrinterConfigState] = useState<PrinterConfig>(getCustomPrinterConfig());
@@ -587,6 +601,11 @@ export function PortalDashboard({
       if (res.success) {
         const count = res.results.filter((r) => r.success).length;
         const failedItems = res.results.filter((r) => !r.success);
+
+        // Đóng ngay popup xem trước bill
+        setPrintReceiptOrder(null);
+        await onRefresh();
+
         if (failedItems.length > 0) {
           const failMsg = failedItems.map((f) => `${f.ticketTitle}: ${f.error || 'lỗi'}`).join('; ');
           setMsg({
@@ -594,13 +613,11 @@ export function PortalDashboard({
             text: `⚠️ Đã in ${count} phiếu thành công. Chú ý: ${failMsg}`,
           });
         } else {
-          setMsg({
-            type: 'ok',
-            text: `Đã gửi in toàn bộ ${count} phiếu POS thành công tới các máy in quầy & bếp!`,
+          setPrintSuccessInfo({
+            orderCode: order.orderCode,
+            printedCount: count,
           });
         }
-        setPrintReceiptOrder(null);
-        onRefresh();
         return;
       }
 
@@ -612,13 +629,24 @@ export function PortalDashboard({
         });
 
         // Đánh dấu đã in dựa trên window.onafterprint ở chế độ fallback
-        const handleAfterPrint = () => {
+        const handleAfterPrint = async () => {
           window.removeEventListener('afterprint', handleAfterPrint);
-          markBillPrinted(order.id, 'tong').catch(() => {});
+          setPrintReceiptOrder(null);
+          try {
+            await markBillPrinted(order.id, 'tong');
+            const reqs = getOrderBillRequirements(order, menu);
+            if (reqs.hasFood) await markBillPrinted(order.id, 'com');
+            if (reqs.hasDrink) await markBillPrinted(order.id, 'nuoc');
+          } catch (err) {
+            console.warn('[Print Fallback] markBillPrinted notice:', err);
+          }
+          await onRefresh();
           const reqs = getOrderBillRequirements(order, menu);
-          if (reqs.hasFood) markBillPrinted(order.id, 'com').catch(() => {});
-          if (reqs.hasDrink) markBillPrinted(order.id, 'nuoc').catch(() => {});
-          onRefresh();
+          const expectedCount = 1 + (reqs.hasFood ? 1 : 0) + (reqs.hasDrink ? 1 : 0);
+          setPrintSuccessInfo({
+            orderCode: order.orderCode,
+            printedCount: expectedCount,
+          });
         };
         window.addEventListener('afterprint', handleAfterPrint, { once: true });
 
@@ -627,11 +655,12 @@ export function PortalDashboard({
       }
 
       if (res.hasErrors) {
+        setPrintReceiptOrder(null);
+        await onRefresh();
         setMsg({
           type: 'err',
           text: res.errorMessage || 'Một số máy in gặp sự cố khi in.',
         });
-        onRefresh();
       }
     } catch (err: any) {
       console.warn('[Print Error] Fallback to window.print():', err);
@@ -639,13 +668,24 @@ export function PortalDashboard({
         type: 'ok',
         text: 'Không tìm thấy QZ Tray — đang in theo cách thông thường (chọn máy in thủ công). Trạng thái đã in ở chế độ dự phòng dựa trên việc đóng hộp thoại in.',
       });
-      const handleAfterPrint = () => {
+      const handleAfterPrint = async () => {
         window.removeEventListener('afterprint', handleAfterPrint);
-        markBillPrinted(order.id, 'tong').catch(() => {});
+        setPrintReceiptOrder(null);
+        try {
+          await markBillPrinted(order.id, 'tong');
+          const reqs = getOrderBillRequirements(order, menu);
+          if (reqs.hasFood) await markBillPrinted(order.id, 'com');
+          if (reqs.hasDrink) await markBillPrinted(order.id, 'nuoc');
+        } catch (err2) {
+          console.warn('[Print Fallback] markBillPrinted notice:', err2);
+        }
+        await onRefresh();
         const reqs = getOrderBillRequirements(order, menu);
-        if (reqs.hasFood) markBillPrinted(order.id, 'com').catch(() => {});
-        if (reqs.hasDrink) markBillPrinted(order.id, 'nuoc').catch(() => {});
-        onRefresh();
+        const expectedCount = 1 + (reqs.hasFood ? 1 : 0) + (reqs.hasDrink ? 1 : 0);
+        setPrintSuccessInfo({
+          orderCode: order.orderCode,
+          printedCount: expectedCount,
+        });
       };
       window.addEventListener('afterprint', handleAfterPrint, { once: true });
       window.print();
@@ -665,15 +705,31 @@ export function PortalDashboard({
           type: 'ok',
           text: 'Không tìm thấy QZ Tray — đang in hàng loạt theo cách thông thường (chọn máy in thủ công).',
         });
-        const handleAfterPrint = () => {
+        const handleAfterPrint = async () => {
           window.removeEventListener('afterprint', handleAfterPrint);
-          for (const ord of batchOrders) {
-            markBillPrinted(ord.id, 'tong').catch(() => {});
-            const reqs = getOrderBillRequirements(ord, menu);
-            if (reqs.hasFood) markBillPrinted(ord.id, 'com').catch(() => {});
-            if (reqs.hasDrink) markBillPrinted(ord.id, 'nuoc').catch(() => {});
+          setBatchPrintOrders(null);
+          setBatchTestCount(null);
+          try {
+            for (const ord of batchOrders) {
+              await markBillPrinted(ord.id, 'tong');
+              const reqs = getOrderBillRequirements(ord, menu);
+              if (reqs.hasFood) await markBillPrinted(ord.id, 'com');
+              if (reqs.hasDrink) await markBillPrinted(ord.id, 'nuoc');
+            }
+          } catch (err) {
+            console.warn('[Batch Print Fallback] markBillPrinted notice:', err);
           }
-          onRefresh();
+          await onRefresh();
+          let expectedTotal = 0;
+          for (const ord of batchOrders) {
+            const reqs = getOrderBillRequirements(ord, menu);
+            expectedTotal += 1 + (reqs.hasFood ? 1 : 0) + (reqs.hasDrink ? 1 : 0);
+          }
+          setPrintSuccessInfo({
+            orderCode: `${batchOrders.length} đơn hàng`,
+            printedCount: expectedTotal,
+            message: `Đã in thành công ${expectedTotal} phiếu cho ${batchOrders.length} đơn hàng`,
+          });
         };
         window.addEventListener('afterprint', handleAfterPrint, { once: true });
         window.print();
@@ -694,15 +750,22 @@ export function PortalDashboard({
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
 
-      setMsg({
-        type: hasAnyErrors ? 'err' : 'ok',
-        text: hasAnyErrors
-          ? `Đã in hàng loạt ${totalPrinted} phiếu POS (một số máy in có thể gặp lỗi).`
-          : `Đã in hàng loạt thành công toàn bộ ${totalPrinted} phiếu POS qua QZ Tray!`,
-      });
       setBatchPrintOrders(null);
       setBatchTestCount(null);
-      onRefresh();
+      await onRefresh();
+
+      if (hasAnyErrors) {
+        setMsg({
+          type: 'err',
+          text: `Đã in hàng loạt ${totalPrinted} phiếu POS (một số máy in có thể gặp lỗi). Vui lòng kiểm tra lại.`,
+        });
+      } else {
+        setPrintSuccessInfo({
+          orderCode: `${batchOrders.length} đơn hàng`,
+          printedCount: totalPrinted,
+          message: `Đã in thành công toàn bộ ${totalPrinted} phiếu cho ${batchOrders.length} đơn hàng`,
+        });
+      }
     } catch (err) {
       window.print();
     } finally {
@@ -5877,6 +5940,47 @@ export function PortalDashboard({
             </div>
           );
         })()}
+
+      {/* ================= MODAL XÁC NHẬN IN THÀNH CÔNG ================= */}
+      {printSuccessInfo && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-200"
+          onClick={() => setPrintSuccessInfo(null)}
+        >
+          <div
+            className="bg-white rounded-3xl shadow-2xl p-6 sm:p-8 max-w-sm w-full text-center relative border border-emerald-100 transform transition-all animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPrintSuccessInfo(null)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="w-16 h-16 rounded-2xl bg-emerald-100 text-emerald-600 flex items-center justify-center mx-auto mb-4 shadow-sm shadow-emerald-500/20">
+              <CheckCircle2 className="w-10 h-10 stroke-[2.5]" />
+            </div>
+
+            <h3 className="text-xl font-black text-slate-900 mb-1.5">In thành công!</h3>
+            <p className="text-sm font-medium text-slate-600 mb-5 leading-relaxed">
+              {printSuccessInfo.message ||
+                `Đã gửi in ${printSuccessInfo.printedCount} phiếu cho đơn ${printSuccessInfo.orderCode}`}
+            </p>
+
+            <div className="flex items-center justify-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPrintSuccessInfo(null)}
+                className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl transition shadow-md shadow-emerald-600/20 cursor-pointer"
+              >
+                Đồng ý (tự đóng sau 2.5s)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ================= DEDICATED PRINT PORTAL CONTAINER ================= */}
       {/* Mounted directly to document.body, outside #root to completely bypass modal overflow & position constraints */}

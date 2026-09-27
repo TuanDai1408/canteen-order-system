@@ -454,9 +454,11 @@ export async function printOrderToAllPrinters(
     try {
       const res = await printBillToPrinter(printerName.trim(), ticket);
       if (res.success && order.id) {
-        markBillPrinted(order.id, billType).catch((err) =>
-          console.warn('[qzPrintService] Auto markBillPrinted notice:', err)
-        );
+        try {
+          await markBillPrinted(order.id, billType);
+        } catch (err) {
+          console.warn('[qzPrintService] Auto markBillPrinted notice:', err);
+        }
       }
       return res;
     } catch (err: any) {

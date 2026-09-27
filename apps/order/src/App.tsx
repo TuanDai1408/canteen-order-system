@@ -256,6 +256,40 @@ export default function App() {
     return () => window.removeEventListener('canteen_wallet_updated', handleWalletUpdated);
   }, []);
 
+  // Lắng nghe sự kiện cập nhật trạng thái in bill & trạng thái đơn hàng thời gian thực
+  useEffect(() => {
+    const handleOrderPrintUpdated = (e: Event) => {
+      const detail = (e as CustomEvent).detail as
+        | { orderId: string; billType?: string; status?: string; [key: string]: any }
+        | undefined;
+      if (!detail?.orderId) return;
+
+      const fieldKey = Object.keys(detail).find((k) => k.startsWith('printed'));
+      const statusKey = detail.status;
+
+      if (!fieldKey && !statusKey) return;
+
+      const updateList = (prev: Order[]) =>
+        prev.map((o) => {
+          if (o.id !== detail.orderId) return o;
+          const patch: Partial<Order> = {};
+          if (fieldKey) {
+            patch[fieldKey as keyof Order] = detail[fieldKey] || undefined;
+          }
+          if (statusKey) {
+            patch.status = statusKey as any;
+          }
+          return { ...o, ...patch };
+        });
+
+      setOrders(updateList);
+      setAllOrders(updateList);
+    };
+
+    window.addEventListener('canteen_order_updated', handleOrderPrintUpdated);
+    return () => window.removeEventListener('canteen_order_updated', handleOrderPrintUpdated);
+  }, []);
+
   // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
   useEffect(() => {
     const clock = setInterval(() => {
