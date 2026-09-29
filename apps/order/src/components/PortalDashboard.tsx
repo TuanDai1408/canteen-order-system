@@ -398,13 +398,29 @@ export function PortalDashboard({
     checkQzAndLoadPrinters();
 
     const handlePrinterConfigUpdate = (e: Event) => {
-      const cfg = (e as CustomEvent)?.detail;
-      if (cfg) setPrinterConfigState(cfg);
+      const raw = (e as CustomEvent)?.detail;
+      if (!raw) return;
+      const cfg: PrinterConfig = raw.config
+        ? raw.config
+        : {
+            tongPrinterName: raw.tongPrinterName || '',
+            comPrinterName: raw.comPrinterName || '',
+            nuocPrinterName: raw.nuocPrinterName || '',
+          };
+      setPrinterConfigState(cfg);
     };
 
     const handleAutoPrintUpdate = (e: Event) => {
-      const cfg = (e as CustomEvent)?.detail;
-      if (cfg) setAutoPrintConfigState(cfg);
+      const raw = (e as CustomEvent)?.detail;
+      if (!raw) return;
+      const cfg: AutoPrintConfig = raw.cfg
+        ? raw.cfg
+        : {
+            enabled: Boolean(raw.enabled),
+            updatedBy: raw.updatedBy,
+            updatedAt: raw.updatedAt,
+          };
+      setAutoPrintConfigState(cfg);
     };
 
     window.addEventListener('canteen_printer_config_updated', handlePrinterConfigUpdate);

@@ -2794,7 +2794,7 @@ export async function setCustomTimeGateConfig(
   localStorage.setItem(TIME_GATE_STORAGE_KEY, JSON.stringify(cfg));
 
   // Phát tín hiệu tức thì toàn hệ thống qua Supabase, BroadcastChannel và Window
-  broadcastSystemEvent('canteen_time_gate_updated', { cfg });
+  broadcastSystemEvent('canteen_time_gate_updated', cfg);
 
   if (isSupabaseConfigured && supabase) {
     const payload = {
@@ -2929,7 +2929,7 @@ export async function setAutoPrintEnabled(
   };
 
   localStorage.setItem(AUTO_PRINT_STORAGE_KEY, JSON.stringify(cfg));
-  broadcastSystemEvent('canteen_auto_print_updated', { cfg });
+  broadcastSystemEvent('canteen_auto_print_updated', cfg);
 
   if (isSupabaseConfigured && supabase) {
     const payload = {
@@ -3073,7 +3073,7 @@ export async function setPrinterConfig(
   };
 
   localStorage.setItem(PRINTER_CONFIG_STORAGE_KEY, JSON.stringify(cleanCfg));
-  broadcastSystemEvent('canteen_printer_config_updated', { config: cleanCfg });
+  broadcastSystemEvent('canteen_printer_config_updated', cleanCfg);
 
   if (isSupabaseConfigured && supabase) {
     const payload = {
@@ -3276,13 +3276,23 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
         );
       }
       if (ev.data.type === 'canteen_auto_print_updated' && typeof window !== 'undefined') {
+        const autoCfg: AutoPrintConfig = ev.data.cfg || {
+          enabled: Boolean(ev.data.enabled),
+          updatedBy: ev.data.updatedBy || 'Admin',
+          updatedAt: ev.data.updatedAt || new Date().toISOString(),
+        };
         window.dispatchEvent(
-          new CustomEvent('canteen_auto_print_updated', { detail: ev.data.cfg || ev.data })
+          new CustomEvent('canteen_auto_print_updated', { detail: autoCfg })
         );
       }
       if (ev.data.type === 'canteen_printer_config_updated' && typeof window !== 'undefined') {
+        const pCfg: PrinterConfig = ev.data.config || {
+          tongPrinterName: ev.data.tongPrinterName || '',
+          comPrinterName: ev.data.comPrinterName || '',
+          nuocPrinterName: ev.data.nuocPrinterName || '',
+        };
         window.dispatchEvent(
-          new CustomEvent('canteen_printer_config_updated', { detail: ev.data.config || ev.data })
+          new CustomEvent('canteen_printer_config_updated', { detail: pCfg })
         );
       }
       triggerDebounced(ev.data);
