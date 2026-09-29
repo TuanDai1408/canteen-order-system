@@ -108,7 +108,7 @@ export interface WalletTransaction {
   id: string;
   userId: string;
   amount: number;
-  type: 'order' | 'refund' | 'allowance' | 'manual';
+  type: 'order' | 'refund' | 'allowance' | 'manual' | 'monthly_reset' | string;
   referenceId?: string;
   balanceAfter?: number;
   note?: string;

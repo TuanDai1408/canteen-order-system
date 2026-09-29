@@ -8,9 +8,15 @@ import type {
   TimeGateStatus,
   AutoPrintConfig,
   PrinterConfig,
+  WalletTransaction,
 } from '../types';
 import { detectCurrentDevice } from '../utils/deviceDetector';
 import { getTomorrowStr, formatVnd } from '../utils/date';
+
+/**
+ * Hạn mức nạp ví mặc định hàng tháng cho cán bộ / giáo viên (1.040.000đ)
+ */
+export const MONTHLY_WALLET_ALLOWANCE = 1040000;
 
 const checkSupabase = () => {
   if (!isSupabaseConfigured || !supabase) {
@@ -455,8 +461,8 @@ export async function createUserByAdmin(
     department: params.department || 'Bộ phận nhà trường',
     phone_number: params.phoneNumber || '',
     default_room: params.defaultRoom || '',
-    wallet_balance: params.walletBalance ?? 1000000,
-    monthly_allowance: params.monthlyAllowance ?? 1000000,
+    wallet_balance: params.walletBalance ?? MONTHLY_WALLET_ALLOWANCE,
+    monthly_allowance: params.monthlyAllowance ?? MONTHLY_WALLET_ALLOWANCE,
     is_active: true,
   };
 
@@ -545,6 +551,42 @@ export async function updateUserWallet(
   }
 
   broadcastSystemEvent('canteen_wallet_updated', { userId, walletBalance: newBalance });
+}
+
+/**
+ * Lấy lịch sử biến động số dư ví (wallet_transactions)
+ */
+export async function fetchWalletTransactions(userId?: string): Promise<WalletTransaction[]> {
+  try {
+    if (isSupabaseConfigured && supabase) {
+      let query = supabase
+        .from('wallet_transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (userId) {
+        query = query.eq('user_id', userId);
+      }
+
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        return data.map((t: any) => ({
+          id: t.id,
+          userId: t.user_id,
+          amount: Number(t.amount || 0),
+          type: t.type || 'order',
+          referenceId: t.reference_id,
+          balanceAfter: t.balance_after !== null && t.balance_after !== undefined ? Number(t.balance_after) : undefined,
+          note: t.note || '',
+          createdBy: t.created_by,
+          createdAt: t.created_at || new Date().toISOString(),
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('[fetchWalletTransactions error]:', err);
+  }
+  return [];
 }
 
 export async function setUserDisabledStatus(
@@ -1147,8 +1189,8 @@ export async function placeOrder(params: {
       department: cachedProfile?.department || 'Tổ Chuyên Môn',
       default_room: cachedProfile?.defaultRoom || 'P.101',
       phone_number: cachedProfile?.phoneNumber || '',
-      wallet_balance: cachedProfile?.walletBalance ?? 1000000,
-      monthly_allowance: cachedProfile?.monthlyAllowance ?? 1000000,
+      wallet_balance: cachedProfile?.walletBalance ?? MONTHLY_WALLET_ALLOWANCE,
+      monthly_allowance: cachedProfile?.monthlyAllowance ?? MONTHLY_WALLET_ALLOWANCE,
       is_active: true,
     };
 

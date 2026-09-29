@@ -47,6 +47,8 @@ export {
   getCachedOrders,
   setCachedOrders,
   updateOrderStatus,
+  MONTHLY_WALLET_ALLOWANCE,
+  fetchWalletTransactions,
   getLatestOrderStatus,
   getLatestMenuItemState,
   createUserByAdmin,

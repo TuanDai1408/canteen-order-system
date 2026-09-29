@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
     phone_number TEXT DEFAULT '',
     default_room TEXT DEFAULT '',
     avatar_url TEXT DEFAULT '',
-    wallet_balance NUMERIC NOT NULL DEFAULT 1000000,
-    monthly_allowance NUMERIC NOT NULL DEFAULT 1000000,
+    wallet_balance NUMERIC NOT NULL DEFAULT 1040000,
+    monthly_allowance NUMERIC NOT NULL DEFAULT 1040000,
     last_wallet_reset_date DATE,
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -252,7 +252,51 @@ VALUES
 ('trantuandai2508@gmail.com', 'Trần Tuấn Đại (Quản trị)', 'admin', 'Quản trị viên Căn tin', 'Văn phòng Căn tin', 2000000, 2000000, true),
 ('admin@canteen.edu.vn', 'Quản trị viên Canteen', 'admin', 'Quản lý Căn tin', 'Phòng Quản lý A101', 2000000, 2000000, true),
 ('bep@canteen.edu.vn', 'Bếp Trưởng Nguyễn Văn Tâm', 'executive', 'Bếp trưởng Điều phối', 'Khu Bếp Chính', 1500000, 1500000, true),
-('giaovien.toan@canteen.edu.vn', 'Cô Nguyễn Mai Anh', 'teacher', 'Giáo viên Toán', 'Phòng 204 Nhà B', 1000000, 1000000, true)
+('giaovien.toan@canteen.edu.vn', 'Cô Nguyễn Mai Anh', 'teacher', 'Giáo viên Toán', 'Phòng 204 Nhà B', 1040000, 1040000, true)
 ON CONFLICT (email) DO UPDATE SET
   wallet_balance = EXCLUDED.wallet_balance,
   is_active = true;
+
+-- ========================================================
+-- RESET VÍ HÀNG THÁNG CHO GIÁO VIÊN (PG_CRON)
+-- ========================================================
+-- Kích hoạt pg_cron nếu chưa có
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+
+-- Hàm reset ví hàng tháng cho toàn bộ giáo viên (role = 'teacher')
+CREATE OR REPLACE FUNCTION reset_monthly_wallets()
+RETURNS void AS $$
+DECLARE
+  target_amount NUMERIC := 1040000;
+  affected RECORD;
+BEGIN
+  FOR affected IN
+    SELECT id, wallet_balance FROM users WHERE role = 'teacher'
+  LOOP
+    -- Ghi lịch sử TRƯỚC khi reset, để báo cáo biết được số dư còn lại cuối tháng trước khi bị reset
+    INSERT INTO wallet_transactions (user_id, amount, type, balance_after, note, created_at)
+    VALUES (
+      affected.id,
+      target_amount - affected.wallet_balance,
+      'monthly_reset',
+      target_amount,
+      'Tự động reset ví đầu tháng — số dư cuối tháng trước: ' || affected.wallet_balance || 'đ',
+      now()
+    );
+
+    -- Reset về đúng mức ví tháng mới
+    UPDATE users
+    SET wallet_balance = target_amount,
+        monthly_allowance = target_amount,
+        updated_at = now()
+    WHERE id = affected.id;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Lên lịch chạy đúng 00:05 ngày 1 mỗi tháng (giờ UTC — tương đương 07:05 giờ Việt Nam)
+SELECT cron.schedule(
+  'monthly-wallet-reset',
+  '5 0 1 * *',
+  $$SELECT reset_monthly_wallets();$$
+);

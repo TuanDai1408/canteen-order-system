@@ -147,7 +147,11 @@ const CMD = {
 /**
  * Tạo một chuỗi lệnh ESC/POS chuẩn cho máy in nhiệt
  */
-export function buildEscPosCommands(ticket: OrderTicket, paperColumns: number = 40): string {
+export function buildEscPosCommands(
+  ticket: OrderTicket,
+  paperColumns: number = 40,
+  walletBalanceAfter?: number
+): string {
   const lineSeparator = '-'.repeat(paperColumns) + '\n';
   const doubleSeparator = '='.repeat(paperColumns) + '\n';
   const order = ticket.order;
@@ -177,9 +181,6 @@ export function buildEscPosCommands(ticket: OrderTicket, paperColumns: number = 
   buffer += `Mã đơn hàng:  ${order.orderCode || order.id}\n`;
   buffer += CMD.BOLD_OFF;
   buffer += `Khách hàng:   ${order.userName || 'Cán bộ'}\n`;
-  if (order.userDepartment) {
-    buffer += `Đơn vị/Khoa:  ${order.userDepartment}\n`;
-  }
   if (order.userPhone) {
     buffer += `Số điện thoại:${order.userPhone}\n`;
   }
@@ -224,8 +225,12 @@ export function buildEscPosCommands(ticket: OrderTicket, paperColumns: number = 
     buffer += `TỔNG CỘNG: ${totalStr}\n`;
     buffer += CMD.TEXT_NORMAL + CMD.BOLD_OFF;
 
+    if (typeof walletBalanceAfter === 'number') {
+      buffer += CMD.ALIGN_LEFT;
+      buffer += `Số dư ví hiện tại: ${walletBalanceAfter.toLocaleString('vi-VN')}đ\n`;
+    }
+
     buffer += CMD.ALIGN_LEFT;
-    buffer += `Phương thức:  Thanh toán Ví Căn tin\n`;
     buffer += `Tổng số món:  ${ticket.totalQuantity} suất\n`;
   } else {
     // === BILL MÓN CƠM / BILL MÓN NƯỚC (Chỉ in tên món + số lượng, không có giá tiền) ===
@@ -280,7 +285,8 @@ export function buildEscPosCommands(ticket: OrderTicket, paperColumns: number = 
  */
 export async function printBillToPrinter(
   printerName: string,
-  ticket: OrderTicket
+  ticket: OrderTicket,
+  walletBalanceAfter?: number
 ): Promise<PrintBillResult> {
   const ticketTitle = ticket.subtitle || ticket.title || 'Phiếu in POS';
 
@@ -293,7 +299,7 @@ export async function printBillToPrinter(
     throw new Error(conn.error || 'Chưa thể kết nối tới QZ Tray.');
   }
 
-  const escPosData = buildEscPosCommands(ticket);
+  const escPosData = buildEscPosCommands(ticket, 40, walletBalanceAfter);
   const config = qz.configs.create(printerName.trim(), {
     encoding: 'UTF-8',
   });
@@ -401,7 +407,8 @@ export async function printTestTicket(
 export async function printOrderToAllPrinters(
   order: Order,
   menu: MenuItem[] = [],
-  printerConfig: PrinterConfig
+  printerConfig: PrinterConfig,
+  walletBalanceAfter?: number
 ): Promise<MultiPrinterPrintResult> {
   // 1. Kiểm tra kết nối QZ Tray
   const conn = await connectQz();
@@ -467,7 +474,11 @@ export async function printOrderToAllPrinters(
     }
 
     try {
-      const res = await printBillToPrinter(printerName.trim(), ticket);
+      const res = await printBillToPrinter(
+        printerName.trim(),
+        ticket,
+        ticket.ticketType === 'total' ? walletBalanceAfter : undefined
+      );
       if (res.success && order.id) {
         try {
           await markBillPrinted(order.id, billType);

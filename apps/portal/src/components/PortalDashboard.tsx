@@ -46,6 +46,9 @@ import {
   getOrderBillRequirements,
   isOrderFullyPrinted,
   type BillType,
+  MONTHLY_WALLET_ALLOWANCE,
+  fetchWalletTransactions,
+  type WalletTransaction,
 } from '@canteen/shared';
 import { PosReceiptTicket, type PaperSize } from './PosReceiptTicket';
 import { BrandLogo } from './BrandLogo';
@@ -102,6 +105,7 @@ import {
   Unlock,
   Trash2,
   ShieldAlert,
+  History,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
@@ -313,10 +317,15 @@ export function PortalDashboard({
   const [disablingUser, setDisablingUser] = useState<{ user: UserProfile; willDisable: boolean } | null>(null);
   const [isTogglingUserDisabled, setIsTogglingUserDisabled] = useState(false);
   const [approvingUser, setApprovingUser] = useState<UserProfile | null>(null);
-  const [approvalWalletAmount, setApprovalWalletAmount] = useState<number>(1000000);
+  const [approvalWalletAmount, setApprovalWalletAmount] = useState<number>(MONTHLY_WALLET_ALLOWANCE);
   const [approvalNote, setApprovalNote] = useState('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
   const [isApproving, setIsApproving] = useState(false);
   const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
+
+  // Xem lịch sử giao dịch ví (wallet_transactions)
+  const [viewingTxUser, setViewingTxUser] = useState<UserProfile | null>(null);
+  const [userTransactions, setUserTransactions] = useState<WalletTransaction[]>([]);
+  const [isLoadingTx, setIsLoadingTx] = useState(false);
 
   // Bộ lọc hiển thị menu cho khách hàng (Tất cả / Đang hiển thị / Đang ẩn)
   const [menuDisplayFilter, setMenuDisplayFilter] = useState<'all' | 'visible' | 'hidden'>('all');
@@ -342,8 +351,8 @@ export function PortalDashboard({
     department: 'Tổ Chuyên Môn',
     phoneNumber: '',
     defaultRoom: '',
-    walletBalance: 1000000,
-    monthlyAllowance: 1000000,
+    walletBalance: MONTHLY_WALLET_ALLOWANCE,
+    monthlyAllowance: MONTHLY_WALLET_ALLOWANCE,
   });
 
   // Kiểm tra kết nối QZ Tray và tải danh sách máy in từ hệ điều hành
@@ -496,7 +505,9 @@ export function PortalDashboard({
 
         console.info('[Auto-Print] Tự động in đơn hàng mới vừa đặt:', orderToPrint.orderCode);
         const currPrinters = getCustomPrinterConfig();
-        const res = await printOrderToAllPrinters(orderToPrint, menu, currPrinters);
+        const orderOwner = users.find((u) => u.id === orderToPrint.userId);
+        const walletBalanceAfter = orderOwner?.walletBalance;
+        const res = await printOrderToAllPrinters(orderToPrint, menu, currPrinters, walletBalanceAfter);
 
         if (res.success) {
           const count = res.results.filter((r) => r.success).length;
@@ -630,7 +641,9 @@ export function PortalDashboard({
   const handlePrintSingleReceipt = async (order: Order) => {
     setIsPrinting(true);
     try {
-      const res = await printOrderToAllPrinters(order, menu, printerConfig);
+      const orderOwner = users.find((u) => u.id === order.userId);
+      const walletBalanceAfter = orderOwner?.walletBalance;
+      const res = await printOrderToAllPrinters(order, menu, printerConfig, walletBalanceAfter);
       if (res.success) {
         const count = res.results.filter((r) => r.success).length;
         const failedItems = res.results.filter((r) => !r.success);
@@ -772,7 +785,9 @@ export function PortalDashboard({
       let totalPrinted = 0;
       let hasAnyErrors = false;
       for (const ord of batchOrders) {
-        const res = await printOrderToAllPrinters(ord, menu, printerConfig);
+        const orderOwner = users.find((u) => u.id === ord.userId);
+        const walletBalanceAfter = orderOwner?.walletBalance;
+        const res = await printOrderToAllPrinters(ord, menu, printerConfig, walletBalanceAfter);
         if (res.success) {
           totalPrinted += res.results.filter((r) => r.success).length;
         }
@@ -1629,8 +1644,8 @@ export function PortalDashboard({
         department: 'Tổ Chuyên Môn',
         phoneNumber: '',
         defaultRoom: '',
-        walletBalance: 1000000,
-        monthlyAllowance: 1000000,
+        walletBalance: MONTHLY_WALLET_ALLOWANCE,
+        monthlyAllowance: MONTHLY_WALLET_ALLOWANCE,
       });
       onRefresh();
     } catch (err: any) {
@@ -3813,7 +3828,7 @@ export function PortalDashboard({
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setApprovingUser(u);
-                                      setApprovalWalletAmount(1000000);
+                                      setApprovalWalletAmount(MONTHLY_WALLET_ALLOWANCE);
                                       setApprovalNote('Phê duyệt tài khoản & cấp hạn mức ví suất ăn ban đầu');
                                     }}
                                     className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shadow-amber-500/20 transition min-h-[36px]"
@@ -3823,6 +3838,28 @@ export function PortalDashboard({
                                   </button>
                                 ) : (
                                   <>
+                                    <button
+                                      type="button"
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        setViewingTxUser(u);
+                                        setIsLoadingTx(true);
+                                        try {
+                                          const txs = await fetchWalletTransactions(u.id);
+                                          setUserTransactions(txs);
+                                        } catch {
+                                          setUserTransactions([]);
+                                        } finally {
+                                          setIsLoadingTx(false);
+                                        }
+                                      }}
+                                      className="px-2.5 py-1.5 bg-slate-100 hover:bg-purple-50 text-slate-700 hover:text-purple-700 font-bold rounded-xl text-[11px] border border-slate-200 hover:border-purple-200 transition cursor-pointer min-h-[34px] flex items-center gap-1"
+                                      title="Xem lịch sử biến động số dư ví (đặt món, nạp tiền, reset đầu tháng...)"
+                                    >
+                                      <History className="w-3.5 h-3.5 text-purple-600" />
+                                      <span>Lịch sử ví</span>
+                                    </button>
+
                                     <button
                                       onClick={(e) => {
                                         e.stopPropagation();
@@ -5115,7 +5152,7 @@ export function PortalDashboard({
 
                 {/* Preset quick buttons */}
                 <div className="grid grid-cols-4 gap-1.5 mt-2">
-                  {[500000, 1000000, 1500000, 2000000].map((amt) => (
+                  {[500000, MONTHLY_WALLET_ALLOWANCE, 1500000, 2000000].map((amt) => (
                     <button
                       key={amt}
                       type="button"
@@ -5260,6 +5297,127 @@ export function PortalDashboard({
                       : 'Xác nhận Mở lại tài khoản'}
                   </span>
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: LỊCH SỬ BIẾN ĐỘNG VÍ ================= */}
+      {viewingTxUser && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-2xl w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[85vh]">
+            {/* Header */}
+            <div className="p-4 sm:p-5 bg-slate-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-purple-500/20 text-purple-300 flex items-center justify-center border border-purple-400/30">
+                  <History className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base flex items-center gap-2">
+                    Lịch sử ví: {viewingTxUser.name}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {viewingTxUser.email} · Số dư hiện tại: <strong className="text-emerald-400">{formatVnd(viewingTxUser.walletBalance)}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setViewingTxUser(null)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content List */}
+            <div className="p-4 overflow-y-auto flex-1 space-y-3">
+              {isLoadingTx ? (
+                <div className="py-12 flex flex-col items-center justify-center text-slate-400 gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin text-purple-600" />
+                  <span className="text-xs">Đang tải lịch sử ví...</span>
+                </div>
+              ) : userTransactions.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  Chưa có giao dịch biến động ví nào được ghi nhận cho tài khoản này.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 text-slate-500 text-[11px] font-bold">
+                        <th className="py-2.5 px-3">Thời gian</th>
+                        <th className="py-2.5 px-3">Loại giao dịch</th>
+                        <th className="py-2.5 px-3 text-right">Biến động</th>
+                        <th className="py-2.5 px-3 text-right">Số dư sau GD</th>
+                        <th className="py-2.5 px-3">Ghi chú</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {userTransactions.map((tx) => {
+                        const isReset = tx.type === 'monthly_reset';
+                        const isOrder = tx.type === 'order';
+                        const isAllowance = tx.type === 'allowance';
+                        const isRefund = tx.type === 'refund';
+
+                        return (
+                          <tr key={tx.id} className="hover:bg-slate-50/80 transition">
+                            <td className="py-3 px-3 text-slate-500 font-mono text-[11px] whitespace-nowrap">
+                              {new Date(tx.createdAt).toLocaleString('vi-VN')}
+                            </td>
+                            <td className="py-3 px-3 whitespace-nowrap">
+                              {isReset ? (
+                                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 text-purple-800 border border-purple-300">
+                                  <Sparkles className="w-3 h-3 text-purple-600" />
+                                  Reset đầu tháng
+                                </span>
+                              ) : isOrder ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200">
+                                  Trừ tiền đặt món
+                                </span>
+                              ) : isAllowance ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                  Cấp hạn mức
+                                </span>
+                              ) : isRefund ? (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                  Hoàn tiền hủy đơn
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                                  Điều chỉnh ví
+                                </span>
+                              )}
+                            </td>
+                            <td className={`py-3 px-3 text-right font-extrabold font-mono ${
+                              tx.amount >= 0 ? 'text-emerald-600' : 'text-rose-600'
+                            }`}>
+                              {tx.amount >= 0 ? `+${formatVnd(tx.amount)}` : formatVnd(tx.amount)}
+                            </td>
+                            <td className="py-3 px-3 text-right font-semibold font-mono text-slate-800">
+                              {tx.balanceAfter !== undefined ? formatVnd(tx.balanceAfter) : '—'}
+                            </td>
+                            <td className="py-3 px-3 text-slate-600 text-[11px] max-w-[200px] truncate" title={tx.note}>
+                              {tx.note || '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-3.5 bg-slate-50 border-t border-slate-200 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setViewingTxUser(null)}
+                className="px-4 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold text-xs rounded-xl cursor-pointer"
+              >
+                Đóng
               </button>
             </div>
           </div>
@@ -5779,20 +5937,25 @@ export function PortalDashboard({
                 </div>
 
                 <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto flex-1 space-y-6">
-                  {tickets.map((t, idx) => (
-                    <PosReceiptTicket
-                      key={`${printReceiptOrder.id}-${t.ticketType}`}
-                      order={printReceiptOrder}
-                      ticket={t}
-                      menu={menu}
-                      paperSize={receiptPaperSize}
-                      index={idx}
-                      totalCount={tickets.length}
-                      isPrintMode={false}
-                      isLast={idx === tickets.length - 1}
-                      isSingle={false}
-                    />
-                  ))}
+                  {(() => {
+                    const orderOwner = users.find((u) => u.id === printReceiptOrder.userId);
+                    const walletBalanceAfter = orderOwner?.walletBalance;
+                    return tickets.map((t, idx) => (
+                      <PosReceiptTicket
+                        key={`${printReceiptOrder.id}-${t.ticketType}`}
+                        order={printReceiptOrder}
+                        ticket={t}
+                        menu={menu}
+                        paperSize={receiptPaperSize}
+                        index={idx}
+                        totalCount={tickets.length}
+                        isPrintMode={false}
+                        isLast={idx === tickets.length - 1}
+                        isSingle={false}
+                        walletBalanceAfter={walletBalanceAfter}
+                      />
+                    ));
+                  })()}
                 </div>
 
                 <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between gap-3">
@@ -5951,19 +6114,24 @@ export function PortalDashboard({
 
                 {/* Preview scroll container */}
                 <div className="p-4 sm:p-6 bg-slate-100/80 overflow-y-auto flex-1 space-y-6">
-                  {allTickets.map((t, idx) => (
-                    <PosReceiptTicket
-                      key={`${t.order.id}-${t.ticketType}-${idx}`}
-                      order={t.order}
-                      ticket={t}
-                      menu={menu}
-                      paperSize={receiptPaperSize}
-                      index={idx}
-                      totalCount={allTickets.length}
-                      isPrintMode={false}
-                      isLast={idx === allTickets.length - 1}
-                    />
-                  ))}
+                  {allTickets.map((t, idx) => {
+                    const orderOwner = users.find((u) => u.id === t.order.userId);
+                    const walletBalanceAfter = orderOwner?.walletBalance;
+                    return (
+                      <PosReceiptTicket
+                        key={`${t.order.id}-${t.ticketType}-${idx}`}
+                        order={t.order}
+                        ticket={t}
+                        menu={menu}
+                        paperSize={receiptPaperSize}
+                        index={idx}
+                        totalCount={allTickets.length}
+                        isPrintMode={false}
+                        isLast={idx === allTickets.length - 1}
+                        walletBalanceAfter={walletBalanceAfter}
+                      />
+                    );
+                  })}
                 </div>
 
                 {/* Modal Footer */}
@@ -6061,6 +6229,8 @@ export function PortalDashboard({
             {printReceiptOrder &&
               (() => {
                 const tickets = getOrderTickets(printReceiptOrder, menu);
+                const orderOwner = users.find((u) => u.id === printReceiptOrder.userId);
+                const walletBalanceAfter = orderOwner?.walletBalance;
                 return tickets.map((t, idx) => (
                   <PosReceiptTicket
                     key={`${printReceiptOrder.id}-${t.ticketType}`}
@@ -6073,6 +6243,7 @@ export function PortalDashboard({
                     isPrintMode={true}
                     isSingle={true}
                     isLast={idx === tickets.length - 1}
+                    walletBalanceAfter={walletBalanceAfter}
                   />
                 ));
               })()}
@@ -6082,19 +6253,24 @@ export function PortalDashboard({
                 const allTickets = displayedBatchOrders.flatMap((ord) =>
                   getOrderTickets(ord, menu)
                 );
-                return allTickets.map((t, idx) => (
-                  <PosReceiptTicket
-                    key={`${t.order.id}-${t.ticketType}-${idx}`}
-                    order={t.order}
-                    ticket={t}
-                    menu={menu}
-                    paperSize={receiptPaperSize}
-                    index={idx}
-                    totalCount={allTickets.length}
-                    isPrintMode={true}
-                    isLast={idx === allTickets.length - 1}
-                  />
-                ));
+                return allTickets.map((t, idx) => {
+                  const orderOwner = users.find((u) => u.id === t.order.userId);
+                  const walletBalanceAfter = orderOwner?.walletBalance;
+                  return (
+                    <PosReceiptTicket
+                      key={`${t.order.id}-${t.ticketType}-${idx}`}
+                      order={t.order}
+                      ticket={t}
+                      menu={menu}
+                      paperSize={receiptPaperSize}
+                      index={idx}
+                      totalCount={allTickets.length}
+                      isPrintMode={true}
+                      isLast={idx === allTickets.length - 1}
+                      walletBalanceAfter={walletBalanceAfter}
+                    />
+                  );
+                });
               })()}
           </div>,
           document.body

@@ -21,6 +21,7 @@ interface PosReceiptTicketProps {
   isPrintMode?: boolean;
   isLast?: boolean;
   isSingle?: boolean;
+  walletBalanceAfter?: number;
 }
 
 export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
@@ -33,6 +34,7 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
   isPrintMode = false,
   isLast = false,
   isSingle = false,
+  walletBalanceAfter,
 }) => {
   // Nếu không truyền ticket riêng, mặc định dùng ticket từ getOrderTickets
   const currentTicket: OrderTicket =
@@ -125,10 +127,6 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
         <div className="flex justify-between">
           <span className="text-slate-600">Cán bộ:</span>
           <span className="font-bold text-slate-900">{order.userName}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-slate-600">Đơn vị:</span>
-          <span className="font-semibold text-slate-800">{order.userDepartment || 'Giáo viên'}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-600">Hình thức:</span>
@@ -305,14 +303,12 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
               {formatVnd(order.totalAmount)}
             </span>
           </div>
-          <div className="flex justify-between text-[10px] text-slate-500">
-            <span>Thanh toán:</span>
-            <span>Ví suất ăn Căn tin</span>
-          </div>
-          <div className="flex justify-between text-[10px] text-slate-500">
-            <span>Trạng thái:</span>
-            <span className="font-semibold text-emerald-700">Đã trừ ví tự động</span>
-          </div>
+          {typeof walletBalanceAfter === 'number' && (
+            <div className="flex justify-between text-[10px] text-slate-600 pt-0.5">
+              <span>Số dư ví hiện tại:</span>
+              <span className="font-bold text-slate-800">{formatVnd(walletBalanceAfter)}</span>
+            </div>
+          )}
         </div>
       ) : (
         <div className="py-2 border-b border-dashed border-slate-400 space-y-1 text-[11px]">
