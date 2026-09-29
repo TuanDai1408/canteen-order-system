@@ -21,7 +21,7 @@
 .font-mono,
 .pos-mono,
 .font-receipt {
-  font-family: 'JetBrains Mono', 'Courier New', Courier, monospace !important;
+  font-family: 'JetBrains Mono', 'SF Pro Text', Menlo, Consolas, monospace !important;
   font-feature-settings: 'tnum' 1;
 }
 
@@ -82,7 +82,7 @@
     break-inside: avoid !important;
     page-break-after: always !important;
     break-after: page !important;
-    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace !important;
+    font-family: 'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', sans-serif !important;
     font-feature-settings: 'tnum' 1 !important;
     font-weight: 600 !important;
     color: #000000 !important;
@@ -96,6 +96,12 @@
     print-color-adjust: exact !important;
     image-rendering: -webkit-optimize-contrast !important;
     image-rendering: crisp-edges !important;
+  }
+
+  .pos-receipt-ticket .font-mono,
+  .pos-receipt-ticket .pos-mono {
+    font-family: 'JetBrains Mono', 'SF Pro Text', Menlo, Consolas, monospace !important;
+    font-feature-settings: 'tnum' 1 !important;
   }
 
   /* Toàn bộ chữ, số, viền trong phiếu in ép đen 100% (#000000) chống dithering chấm hạt gây mờ */

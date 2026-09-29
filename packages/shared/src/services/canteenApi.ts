@@ -2366,6 +2366,95 @@ export async function getOrders(filters?: {
   }
 }
 
+/**
+ * Tải đầy đủ thông tin một đơn hàng kèm chi tiết món ăn (order_items) từ Supabase.
+ * - Giải quyết triệt để race condition khi Realtime INSERT 'orders' bắn sự kiện trước khi bảng 'order_items' hoàn tất lưu.
+ * - Có cơ chế thử lại (retry) ngắn cách nhau retryDelayMs (mặc định 400ms, tối đa 3 lần).
+ * - Tự động tra cứu bổ sung bảng 'order_items' trực tiếp nếu join ban đầu chưa có items.
+ * - Cập nhật đồng bộ cache cục bộ để UI Portal không bị lệch trạng thái.
+ */
+export async function fetchOrderWithItems(
+  orderIdOrCode: string,
+  maxRetries: number = 3,
+  retryDelayMs: number = 400
+): Promise<Order | null> {
+  if (!orderIdOrCode) return null;
+  checkSupabase();
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // 1. Thử lấy đơn hàng kèm order_items từ Supabase
+      const query = supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .or(`id.eq.${orderIdOrCode},order_code.eq.${orderIdOrCode}`)
+        .maybeSingle();
+
+      const { data, error } = await withQueryTimeout(
+        query,
+        10000,
+        `Timeout fetching order ${orderIdOrCode}`
+      );
+
+      if (data && !error) {
+        let items = data.order_items;
+
+        // Nếu join chưa kịp trả về order_items, truy vấn trực tiếp bảng order_items
+        if (!Array.isArray(items) || items.length === 0) {
+          const { data: itemRows } = await supabase
+            .from('order_items')
+            .select('*')
+            .eq('order_id', data.id);
+          if (Array.isArray(itemRows) && itemRows.length > 0) {
+            items = itemRows;
+            data.order_items = itemRows;
+          }
+        }
+
+        // Kiểm tra xem đã có danh sách items thực tế chưa
+        if (Array.isArray(items) && items.length > 0) {
+          const mapped = mapOrder(data);
+          if (mapped.items && mapped.items.length > 0) {
+            // Cập nhật đơn này vào cache đơn hàng để Portal đồng bộ ngay
+            try {
+              const currentCache = getCachedOrders();
+              const updatedCache = [
+                mapped,
+                ...currentCache.filter((o) => o.id !== mapped.id && o.orderCode !== mapped.orderCode),
+              ];
+              setCachedOrders(updatedCache);
+            } catch {}
+
+            return mapped;
+          }
+        }
+      }
+
+      // Nếu chưa có items và còn lượt thử lại, chờ một khoảng ngắn
+      if (attempt < maxRetries) {
+        await new Promise((res) => setTimeout(res, retryDelayMs));
+      }
+    } catch (err: any) {
+      console.warn(`[fetchOrderWithItems] Lần thử ${attempt}/${maxRetries} thất bại:`, err?.message || err);
+      if (attempt < maxRetries) {
+        await new Promise((res) => setTimeout(res, retryDelayMs));
+      }
+    }
+  }
+
+  // Fallback: Kiểm tra trong cache nội bộ (nếu cùng thiết bị/tab vừa tạo)
+  const cachedOrders = getCachedOrders();
+  const found = cachedOrders.find(
+    (o) => o.id === orderIdOrCode || o.orderCode === orderIdOrCode
+  );
+  if (found && found.items && found.items.length > 0) {
+    return found;
+  }
+
+  return null;
+}
+
+
 // Lấy trạng thái mới nhất của 1 đơn hàng trực tiếp từ Supabase (không dùng cache),
 // chỉ select đúng cột cần thiết để nhẹ, tránh tốn egress không cần thiết.
 export async function getLatestOrderStatus(
@@ -3979,7 +4068,7 @@ export async function unmarkBillPrinted(orderId: string, billType: BillType): Pr
   }
 }
 
-function mapOrder(row: any): Order {
+export function mapOrder(row: any): Order {
   let mappedItems: any[] = [];
   const cachedMenu = getCachedMenu();
 

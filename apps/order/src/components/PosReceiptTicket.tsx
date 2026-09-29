@@ -67,7 +67,7 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
   // Base container class depending on mode and paper size
   const containerClasses = isPrintMode
     ? `pos-receipt-ticket ${isK58 ? 'pos-k58' : 'pos-k80'} ${isLast ? 'is-last' : ''}`
-    : `bg-white p-4 sm:p-5 rounded-xl border border-slate-300 shadow-xs font-mono leading-relaxed text-slate-900 mx-auto relative ${
+    : `bg-white p-4 sm:p-5 rounded-xl border border-slate-300 shadow-xs font-sans leading-relaxed text-slate-900 mx-auto relative ${
         isK58 ? 'max-w-[270px] text-[11px]' : 'max-w-[340px] text-xs'
       }`;
 

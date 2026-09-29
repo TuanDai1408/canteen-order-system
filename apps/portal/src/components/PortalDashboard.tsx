@@ -38,9 +38,11 @@ import {
   fetchPrinterConfig,
   setPrinterConfig,
   connectQz,
+  isQzConnected,
   listAvailablePrinters,
   printTestTicket,
   printOrderToAllPrinters,
+  fetchOrderWithItems,
   markBillPrinted,
   unmarkBillPrinted,
   getOrderBillRequirements,
@@ -451,84 +453,112 @@ export function PortalDashboard({
 
       const currentAutoCfg = getCustomAutoPrintConfig();
       if (!currentAutoCfg.enabled) {
+        console.log('[Auto-Print] Bỏ qua đơn mới: Chế độ tự động in đang TẮT.');
         return;
       }
 
-      // Guard chống in trùng lặp đơn hàng
+      // Guard chống in trùng lặp đơn hàng trong phiên
       if (printedOrderIdsRef.current.has(orderId)) {
+        console.log(`[Auto-Print] Bỏ qua đơn ${orderId}: Đơn đã được in trong phiên.`);
         return;
       }
-      printedOrderIdsRef.current.add(orderId);
+
+      // Kiểm tra cấu hình máy in: Phải có ít nhất 1 máy in được cấu hình
+      const currPrinters = getCustomPrinterConfig();
+      const hasConfiguredPrinter = Boolean(
+        currPrinters.tongPrinterName?.trim() ||
+        currPrinters.comPrinterName?.trim() ||
+        currPrinters.nuocPrinterName?.trim()
+      );
+
+      if (!hasConfiguredPrinter) {
+        console.warn(
+          `[Auto-Print] Bỏ qua in tự động đơn ${orderId}: Chưa cấu hình tên máy in trong 'Cài đặt máy in POS'.`
+        );
+        return;
+      }
 
       try {
-        let orderToPrint: Order | undefined;
+        console.info(`[Auto-Print] Nhận sự kiện đơn mới ${orderId}, đang tải đầy đủ dữ liệu món ăn từ Supabase...`);
 
+        // Fetch ĐẦY ĐỦ order + order_items (retry 3 lần, cách nhau 400ms nếu items chưa sẵn sàng)
+        let orderToPrint: Order | null = null;
         if (Array.isArray(rawOrder.items) && rawOrder.items.length > 0) {
           orderToPrint = rawOrder;
         } else {
-          const matchInState = orders.find((o) => o.id === orderId || o.orderCode === orderId);
-          if (matchInState && matchInState.items && matchInState.items.length > 0) {
-            orderToPrint = matchInState;
-          } else {
-            const cachedList = getCachedOrders();
-            const matchInCache = cachedList.find((o) => o.id === orderId || o.orderCode === orderId);
-            if (matchInCache && matchInCache.items && matchInCache.items.length > 0) {
-              orderToPrint = matchInCache;
-            }
+          orderToPrint = await fetchOrderWithItems(orderId, 3, 400);
+        }
+
+        // CHỈ in khi đã có items hợp lệ
+        if (!orderToPrint || !orderToPrint.items || orderToPrint.items.length === 0) {
+          console.warn(
+            `[Auto-Print] Bỏ qua in đơn ${orderId}: Không lấy được danh sách món ăn (items) hợp lệ sau các lần thử.`
+          );
+          return;
+        }
+
+        // Kiểm tra lại guard chống in trùng (tránh race condition trong lúc chờ retry)
+        if (printedOrderIdsRef.current.has(orderId)) {
+          return;
+        }
+        printedOrderIdsRef.current.add(orderId);
+
+        // Kiểm tra kết nối QZ Tray trước khi in
+        const qzConnected = isQzConnected();
+        if (!qzConnected) {
+          const tryConn = await connectQz();
+          if (!tryConn.success) {
+            console.warn('[Auto-Print] QZ Tray chưa mở. Không thể tự động in đơn:', orderToPrint.orderCode);
+            // Gỡ khỏi guard để user có thể in lại khi mở QZ Tray hoặc in tay
+            printedOrderIdsRef.current.delete(orderId);
+            setMsg({
+              type: 'err',
+              text: `[Tự động in POS] Đơn mới ${orderToPrint.orderCode}: Chưa mở phần mềm QZ Tray trên máy tính để tự động in.`,
+            });
+            return;
           }
         }
 
-        if (!orderToPrint) {
-          const itemsFromNote = parseItemsFromNote(rawOrder.note || rawOrder.notes);
-          orderToPrint = {
-            id: rawOrder.id,
-            orderCode: rawOrder.order_code || rawOrder.orderCode || 'ORD-NEW',
-            userId: rawOrder.user_id || rawOrder.userId || '',
-            userName: rawOrder.user_name || rawOrder.userName || 'Cán bộ',
-            userPhone: rawOrder.user_phone || rawOrder.userPhone || '',
-            userDepartment: rawOrder.user_department || rawOrder.userDepartment || '',
-            items:
-              itemsFromNote.length > 0
-                ? itemsFromNote
-                : [{ menuItemId: '', name: 'Suất ăn Căn tin', price: Number(rawOrder.total_amount || 35000), quantity: 1, imageUrl: '' }],
-            totalAmount: Number(rawOrder.total_amount || rawOrder.totalAmount || 0),
-            deliveryMethod: rawOrder.delivery_method || rawOrder.deliveryMethod || 'dine_in',
-            roomNumber: rawOrder.room_number || rawOrder.roomNumber,
-            pickupTime: rawOrder.pickup_time || rawOrder.pickupTime || '11:30',
-            targetDate: rawOrder.target_date || rawOrder.targetDate || getTomorrowStr(),
-            createdAt: rawOrder.created_at || rawOrder.createdAt || new Date().toISOString(),
-            status: (rawOrder.status as OrderStatus) || 'confirmed',
-            cancellationDeadline: '16:00',
-            note: rawOrder.note || rawOrder.notes,
-          };
-        }
-
-        console.info('[Auto-Print] Tự động in đơn hàng mới vừa đặt:', orderToPrint.orderCode);
-        const currPrinters = getCustomPrinterConfig();
-        const orderOwner = users.find((u) => u.id === orderToPrint.userId);
+        console.info('[Auto-Print] Bắt đầu tự động in POS cho đơn:', orderToPrint.orderCode, 'với', orderToPrint.items.length, 'món.');
+        const orderOwner = users.find((u) => u.id === orderToPrint!.userId);
         const walletBalanceAfter = orderOwner?.walletBalance;
-        const res = await printOrderToAllPrinters(orderToPrint, menu, currPrinters, walletBalanceAfter);
+
+        const res = await printOrderToAllPrinters(
+          orderToPrint,
+          menu,
+          currPrinters,
+          walletBalanceAfter,
+          receiptPaperSize
+        );
 
         if (res.success) {
           const count = res.results.filter((r) => r.success).length;
+          console.info(`[Auto-Print] Đã in thành công ${count} phiếu cho đơn ${orderToPrint.orderCode}`);
           setMsg({
             type: 'ok',
             text: `[Tự động in POS] Đã in thành công ${count} phiếu cho đơn mới ${orderToPrint.orderCode}!`,
           });
-        } else if (res.fallbackNeeded) {
-          console.warn('[Auto-Print] QZ Tray chưa mở. Không thể tự động in.');
-          setMsg({
-            type: 'err',
-            text: `[Tự động in POS] Chưa mở QZ Tray trên máy tính để tự động in đơn ${orderToPrint.orderCode}. Vui lòng mở QZ Tray.`,
-          });
-        } else if (res.hasErrors) {
-          setMsg({
-            type: 'err',
-            text: `[Tự động in POS] Lỗi máy in đơn ${orderToPrint.orderCode}: ${res.errorMessage}`,
-          });
+          // Làm mới UI để cập nhật trạng thái đã in bill
+          await onRefresh();
+        } else {
+          console.warn('[Auto-Print] In tự động thất bại:', res.errorMessage);
+          // Gỡ khỏi guard nếu in thất bại hoàn toàn để có thể in lại
+          printedOrderIdsRef.current.delete(orderId);
+          if (res.fallbackNeeded) {
+            setMsg({
+              type: 'err',
+              text: `[Tự động in POS] Chưa mở QZ Tray trên máy tính để tự động in đơn ${orderToPrint.orderCode}.`,
+            });
+          } else if (res.hasErrors) {
+            setMsg({
+              type: 'err',
+              text: `[Tự động in POS] Lỗi máy in đơn ${orderToPrint.orderCode}: ${res.errorMessage}`,
+            });
+          }
         }
       } catch (err: any) {
         console.error('[Auto-Print Error]:', err);
+        printedOrderIdsRef.current.delete(orderId);
       }
     };
 
@@ -536,7 +566,8 @@ export function PortalDashboard({
     return () => {
       window.removeEventListener('canteen_new_order_inserted', handleNewOrderInserted);
     };
-  }, [menu, orders]);
+  }, [menu, orders, users, receiptPaperSize, onRefresh]);
+
 
   // Bật/tắt chế độ tự động in
   const handleToggleAutoPrint = async () => {
@@ -643,7 +674,13 @@ export function PortalDashboard({
     try {
       const orderOwner = users.find((u) => u.id === order.userId);
       const walletBalanceAfter = orderOwner?.walletBalance;
-      const res = await printOrderToAllPrinters(order, menu, printerConfig, walletBalanceAfter);
+      const res = await printOrderToAllPrinters(
+        order,
+        menu,
+        printerConfig,
+        walletBalanceAfter,
+        receiptPaperSize
+      );
       if (res.success) {
         const count = res.results.filter((r) => r.success).length;
         const failedItems = res.results.filter((r) => !r.success);
@@ -787,7 +824,13 @@ export function PortalDashboard({
       for (const ord of batchOrders) {
         const orderOwner = users.find((u) => u.id === ord.userId);
         const walletBalanceAfter = orderOwner?.walletBalance;
-        const res = await printOrderToAllPrinters(ord, menu, printerConfig, walletBalanceAfter);
+        const res = await printOrderToAllPrinters(
+          ord,
+          menu,
+          printerConfig,
+          walletBalanceAfter,
+          receiptPaperSize
+        );
         if (res.success) {
           totalPrinted += res.results.filter((r) => r.success).length;
         }

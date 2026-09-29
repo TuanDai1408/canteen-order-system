@@ -93,6 +93,8 @@ export {
   getCustomPrinterConfig,
   fetchPrinterConfig,
   setPrinterConfig,
+  fetchOrderWithItems,
+  mapOrder,
 } from './services/canteenApi';
 
 // QZ Tray Multi-Printer POS Service
@@ -105,6 +107,10 @@ export {
   printBillToPrinter,
   printTestTicket,
   printOrderToAllPrinters,
+  renderTicketToCanvasImage,
+  renderTestTicketToCanvasImage,
+  removeVietnameseTones,
+  printTicketAsImageToPrinter,
   type PrintBillResult,
   type MultiPrinterPrintResult,
   type AvailablePrintersResult,
