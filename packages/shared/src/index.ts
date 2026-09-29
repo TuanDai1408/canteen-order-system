@@ -105,6 +105,7 @@ export {
   printOrderToAllPrinters,
   type PrintBillResult,
   type MultiPrinterPrintResult,
+  type AvailablePrintersResult,
 } from './services/qzPrintService';
 
 // Utils

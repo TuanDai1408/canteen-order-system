@@ -20,6 +20,11 @@ export interface MultiPrinterPrintResult {
   errorMessage?: string;
 }
 
+export interface AvailablePrintersResult {
+  printers: string[];
+  error?: string;
+}
+
 // Cấu hình chữ ký bảo mật QZ Tray (bỏ qua xác thực cho kết nối máy POS nội bộ)
 let securityConfigured = false;
 function ensureQzSecurity() {
@@ -27,7 +32,8 @@ function ensureQzSecurity() {
   try {
     if (qz && qz.security) {
       qz.security.setCertificatePromise((resolve: (cert?: any) => void) => resolve());
-      qz.security.setSignaturePromise((resolve: (sig?: any) => void) => resolve(''));
+      // qz-tray 2.x/2.3.x yêu cầu setSignaturePromise nhận (dataToSign) và trả về một hàm resolver: (resolve, reject) => resolve()
+      qz.security.setSignaturePromise((_dataToSign: any) => (resolve: (sig?: any) => void, _reject?: (err?: any) => void) => resolve());
       securityConfigured = true;
     }
   } catch (err) {
@@ -65,7 +71,7 @@ export async function connectQz(): Promise<{ success: boolean; error?: string }>
     console.warn('[qzPrintService] QZ Tray connection failed:', errorMsg);
     return {
       success: false,
-      error: 'Không tìm thấy QZ Tray đang chạy trên máy này. Vui lòng kiểm tra ứng dụng QZ Tray đã được mở.',
+      error: errorMsg,
     };
   }
 }
@@ -84,23 +90,32 @@ export async function disconnectQz(): Promise<void> {
 }
 
 /**
- * Lấy danh sách tất cả máy in mà hệ điều hành nhận diện được thông qua QZ Tray
+ * Lấy danh sách tất cả máy in mà hệ điều hành nhận diện được thông qua QZ Tray.
+ * Trả về cả danh sách máy in và thông báo lỗi thực tế (nếu có).
  */
-export async function listAvailablePrinters(): Promise<string[]> {
+export async function listAvailablePrinters(): Promise<AvailablePrintersResult> {
   try {
     const conn = await connectQz();
     if (!conn.success) {
-      return [];
+      return {
+        printers: [],
+        error: conn.error || 'Không tìm thấy QZ Tray đang chạy trên máy này.',
+      };
     }
 
     const list = await qz.printers.find();
     if (Array.isArray(list)) {
-      return list.filter((p) => typeof p === 'string' && p.trim().length > 0);
+      const printers = list.filter((p) => typeof p === 'string' && p.trim().length > 0);
+      return { printers };
     }
-    return [];
-  } catch (err) {
+    return { printers: [] };
+  } catch (err: any) {
+    const errMsg = err?.message || String(err) || 'Lỗi khi tìm kiếm máy in qua QZ Tray.';
     console.warn('[qzPrintService] listAvailablePrinters error:', err);
-    return [];
+    return {
+      printers: [],
+      error: errMsg,
+    };
   }
 }
 

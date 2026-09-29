@@ -276,6 +276,7 @@ export function PortalDashboard({
     isChecking: false,
   });
   const [availablePrinters, setAvailablePrinters] = useState<string[]>([]);
+  const [printerListError, setPrinterListError] = useState<string | null>(null);
   const [isSavingPrinters, setIsSavingPrinters] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [testPrintStatus, setTestPrintStatus] = useState<Record<string, { loading: boolean; success?: boolean; error?: string }>>({});
@@ -348,17 +349,30 @@ export function PortalDashboard({
   // Kiểm tra kết nối QZ Tray và tải danh sách máy in từ hệ điều hành
   const checkQzAndLoadPrinters = useCallback(async () => {
     setQzStatus((prev) => ({ ...prev, isChecking: true }));
+    setPrinterListError(null);
     try {
       const conn = await connectQz();
       if (conn.success) {
-        const printers = await listAvailablePrinters();
+        const { printers, error: listError } = await listAvailablePrinters();
         setAvailablePrinters(printers);
-        setQzStatus({
-          isConnected: true,
-          isChecking: false,
-          message: `Đã kết nối QZ Tray. Tìm thấy ${printers.length} máy in trên hệ thống.`,
-        });
+        if (listError) {
+          setPrinterListError(listError);
+          setQzStatus({
+            isConnected: true,
+            isChecking: false,
+            message: `QZ Tray đã kết nối nhưng gặp lỗi khi lấy danh sách máy in: ${listError}`,
+          });
+        } else {
+          setPrinterListError(null);
+          setQzStatus({
+            isConnected: true,
+            isChecking: false,
+            message: `Đã kết nối QZ Tray. Tìm thấy ${printers.length} máy in trên hệ thống.`,
+          });
+        }
       } else {
+        setAvailablePrinters([]);
+        setPrinterListError(conn.error || 'Chưa thể kết nối tới QZ Tray.');
         setQzStatus({
           isConnected: false,
           isChecking: false,
@@ -366,10 +380,13 @@ export function PortalDashboard({
         });
       }
     } catch (err: any) {
+      const errMsg = err?.message || 'Lỗi khi kiểm tra kết nối QZ Tray.';
+      setAvailablePrinters([]);
+      setPrinterListError(errMsg);
       setQzStatus({
         isConnected: false,
         isChecking: false,
-        message: err?.message || 'Lỗi khi kiểm tra kết nối QZ Tray.',
+        message: errMsg,
       });
     }
   }, []);
@@ -4233,6 +4250,18 @@ export function PortalDashboard({
                     </div>
                   </div>
                 )}
+
+                {qzStatus.isConnected && printerListError && (
+                  <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-900 text-xs flex items-start gap-3">
+                    <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="font-bold">Lỗi khi tải danh sách máy in từ QZ Tray:</p>
+                      <p className="text-[11px] text-rose-800 leading-relaxed">
+                        {printerListError}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Section 2: Auto-Print Toggle Switch Card */}
@@ -4322,6 +4351,12 @@ export function PortalDashboard({
                             </option>
                           ))}
                         </select>
+                        {printerListError && (
+                          <div className="flex items-start gap-1.5 text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1.5 leading-snug">
+                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-500" />
+                            <span>{printerListError}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Text Input (Manual) */}
@@ -4406,6 +4441,12 @@ export function PortalDashboard({
                             </option>
                           ))}
                         </select>
+                        {printerListError && (
+                          <div className="flex items-start gap-1.5 text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1.5 leading-snug">
+                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-500" />
+                            <span>{printerListError}</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">
@@ -4488,6 +4529,12 @@ export function PortalDashboard({
                             </option>
                           ))}
                         </select>
+                        {printerListError && (
+                          <div className="flex items-start gap-1.5 text-[11px] text-rose-600 bg-rose-50 border border-rose-200 rounded-lg p-2 mt-1.5 leading-snug">
+                            <AlertCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-rose-500" />
+                            <span>{printerListError}</span>
+                          </div>
+                        )}
                       </div>
 
                       <div className="space-y-1.5">
