@@ -139,20 +139,20 @@
     image-rendering: crisp-edges !important;
   }
 
-  /* K80 Roll (80mm width, 72mm printable width) - Giảm sát lề trên (1mm) xóa khoảng trắng thừa */
+  /* K80 Roll (80mm width, 72mm printable width) - Giảm sát lề trên (1mm) xóa khoảng trắng thừa, đệm dưới an toàn 8mm tránh cắt chữ */
   .pos-receipt-ticket.pos-k80 {
     width: 72mm !important;
     max-width: 72mm !important;
-    padding: 1mm 2mm 2.5mm 2mm !important;
+    padding: 1mm 2mm 8mm 2mm !important;
     font-size: 11px !important;
     line-height: 1.35 !important;
   }
 
-  /* K58 Roll (58mm width, 48mm printable width) - Giảm sát lề trên (0.8mm) */
+  /* K58 Roll (58mm width, 48mm printable width) - Giảm sát lề trên (0.8mm), đệm dưới an toàn 7mm */
   .pos-receipt-ticket.pos-k58 {
     width: 48mm !important;
     max-width: 48mm !important;
-    padding: 0.8mm 1.5mm 2mm 1.5mm !important;
+    padding: 0.8mm 1.5mm 7mm 1.5mm !important;
     font-size: 10px !important;
     line-height: 1.25 !important;
   }

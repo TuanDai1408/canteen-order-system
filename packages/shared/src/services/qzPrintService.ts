@@ -1,7 +1,7 @@
 // @ts-ignore
 import qz from 'qz-tray';
 import { Order, MenuItem, PrinterConfig, BillType } from '../types';
-import { getOrderTickets, OrderTicket, markBillPrinted } from './canteenApi';
+import { getOrderTickets, OrderTicket, TicketItem, markBillPrinted } from './canteenApi';
 import { formatVnd } from '../utils/date';
 
 export interface PrintBillResult {
@@ -178,10 +178,30 @@ export function renderTicketToCanvasImage(
 
   function wrap(text: string, maxWidth: number, font: string): string[] {
     mCtx.font = font;
-    const words = (text || '').split(/\s+/);
+    const words = (text || '').trim().split(/\s+/);
     const lines: string[] = [];
     let cur = '';
     for (const w of words) {
+      if (!w) continue;
+      // Nếu 1 từ dài hơn hẳn chiều rộng cho phép (chuỗi liên tục không khoảng trắng)
+      if (mCtx.measureText(w).width > maxWidth) {
+        if (cur) {
+          lines.push(cur);
+          cur = '';
+        }
+        let chunk = '';
+        for (const char of w) {
+          if (mCtx.measureText(chunk + char).width > maxWidth && chunk) {
+            lines.push(chunk);
+            chunk = char;
+          } else {
+            chunk += char;
+          }
+        }
+        if (chunk) cur = chunk;
+        continue;
+      }
+
       const test = cur ? `${cur} ${w}` : w;
       if (mCtx.measureText(test).width > maxWidth && cur) {
         lines.push(cur);
@@ -369,7 +389,19 @@ export function renderTicketToCanvasImage(
     const numBoldFont = `bold ${Math.round(15 * s)}px ${fontMono}`;
     const colNameMaxW = width - padX * 2 - 200 * s;
 
-    for (const it of ticket.items) {
+    const displayItems: TicketItem[] =
+      ticket.items && ticket.items.length > 0
+        ? ticket.items
+        : [
+            {
+              name: 'Suất ăn Căn tin',
+              quantity: 1,
+              price: ticket.totalAmount || order.totalAmount || 0,
+              isFromCombo: false,
+            },
+          ];
+
+    for (const it of displayItems) {
       const name = it.name || 'Suất ăn Căn tin';
       const qtyStr = `${it.quantity}x`;
       const priceStr = `${(it.price || 0).toLocaleString('vi-VN')}đ`;
@@ -477,7 +509,19 @@ export function renderTicketToCanvasImage(
     const kitchenItemFont = `bold ${Math.round(20 * s)}px ${fontSans}`;
     const comboNoteFont = `italic ${Math.round(14 * s)}px ${fontSans}`;
 
-    for (const it of ticket.items) {
+    const kitchenItems: TicketItem[] =
+      ticket.items && ticket.items.length > 0
+        ? ticket.items
+        : [
+            {
+              name: 'Suất ăn Căn tin',
+              quantity: 1,
+              price: 0,
+              isFromCombo: false,
+            },
+          ];
+
+    for (const it of kitchenItems) {
       const itemTitle = `[ ${it.quantity} ]  ${(it.name || '').toUpperCase()}`;
       const lines = wrap(itemTitle, contentWidth, kitchenItemFont);
 
@@ -717,8 +761,23 @@ export function renderTestTicketToCanvasImage(
 // ESC/POS COMMAND BUILDER (FALLBACK CHO LỆNH TEXT THÔ)
 // ============================================================
 
+// ============================================================
+// ESC/POS FEED & CUT COMMANDS CHUẨN CÔNG NGHIỆP POS NHIỆT
+// ============================================================
+
 const ESC = '\x1B';
 const GS = '\x1D';
+
+/**
+ * Lệnh ESC/POS tiêu chuẩn đẩy giấy và cắt giấy:
+ * - \n x 6 ký tự Newline: Đẩy 6 dòng giấy (~25-30mm) qua khỏi đầu in nhiệt và cụm dao cắt,
+ *   đảm bảo toàn bộ phần chữ cuối (tổng tiền, số dư ví, ghi chú, chân trang, thời gian in)
+ *   hoàn toàn ra khỏi khe máy in và dao cắt KHÔNG BAO GIỜ chém vào chữ.
+ * - \x1Bd\x02 (ESC d 2): Đẩy thêm 2 dòng để xả hoàn toàn bộ đệm máy in.
+ * - \x1DV\x01 (GS V 1): Lệnh cắt giấy một phần (Partial Cut) chuẩn công nghiệp POS.
+ *   Nếu máy in chỉ có dao cắt toàn phần, phần cứng sẽ tự động thực hiện full cut.
+ */
+export const ESC_POS_FEED_AND_CUT = '\n\n\n\n\n\n\x1Bd\x02\x1DV\x01';
 
 const CMD = {
   INIT: `${ESC}@`,
@@ -735,7 +794,7 @@ const CMD = {
   TEXT_LARGE: `${GS}!\x11`, // Double width + double height
   CUT_FULL: `${GS}V\x00`, // Full cut
   CUT_PARTIAL: `${GS}V\x01`, // Partial cut
-  FEED_AND_CUT: `${GS}V\x41\x03`, // Feed 3 lines & cut
+  FEED_AND_CUT: ESC_POS_FEED_AND_CUT, // Feed lines & cut
 };
 
 /**
@@ -868,9 +927,8 @@ export function buildEscPosCommands(
   buffer += 'CHUC QUY KHACH NGON MIENG!\n';
   buffer += CMD.ALIGN_LEFT;
 
-  // Đẩy giấy 4 dòng và cắt giấy
-  buffer += '\n\n\n\n';
-  buffer += CMD.FEED_AND_CUT;
+  // Đẩy giấy 6 dòng và cắt giấy chuẩn POS
+  buffer += ESC_POS_FEED_AND_CUT;
 
   return buffer;
 }
@@ -878,6 +936,7 @@ export function buildEscPosCommands(
 /**
  * Gửi lệnh in 1 phiếu trực tiếp tới máy in qua QZ Tray:
  * Ưu tiên 1: In dạng ẢNH ESC/POS Raw (hoặc Pixel Image) để hiển thị trọn vẹn 100% tiếng Việt có dấu và bố cục chuẩn POS.
+ * Kèm lệnh đẩy giấy 6 dòng và cắt giấy (partial cut) ngay sau khi in ảnh.
  * Fallback: In lệnh ESC/POS text command (đã loại bỏ dấu có chủ đích để không bị rác ký tự).
  */
 export async function printTicketAsImageToPrinter(
@@ -911,6 +970,7 @@ export async function printTicketAsImageToPrinter(
 
   if (dataUrl) {
     // 2. Thử gửi lệnh in dạng ẢNH ESC/POS Raw qua QZ Tray (tương thích máy in nhiệt POS nhiệt)
+    // Bao gồm cả ảnh và lệnh đẩy 6 dòng + cắt giấy trong cùng một luồng công việc in
     try {
       const rawConfig = qz.configs.create(cleanPrinter, { encoding: 'UTF-8' });
       const rawPrintData = [
@@ -923,6 +983,13 @@ export async function printTicketAsImageToPrinter(
             language: 'ESCPOS',
             dotDensity: 'double',
           },
+        },
+        {
+          type: 'raw',
+          format: 'command',
+          flavor: 'plain',
+          data: ESC_POS_FEED_AND_CUT,
+          options: { encoding: 'UTF-8' },
         },
       ];
       await qz.print(rawConfig, rawPrintData);
@@ -944,6 +1011,7 @@ export async function printTicketAsImageToPrinter(
         const pixelConfig = qz.configs.create(cleanPrinter, {
           scaleContent: false,
           rasterize: true,
+          margins: 0,
         });
         const pixelPrintData = [
           {
@@ -954,6 +1022,23 @@ export async function printTicketAsImageToPrinter(
           },
         ];
         await qz.print(pixelConfig, pixelPrintData);
+
+        // Sau khi in ảnh Pixel Image xong, gửi lệnh Raw đẩy giấy và cắt giấy
+        try {
+          const cutConfig = qz.configs.create(cleanPrinter, { encoding: 'UTF-8' });
+          await qz.print(cutConfig, [
+            {
+              type: 'raw',
+              format: 'command',
+              flavor: 'plain',
+              data: ESC_POS_FEED_AND_CUT,
+              options: { encoding: 'UTF-8' },
+            },
+          ]);
+        } catch (cutErr) {
+          console.warn('[qzPrintService] Gửi lệnh cắt giấy sau Pixel Image notice:', cutErr);
+        }
+
         return {
           printerName: cleanPrinter,
           ticketType: ticket.ticketType,
@@ -970,7 +1055,7 @@ export async function printTicketAsImageToPrinter(
     }
   }
 
-  // 4. Fallback cuối cùng: In lệnh ESC/POS text command (đã chuẩn hóa không dấu có chủ đích)
+  // 4. Fallback cuối cùng: In lệnh ESC/POS text command (đã chuẩn hóa không dấu có chủ đích và có lệnh cắt)
   const escPosData = buildEscPosCommands(
     ticket,
     paperSize === 'k58' ? 32 : 40,
@@ -1053,6 +1138,13 @@ export async function printTestTicket(
             dotDensity: 'double',
           },
         },
+        {
+          type: 'raw',
+          format: 'command',
+          flavor: 'plain',
+          data: ESC_POS_FEED_AND_CUT,
+          options: { encoding: 'UTF-8' },
+        },
       ]);
       return {
         printerName: cleanPrinter,
@@ -1067,6 +1159,7 @@ export async function printTestTicket(
         const pixelConfig = qz.configs.create(cleanPrinter, {
           scaleContent: false,
           rasterize: true,
+          margins: 0,
         });
         await qz.print(pixelConfig, [
           {
@@ -1076,6 +1169,23 @@ export async function printTestTicket(
             data: dataUrl,
           },
         ]);
+
+        // Sau khi in ảnh Pixel Image xong, gửi lệnh Raw đẩy giấy và cắt giấy
+        try {
+          const cutConfig = qz.configs.create(cleanPrinter, { encoding: 'UTF-8' });
+          await qz.print(cutConfig, [
+            {
+              type: 'raw',
+              format: 'command',
+              flavor: 'plain',
+              data: ESC_POS_FEED_AND_CUT,
+              options: { encoding: 'UTF-8' },
+            },
+          ]);
+        } catch (cutErr) {
+          console.warn('[printTestTicket] Gửi lệnh cắt sau pixel print:', cutErr);
+        }
+
         return {
           printerName: cleanPrinter,
           ticketType: 'total',
@@ -1116,8 +1226,8 @@ export async function printTestTicket(
   buffer += 'KET NOI VA IN AN HOAN TOAN THANH CONG!\n';
   buffer += CMD.BOLD_OFF;
   buffer += '----------------------------------------\n';
-  buffer += '\n\n\n\n';
-  buffer += CMD.FEED_AND_CUT;
+  // Đẩy giấy 6 dòng và cắt giấy chuẩn POS
+  buffer += ESC_POS_FEED_AND_CUT;
 
   const config = qz.configs.create(cleanPrinter, { encoding: 'UTF-8' });
   const printData = [
@@ -1203,30 +1313,44 @@ export async function printOrderToAllPrinters(
     }
   }
 
-  // 4. Thực thi in từng máy in độc lập bằng Promise.allSettled
-  const settledPromises = tasks.map(async ({ ticket, printerName, roleName }): Promise<PrintBillResult> => {
+  // 4. Thực thi in TUẦN TỰ LẦN LƯỢT TỪNG PHIẾU theo đúng quy trình bắt buộc:
+  //    1. Chọn máy in cấu hình
+  //    2. Gửi nội dung đầy đủ (ảnh có font tiếng Việt hoặc text)
+  //    3. Feed 6 dòng giấy (~25-30mm) đẩy nội dung hoàn toàn qua khỏi dao cắt
+  //    4. Lệnh cắt giấy (partial cut / full cut)
+  //    5. Tự động markBillPrinted cho phiếu tương ứng
+  //    6. Nghỉ 300ms giữa các phiếu để dao cắt hoàn thành hành trình trước khi in phiếu kế tiếp
+  const results: PrintBillResult[] = [];
+
+  for (let i = 0; i < tasks.length; i++) {
+    const { ticket, printerName, roleName } = tasks[i];
     const ticketTitle = ticket.subtitle || ticket.title;
     const billType: BillType =
       ticket.ticketType === 'total' ? 'tong' : ticket.ticketType === 'food' ? 'com' : 'nuoc';
 
     if (!printerName || !printerName.trim()) {
-      return {
+      results.push({
         printerName: '(Chưa cấu hình)',
         ticketType: ticket.ticketType,
         billType,
         ticketTitle,
         success: false,
         error: `Chưa cấu hình tên máy in cho [${roleName}]`,
-      };
+      });
+      continue;
     }
 
     try {
+      console.info(`[qzPrintService] Bắt đầu in [${roleName}] "${ticketTitle}" trên máy in "${printerName.trim()}"...`);
       const res = await printBillToPrinter(
         printerName.trim(),
         ticket,
         ticket.ticketType === 'total' ? walletBalanceAfter : undefined,
         paperSize
       );
+
+      results.push(res);
+
       if (res.success && order.id) {
         try {
           await markBillPrinted(order.id, billType);
@@ -1234,39 +1358,23 @@ export async function printOrderToAllPrinters(
           console.warn('[qzPrintService] Auto markBillPrinted notice:', err);
         }
       }
-      return res;
+
+      // Giãn cách ngắn giữa các phiếu (~300ms) để cụm dao cắt hoàn thành và bộ đệm máy in sẵn sàng cho phiếu kế tiếp
+      if (i < tasks.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
     } catch (err: any) {
       console.warn(`[qzPrintService] Lỗi in tại ${roleName} ("${printerName}"):`, err);
-      return {
+      results.push({
         printerName: printerName.trim(),
         ticketType: ticket.ticketType,
         billType,
         ticketTitle,
         success: false,
         error: err?.message || 'Lỗi gửi lệnh in ESC/POS tới máy in.',
-      };
+      });
     }
-  });
-
-  const settledResults = await Promise.allSettled(settledPromises);
-
-  const results: PrintBillResult[] = settledResults.map((r, idx) => {
-    const t = tasks[idx];
-    const billType: BillType =
-      t.ticket.ticketType === 'total' ? 'tong' : t.ticket.ticketType === 'food' ? 'com' : 'nuoc';
-
-    if (r.status === 'fulfilled') {
-      return r.value;
-    }
-    return {
-      printerName: t.printerName || '(Không xác định)',
-      ticketType: t.ticket.ticketType,
-      billType,
-      ticketTitle: t.ticket.subtitle || t.ticket.title,
-      success: false,
-      error: r.reason?.message || String(r.reason),
-    };
-  });
+  }
 
   const hasErrors = results.some((r) => !r.success);
   const successCount = results.filter((r) => r.success).length;

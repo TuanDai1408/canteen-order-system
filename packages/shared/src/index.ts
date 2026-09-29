@@ -111,6 +111,7 @@ export {
   renderTestTicketToCanvasImage,
   removeVietnameseTones,
   printTicketAsImageToPrinter,
+  ESC_POS_FEED_AND_CUT,
   type PrintBillResult,
   type MultiPrinterPrintResult,
   type AvailablePrintersResult,
