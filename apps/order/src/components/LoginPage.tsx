@@ -18,9 +18,10 @@ import {
 
 interface Props {
   onSuccess: (user: UserProfile) => void;
+  onSwitchToGuest?: () => void;
 }
 
-export function LoginPage({ onSuccess }: Props) {
+export function LoginPage({ onSuccess, onSwitchToGuest }: Props) {
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [fullName, setFullName] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -268,7 +269,20 @@ export function LoginPage({ onSuccess }: Props) {
             </button>
           </form>
 
-          <div className="mt-6 pt-5 border-t border-slate-100 flex items-center justify-center gap-1.5 text-slate-400 text-xs">
+          {onSwitchToGuest && (
+            <div className="mt-4 pt-4 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={onSwitchToGuest}
+                className="w-full py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100/80 text-emerald-800 text-xs font-bold rounded-xl transition border border-emerald-200 flex items-center justify-center gap-2 cursor-pointer shadow-2xs min-h-[44px]"
+              >
+                <UtensilsCrossed className="w-4 h-4 text-emerald-600" />
+                <span>Bạn là khách lẻ? Đặt món ngay (Không cần đăng nhập)</span>
+              </button>
+            </div>
+          )}
+
+          <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-center gap-1.5 text-slate-400 text-xs">
             <ShieldCheck className="w-3.5 h-3.5 text-teal-600" />
             <span>Xác thực an toàn Supabase Auth</span>
           </div>

@@ -51,6 +51,16 @@ import {
   MONTHLY_WALLET_ALLOWANCE,
   fetchWalletTransactions,
   type WalletTransaction,
+  DEFAULT_SITES,
+  getSites,
+  getCachedSites,
+  getSelectedSiteCode,
+  setSelectedSiteCode,
+  confirmGuestPayment,
+  rejectGuestPayment,
+  updateSite,
+  type Site,
+  type SiteCode,
 } from '@canteen/shared';
 import { PosReceiptTicket, type PaperSize } from './PosReceiptTicket';
 import { BrandLogo } from './BrandLogo';
@@ -62,6 +72,7 @@ import {
   QrCode,
   TrendingUp,
   Building2,
+  Store,
   Plus,
   Minus,
   Search,
@@ -210,16 +221,45 @@ export function PortalDashboard({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [seeding, setSeeding] = useState(false);
 
+  // Multi-site & Active Site states
+  const [sitesList, setSitesList] = useState<Site[]>(() => getCachedSites());
+  const [selectedSiteCode, setSelectedSiteCodeState] = useState<SiteCode>(() => getSelectedSiteCode());
+  const activeSite = useMemo(() => {
+    return sitesList.find((s) => s.code === selectedSiteCode) || DEFAULT_SITES[0];
+  }, [sitesList, selectedSiteCode]);
+
+  useEffect(() => {
+    getSites().then((s) => {
+      if (Array.isArray(s) && s.length > 0) setSitesList(s);
+    }).catch(() => {});
+  }, []);
+
+  const handleSwitchSite = (code: SiteCode) => {
+    setSelectedSiteCode(code);
+    setSelectedSiteCodeState(code);
+    if (code === 'g_group' && (tab === 'users' || tab === 'qr')) {
+      setTab('overview');
+    }
+    onRefresh();
+  };
+
   // Search & Filter states
   const [menuSearch, setMenuSearch] = useState('');
   const [menuFilterCat, setMenuFilterCat] = useState('all');
   const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | OrderStatus>('all');
   const [orderDeliveryFilter, setOrderDeliveryFilter] = useState<'all' | 'dine_in' | 'room_delivery'>('all');
+  const [orderPaymentFilter, setOrderPaymentFilter] = useState<'all' | 'pending' | 'paid'>('all');
   const [orderDateFilter, setOrderDateFilter] = useState<string>('');
   const [orderSearch, setOrderSearch] = useState('');
   const [onlyUnprintedFilter, setOnlyUnprintedFilter] = useState(false);
   const [userSearch, setUserSearch] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+
+  // Guest Payment Actions
+  const [confirmingPaymentOrderId, setConfirmingPaymentOrderId] = useState<string | null>(null);
+  const [rejectingOrder, setRejectingOrder] = useState<Order | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
+  const [isRejecting, setIsRejecting] = useState(false);
 
   // Modals state
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
@@ -454,6 +494,12 @@ export function PortalDashboard({
       const currentAutoCfg = getCustomAutoPrintConfig();
       if (!currentAutoCfg.enabled) {
         console.log('[Auto-Print] Bỏ qua đơn mới: Chế độ tự động in đang TẮT.');
+        return;
+      }
+
+      // Không tự động in các đơn khách lẻ đang chờ xác nhận thanh toán tiền mặt/chuyển khoản
+      if (rawOrder.paymentStatus === 'pending' || rawOrder.payment_status === 'pending') {
+        console.log(`[Auto-Print] Tạm hoãn in đơn ${orderId}: Đơn hàng khách lẻ đang chờ thanh toán.`);
         return;
       }
 
@@ -1101,6 +1147,11 @@ export function PortalDashboard({
   // Filtered Menu
   const filteredMenu = useMemo(() => {
     return menu.filter((item) => {
+      // Lọc theo Cơ sở (Site) nếu món ăn quy định danh sách site
+      const matchSite =
+        !item.availableSiteIds ||
+        item.availableSiteIds.length === 0 ||
+        item.availableSiteIds.includes(selectedSiteCode);
       const matchCat = menuFilterCat === 'all' || item.category === menuFilterCat;
       const matchSearch =
         item.name.toLowerCase().includes(menuSearch.toLowerCase()) ||
@@ -1111,19 +1162,24 @@ export function PortalDashboard({
           : menuDisplayFilter === 'visible'
           ? item.isActive !== false
           : item.isActive === false;
-      return matchCat && matchSearch && matchDisplay;
+      return matchSite && matchCat && matchSearch && matchDisplay;
     });
-  }, [menu, menuFilterCat, menuSearch, menuDisplayFilter]);
+  }, [menu, selectedSiteCode, menuFilterCat, menuSearch, menuDisplayFilter]);
 
   // Danh sách các ngày có đơn hàng trong hệ thống (sắp xếp ngày mới nhất lên đầu)
   const availableOrderDates = useMemo(() => {
     const set = new Set<string>();
     for (const o of orders) {
+      const matchSite =
+        selectedSiteCode === 'g_group'
+          ? o.siteId === 'g_group'
+          : !o.siteId || o.siteId === 'hung_vuong';
+      if (!matchSite) continue;
       const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
       if (d) set.add(d);
     }
     return Array.from(set).sort().reverse();
-  }, [orders]);
+  }, [orders, selectedSiteCode]);
 
   // Mặc định chọn ngày mới nhất có đơn hàng khi mở portal
   useEffect(() => {
@@ -1136,12 +1192,22 @@ export function PortalDashboard({
   const targetKdsOrders = useMemo(() => {
     return (orderDateFilter && orderDateFilter !== 'all'
       ? orders.filter((o) => {
+          const matchSite =
+            selectedSiteCode === 'g_group'
+              ? o.siteId === 'g_group'
+              : !o.siteId || o.siteId === 'hung_vuong';
           const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
-          return d === orderDateFilter && o.status !== 'cancelled';
+          return matchSite && d === orderDateFilter && o.status !== 'cancelled';
         })
-      : orders.filter((o) => o.status !== 'cancelled')
+      : orders.filter((o) => {
+          const matchSite =
+            selectedSiteCode === 'g_group'
+              ? o.siteId === 'g_group'
+              : !o.siteId || o.siteId === 'hung_vuong';
+          return matchSite && o.status !== 'cancelled';
+        })
     ).sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()); // Cũ nhất nấu trước (FIFO)
-  }, [orders, orderDateFilter]);
+  }, [orders, orderDateFilter, selectedSiteCode]);
 
   const kdsConfirmedOrders = useMemo(
     () => targetKdsOrders.filter((o) => o.status === 'confirmed'),
@@ -1160,8 +1226,20 @@ export function PortalDashboard({
   const filteredOrders = useMemo(() => {
     return orders
       .filter((o) => {
+        // Lọc theo Site
+        const matchSite =
+          selectedSiteCode === 'g_group'
+            ? o.siteId === 'g_group'
+            : !o.siteId || o.siteId === 'hung_vuong';
         const matchStatus = orderStatusFilter === 'all' || o.status === orderStatusFilter;
         const matchDelivery = orderDeliveryFilter === 'all' || o.deliveryMethod === orderDeliveryFilter;
+        // Lọc theo trạng thái thanh toán
+        const matchPayment =
+          orderPaymentFilter === 'all'
+            ? true
+            : orderPaymentFilter === 'pending'
+            ? o.paymentStatus === 'pending'
+            : o.paymentStatus === 'paid' || (!o.paymentStatus && !o.isGuest);
         const orderDate = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
         const matchDate = !orderDateFilter || orderDateFilter === 'all' || orderDate === orderDateFilter;
         const matchUnprinted = !onlyUnprintedFilter || !isOrderFullyPrinted(o, menu);
@@ -1171,15 +1249,31 @@ export function PortalDashboard({
           (o.roomNumber && o.roomNumber.toLowerCase().includes(orderSearch.toLowerCase())) ||
           (o.note && o.note.toLowerCase().includes(orderSearch.toLowerCase())) ||
           (o.notes && o.notes.toLowerCase().includes(orderSearch.toLowerCase()));
-        return matchStatus && matchDelivery && matchDate && matchSearch && matchUnprinted;
+        return matchSite && matchStatus && matchDelivery && matchPayment && matchDate && matchSearch && matchUnprinted;
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [orders, orderStatusFilter, orderDeliveryFilter, orderDateFilter, orderSearch, onlyUnprintedFilter, menu]);
+  }, [orders, selectedSiteCode, orderStatusFilter, orderDeliveryFilter, orderPaymentFilter, orderDateFilter, orderSearch, onlyUnprintedFilter, menu]);
+
+  // Đếm số đơn khách lẻ đang chờ xác nhận thanh toán (Pending Payment)
+  const pendingPaymentOrdersCount = useMemo(() => {
+    return orders.filter(
+      (o) =>
+        (selectedSiteCode === 'g_group' ? o.siteId === 'g_group' : !o.siteId || o.siteId === 'hung_vuong') &&
+        o.paymentStatus === 'pending' &&
+        o.status !== 'cancelled'
+    ).length;
+  }, [orders, selectedSiteCode]);
 
   // Đếm số đơn chưa in đủ bill (không tính đơn đã hủy)
   const unprintedOrdersCount = useMemo(() => {
-    return orders.filter((o) => o.status !== 'cancelled' && !isOrderFullyPrinted(o, menu)).length;
-  }, [orders, menu]);
+    return orders.filter((o) => {
+      const matchSite =
+        selectedSiteCode === 'g_group'
+          ? o.siteId === 'g_group'
+          : !o.siteId || o.siteId === 'hung_vuong';
+      return matchSite && o.status !== 'cancelled' && !isOrderFullyPrinted(o, menu);
+    }).length;
+  }, [orders, selectedSiteCode, menu]);
 
   // Disabled users count
   const disabledUsersCount = useMemo(() => {
@@ -1300,7 +1394,9 @@ export function PortalDashboard({
 
   // Enriched QR Tokens with real-time dynamic usage from Orders
   const enrichedTokens = useMemo(() => {
-    return tokens.map((t) => {
+    return tokens
+      .filter((t) => !t.siteId || t.siteId === selectedSiteCode)
+      .map((t) => {
       const cleanToken = t.token.trim().toUpperCase();
       const matchingOrders = orders.filter(
         (o) =>
@@ -1335,7 +1431,7 @@ export function PortalDashboard({
         matchingOrders,
       };
     });
-  }, [tokens, orders]);
+  }, [tokens, orders, selectedSiteCode]);
 
   const filteredTokens = useMemo(() => {
     return enrichedTokens.filter((t) => {
@@ -1410,6 +1506,64 @@ export function PortalDashboard({
       onRefresh();
     } finally {
       setUpdatingOrderId(null);
+    }
+  };
+
+  // Xác nhận thanh toán tiền mặt / Chuyển khoản VietQR từ khách lẻ (Site G-Group hoặc chung)
+  const handleConfirmGuestPayment = async (order: Order) => {
+    setConfirmingPaymentOrderId(order.id);
+    try {
+      const res = await confirmGuestPayment(order.id, currentUser);
+      if (res.success) {
+        setMsg({
+          type: 'ok',
+          text: `Đã xác nhận thanh toán đơn hàng ${order.orderCode} (${order.userName || 'Khách lẻ'})! Đơn đã chuyển sang trạng thái sẵn sàng chế biến.`,
+        });
+        onRefresh();
+
+        // Tự động in bill nếu chế độ Auto-Print đang bật
+        const currentAutoCfg = getCustomAutoPrintConfig();
+        if (currentAutoCfg.enabled && !printedOrderIdsRef.current.has(order.id)) {
+          printedOrderIdsRef.current.add(order.id);
+          fetchOrderWithItems(order.id, 2, 300).then((orderToPrint) => {
+            const finalOrder = orderToPrint || order;
+            if (finalOrder && finalOrder.items && finalOrder.items.length > 0) {
+              printOrderToAllPrinters(finalOrder, menu, printerConfig, undefined, receiptPaperSize).catch(console.error);
+            }
+          }).catch(console.error);
+        }
+      } else {
+        setMsg({ type: 'err', text: res.error || 'Không thể xác nhận thanh toán.' });
+      }
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi xác nhận thanh toán đơn hàng.' });
+    } finally {
+      setConfirmingPaymentOrderId(null);
+    }
+  };
+
+  // Từ chối đơn hàng khách lẻ (chưa chuyển khoản hoặc hết món)
+  const handleRejectGuestPayment = async () => {
+    if (!rejectingOrder) return;
+    setIsRejecting(true);
+    try {
+      const reason = rejectReason.trim() || 'Nhân viên Căn tin đã từ chối đơn hàng';
+      const res = await rejectGuestPayment(rejectingOrder.id, reason);
+      if (res.success) {
+        setMsg({
+          type: 'ok',
+          text: `Đã từ chối đơn hàng ${rejectingOrder.orderCode}. Màn hình khách lẻ sẽ nhận thông báo tức thì.`,
+        });
+        setRejectingOrder(null);
+        setRejectReason('');
+        onRefresh();
+      } else {
+        setMsg({ type: 'err', text: res.error || 'Không thể từ chối đơn hàng.' });
+      }
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Lỗi khi từ chối đơn hàng.' });
+    } finally {
+      setIsRejecting(false);
     }
   };
 
@@ -1726,14 +1880,18 @@ export function PortalDashboard({
     }
   };
 
+  const isGGroupSite = selectedSiteCode === 'g_group' || activeSite.code === 'g_group';
+  const showStaffTab = !isGGroupSite && activeSite.features?.staffTab !== false;
+  const showQrTab = !isGGroupSite && activeSite.features?.qrException !== false;
+
   const navItems = [
     { id: 'overview' as Tab, label: 'Tổng quan', icon: LayoutDashboard },
-    { id: 'menu' as Tab, label: 'Thực đơn ngày mai', icon: UtensilsCrossed, badge: menu.length },
+    { id: 'menu' as Tab, label: 'Thực đơn ngày mai', icon: UtensilsCrossed, badge: filteredMenu.length },
     {
       id: 'orders' as Tab,
       label: 'Bảng Đơn hàng',
       icon: Receipt,
-      badge: orders.length,
+      badge: filteredOrders.length,
     },
     {
       id: 'kitchen' as Tab,
@@ -1741,18 +1899,34 @@ export function PortalDashboard({
       icon: ChefHat,
       badge: ordersByStatus.confirmed + ordersByStatus.preparing,
     },
-    {
-      id: 'users' as Tab,
-      label: 'Cán bộ & Ví suất ăn',
-      icon: Users,
-      badge: pendingUsersCount > 0 ? pendingUsersCount : undefined,
-      isPendingBadge: pendingUsersCount > 0,
-    },
-    { id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode },
+    ...(showStaffTab
+      ? [
+          {
+            id: 'users' as Tab,
+            label: 'Cán bộ & Ví suất ăn',
+            icon: Users,
+            badge: pendingUsersCount > 0 ? pendingUsersCount : undefined,
+            isPendingBadge: pendingUsersCount > 0,
+          },
+        ]
+      : []),
+    ...(showQrTab
+      ? [{ id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode }]
+      : []),
     ...(currentUser?.role === 'admin'
       ? [{ id: 'printers' as Tab, label: 'Cài đặt máy in', icon: Printer }]
       : []),
   ];
+
+  useEffect(() => {
+    if (isGGroupSite && (tab === 'users' || tab === 'qr')) {
+      setTab('overview');
+    } else if (!showStaffTab && tab === 'users') {
+      setTab('overview');
+    } else if (!showQrTab && tab === 'qr') {
+      setTab('overview');
+    }
+  }, [isGGroupSite, showStaffTab, showQrTab, tab]);
 
   const handleSelectTab = (selectedTab: Tab) => {
     setTab(selectedTab);
@@ -1773,17 +1947,28 @@ export function PortalDashboard({
           </button>
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-indigo-600 flex items-center justify-center text-white shadow-xs">
-              <Building2 className="w-4 h-4" />
+              {selectedSiteCode === 'hung_vuong' ? <Building2 className="w-4 h-4" /> : <Store className="w-4 h-4" />}
             </div>
-            <span className="font-bold text-slate-900 text-sm">Portal Quản Lý</span>
-            <span className="inline-flex items-center gap-1 text-[10px] font-semibold tracking-wider px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Supabase Live
-            </span>
+            <div>
+              <span className="font-bold text-slate-900 text-xs block leading-tight">
+                {selectedSiteCode === 'hung_vuong' ? 'ĐH Hùng Vương' : 'Canteen G-Group'}
+              </span>
+              <span className="text-[10px] text-slate-500 font-medium">Portal Quản Lý</span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Quick Site Switch Mobile */}
+          <button
+            onClick={() => handleSwitchSite(selectedSiteCode === 'hung_vuong' ? 'g_group' : 'hung_vuong')}
+            className="px-2 py-1 bg-slate-100 text-slate-700 font-bold rounded-lg text-[11px] border border-slate-200 cursor-pointer min-h-[38px] flex items-center gap-1"
+            title="Đổi cơ sở quản lý"
+          >
+            <RotateCcw className="w-3 h-3 text-indigo-600" />
+            <span>{selectedSiteCode === 'hung_vuong' ? 'G-Group' : 'Hùng Vương'}</span>
+          </button>
+
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
@@ -1831,6 +2016,44 @@ export function PortalDashboard({
             >
               <X className="w-5 h-5" />
             </button>
+          </div>
+
+          {/* Site Selector in Sidebar */}
+          <div className="p-3 border-b border-slate-100 bg-slate-50/70">
+            <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center justify-between">
+              <span>Cơ sở Căn tin:</span>
+              <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                {selectedSiteCode === 'hung_vuong' ? 'ĐH Hùng Vương' : 'G-Group'}
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5 bg-slate-200/60 p-1 rounded-xl">
+              <button
+                type="button"
+                onClick={() => handleSwitchSite('hung_vuong')}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  selectedSiteCode === 'hung_vuong'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Đại học Hùng Vương (Giáo viên / Cán bộ & Ví suất ăn)"
+              >
+                <Building2 className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">Hùng Vương</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchSite('g_group')}
+                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  selectedSiteCode === 'g_group'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Canteen G-Group (Khách lẻ & Thanh toán VietQR)"
+              >
+                <Store className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">G-Group</span>
+              </button>
+            </div>
           </div>
 
           {/* Timegate indicator in sidebar */}
@@ -1939,6 +2162,36 @@ export function PortalDashboard({
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Quick Site Switcher in Desktop Header */}
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+              <button
+                type="button"
+                onClick={() => handleSwitchSite('hung_vuong')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                  selectedSiteCode === 'hung_vuong'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Cơ sở Đại học Hùng Vương"
+              >
+                <Building2 className="w-3.5 h-3.5" />
+                <span>ĐH Hùng Vương</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSwitchSite('g_group')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                  selectedSiteCode === 'g_group'
+                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+                title="Cơ sở Canteen G-Group"
+              >
+                <Store className="w-3.5 h-3.5" />
+                <span>Canteen G-Group</span>
+              </button>
+            </div>
+
             {/* Quick Auto-Print Toggle in Header */}
             <button
               onClick={handleToggleAutoPrint}
@@ -1992,7 +2245,7 @@ export function PortalDashboard({
               </button>
             )}
 
-            {tab === 'qr' && (
+            {tab === 'qr' && showQrTab && (
               <button
                 onClick={() => setIsCreateQROpen(true)}
                 className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm shadow-indigo-600/20 flex items-center gap-1.5 cursor-pointer min-h-[40px]"
@@ -2738,6 +2991,68 @@ export function PortalDashboard({
                   </div>
                 </div>
 
+                {/* Row 1.5: Payment Filter Pills */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                    <span className="text-xs text-slate-500 font-semibold flex items-center gap-1 mr-1 shrink-0">
+                      <CreditCard className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Thanh toán:</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setOrderPaymentFilter('all')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[34px] ${
+                        orderPaymentFilter === 'all'
+                          ? 'bg-slate-800 text-white shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Tất cả
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOrderPaymentFilter('pending')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[34px] flex items-center gap-1.5 ${
+                        orderPaymentFilter === 'pending'
+                          ? 'bg-amber-600 text-white shadow-2xs'
+                          : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
+                      }`}
+                    >
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>Chờ xác nhận (Khách lẻ)</span>
+                      {pendingPaymentOrdersCount > 0 && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                            orderPaymentFilter === 'pending'
+                              ? 'bg-white text-amber-700'
+                              : 'bg-amber-500 text-white animate-pulse'
+                          }`}
+                        >
+                          {pendingPaymentOrdersCount}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setOrderPaymentFilter('paid')}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[34px] ${
+                        orderPaymentFilter === 'paid'
+                          ? 'bg-emerald-600 text-white shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Đã thanh toán
+                    </button>
+                  </div>
+
+                  {pendingPaymentOrdersCount > 0 && (
+                    <div className="flex items-center gap-1 text-[11px] text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200 font-semibold">
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                      <span>Có {pendingPaymentOrdersCount} đơn khách lẻ đang chờ bạn xác nhận thanh toán</span>
+                    </div>
+                  )}
+                </div>
+
                 {/* Row 2: Delivery, Search & Export */}
                 <div className="flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -2954,10 +3269,23 @@ export function PortalDashboard({
                               {renderBillPrintBadges(o)}
                             </td>
 
-                            {/* Cán bộ & Phòng / Căn tin */}
+                            {/* Cán bộ / Khách lẻ & Nơi nhận */}
                             <td className="py-3 px-2.5 align-top space-y-1">
-                              <p className="font-bold text-slate-900 leading-snug">{o.userName}</p>
-                              <p className="text-[11px] text-slate-500 leading-tight">{o.userDepartment}</p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="font-bold text-slate-900 leading-snug">{o.userName || o.guestName || 'Khách vãng lai'}</p>
+                                {o.isGuest ? (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                                    Khách lẻ
+                                  </span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                    Cán bộ
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-[11px] text-slate-500 leading-tight">
+                                {o.isGuest ? (o.guestPhone ? `SĐT: ${o.guestPhone}` : 'Khách vãng lai') : o.userDepartment}
+                              </p>
                               <div className="pt-0.5 flex flex-wrap items-center gap-1">
                                 {o.deliveryMethod === 'room_delivery' ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 font-bold text-[10px] border border-teal-200">
@@ -2971,6 +3299,17 @@ export function PortalDashboard({
                                 )}
                                 <span className="text-[10px] font-bold text-slate-700">
                                   ⏰ {o.pickupTime || '11:30'}
+                                </span>
+                              </div>
+                              {/* Phương thức thanh toán */}
+                              <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1 pt-0.5">
+                                <span className="text-slate-400">TT:</span>
+                                <span className="font-semibold text-slate-700">
+                                  {o.isGuest
+                                    ? o.paymentMethod === 'bank_transfer'
+                                      ? 'Chuyển khoản VietQR'
+                                      : 'Tiền mặt'
+                                    : 'Trừ ví suất ăn'}
                                 </span>
                               </div>
                             </td>
@@ -3042,6 +3381,49 @@ export function PortalDashboard({
                                 </span>
                               </div>
 
+                              {/* Khách lẻ chờ xác nhận thanh toán */}
+                              {o.paymentStatus === 'pending' && o.status !== 'cancelled' && (
+                                <div className="p-1.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-[10px] space-y-1.5 shadow-2xs">
+                                  <div className="flex items-center justify-center gap-1 font-bold text-amber-800">
+                                    <Clock className="w-3 h-3 text-amber-600 animate-spin" />
+                                    <span>Chờ thanh toán</span>
+                                  </div>
+                                  <div className="flex items-center justify-center gap-1 flex-wrap">
+                                    <button
+                                      disabled={confirmingPaymentOrderId === o.id}
+                                      onClick={() => handleConfirmGuestPayment(o)}
+                                      className="px-2 py-1 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center gap-1 shadow-2xs"
+                                      title="Xác nhận đã nhận tiền mặt hoặc chuyển khoản"
+                                    >
+                                      {confirmingPaymentOrderId === o.id ? (
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                      ) : (
+                                        <CheckCircle2 className="w-3 h-3" />
+                                      )}
+                                      <span>Xác nhận TT</span>
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        setRejectingOrder(o);
+                                        setRejectReason('');
+                                      }}
+                                      className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold rounded-lg text-[10px] transition cursor-pointer border border-rose-200"
+                                      title="Từ chối đơn"
+                                    >
+                                      <Ban className="w-3 h-3" />
+                                      <span>Từ chối</span>
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {o.paymentStatus === 'paid' && o.isGuest && (
+                                <div className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                                  <Check className="w-3 h-3 text-emerald-600" />
+                                  <span>Đã TT</span>
+                                </div>
+                              )}
+
                               <div className="flex items-center justify-center gap-1 flex-wrap">
                                 <button
                                   onClick={() => setPrintReceiptOrder(o)}
@@ -3051,7 +3433,7 @@ export function PortalDashboard({
                                   <Printer className="w-3 h-3 text-indigo-600" />
                                   <span className="font-bold">Bill</span>
                                 </button>
-                                {o.status === 'confirmed' && (
+                                {o.status === 'confirmed' && o.paymentStatus !== 'pending' && (
                                   <button
                                     disabled={updatingOrderId === o.id}
                                     onClick={() => handleUpdateOrderStatus(o.id, 'preparing')}
@@ -3652,7 +4034,7 @@ export function PortalDashboard({
             )}
 
           {/* ================= TAB: USERS ================= */}
-          {tab === 'users' && (
+          {tab === 'users' && showStaffTab && (
             <div className="space-y-4">
               {/* Notification banner for pending accounts */}
               {pendingUsersCount > 0 && (
@@ -3975,7 +4357,7 @@ export function PortalDashboard({
           )}
 
           {/* ================= TAB: QR TOKENS ================= */}
-          {tab === 'qr' && (
+          {tab === 'qr' && showQrTab && (
             <div className="space-y-4">
               {/* Header & Quick Stats */}
               <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
@@ -6250,6 +6632,66 @@ export function PortalDashboard({
                 className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm rounded-xl transition shadow-md shadow-emerald-600/20 cursor-pointer"
               >
                 Đồng ý (tự đóng sau 2.5s)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal xác nhận từ chối đơn hàng khách lẻ */}
+      {rejectingOrder && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-sm w-full p-6 space-y-4 shadow-2xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5 text-rose-600">
+                <div className="w-9 h-9 rounded-xl bg-rose-50 border border-rose-200 flex items-center justify-center">
+                  <Ban className="w-5 h-5 text-rose-600" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Từ chối đơn hàng</h3>
+                  <p className="text-[11px] text-slate-500 font-mono">{rejectingOrder.orderCode}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setRejectingOrder(null)}
+                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Bạn đang từ chối đơn hàng của khách hàng <strong>{rejectingOrder.userName || 'Khách lẻ'}</strong> với tổng tiền <strong>{formatVnd(rejectingOrder.totalAmount)}</strong>. Màn hình khách sẽ lập tức được cập nhật thông báo từ chối.
+            </p>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">Lý do từ chối đơn:</label>
+              <input
+                type="text"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Ví dụ: Chưa nhận được chuyển khoản / Hết món ăn..."
+                className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-500 min-h-[42px]"
+                autoFocus
+              />
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setRejectingOrder(null)}
+                className="flex-1 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl cursor-pointer min-h-[42px] transition"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                disabled={isRejecting}
+                onClick={handleRejectGuestPayment}
+                className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5 min-h-[42px] shadow-sm shadow-rose-600/25 transition"
+              >
+                {isRejecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                <span>Xác nhận từ chối</span>
               </button>
             </div>
           </div>

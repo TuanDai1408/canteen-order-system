@@ -15,16 +15,24 @@ import {
   getCachedOrders,
   fetchTimeGateConfig,
   formatVnd,
+  DEFAULT_SITES,
+  getSites,
+  getCachedSites,
+  getSelectedSiteCode,
+  setSelectedSiteCode,
   type UserProfile,
   type MenuItem,
   type Order,
   type QRExceptionToken,
   type TimeGateStatus,
+  type Site,
+  type SiteCode,
 } from '@canteen/shared';
 import { LoginPage } from './components/LoginPage';
 import { OrderHome } from './components/OrderHome';
 import { PortalDashboard } from './components/PortalDashboard';
 import { PendingApprovalView } from './components/PendingApprovalView';
+import { GuestEntryModal } from './components/GuestEntryModal';
 import { ShieldAlert } from 'lucide-react';
 
 export default function App() {
@@ -35,6 +43,24 @@ export default function App() {
   const [timeStatus, setTimeStatus] = useState<TimeGateStatus>(() => getTimeGateStatus());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Multi-site & Guest states
+  const [sitesList, setSitesList] = useState<Site[]>(() => getCachedSites());
+  const [selectedSiteCode, setSelectedSiteCodeState] = useState<SiteCode>(() => getSelectedSiteCode());
+  const [guestMode, setGuestMode] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('mode') === 'guest' || p.get('guest') === 'true' || p.get('site') === 'g_group') return true;
+    }
+    return false;
+  });
+  const [showEntryModal, setShowEntryModal] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search);
+      if (p.get('mode') || p.get('guest') || p.get('site')) return false;
+    }
+    return true;
+  });
 
   // Portal-specific states
   const [portalMenu, setPortalMenu] = useState<MenuItem[]>(() => getCachedMenu());
@@ -180,12 +206,16 @@ export default function App() {
     let mounted = true;
     async function init() {
       try {
-        const [profileRes, menuRes, _] = await Promise.allSettled([
+        const [profileRes, menuRes, sitesRes, _] = await Promise.allSettled([
           getCurrentUserProfile(),
-          getMenu(),
+          getMenu(selectedSiteCode),
+          getSites(),
           fetchTimeGateConfig(),
         ]);
         if (!mounted) return;
+        if (sitesRes.status === 'fulfilled' && Array.isArray(sitesRes.value)) {
+          setSitesList(sitesRes.value);
+        }
         if (menuRes.status === 'fulfilled' && Array.isArray(menuRes.value) && menuRes.value.length > 0) {
           setMenu(menuRes.value);
         }
@@ -195,6 +225,8 @@ export default function App() {
         userRef.current = profile;
 
         if (profile) {
+          setShowEntryModal(false);
+          setGuestMode(false);
           if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
             refreshPortalData();
@@ -207,6 +239,10 @@ export default function App() {
               setOrders(ordersRes.value);
             }
           }
+        } else if (guestMode) {
+          setShowEntryModal(false);
+          const guestOrders = getCachedOrders(undefined, selectedSiteCode);
+          setOrders(guestOrders);
         }
       } catch (e: any) {
         console.error('Init error:', e);
@@ -332,7 +368,98 @@ export default function App() {
     );
   }
 
+  const currentSite =
+    sitesList.find((s) => s.code === selectedSiteCode) ||
+    DEFAULT_SITES.find((s) => s.code === selectedSiteCode) ||
+    DEFAULT_SITES[1];
+
+  const guestUserProfile: UserProfile = {
+    id: '00000000-0000-4000-8000-000000000001',
+    name: 'Khách hàng',
+    role: 'teacher',
+    roleTitle: 'Khách lẻ Căn tin',
+    department: currentSite.name,
+    phoneNumber: '',
+    walletBalance: 0,
+    monthlyAllowance: 0,
+    isActive: true,
+    siteId: currentSite.code,
+  };
+
+  const guestTimeStatus: TimeGateStatus = {
+    isOpen: true,
+    currentHour: new Date().getHours(),
+    currentMinute: new Date().getMinutes(),
+    message: 'Đang mở phục vụ khách lẻ (Không giới hạn khung giờ)',
+    opensAt: '00:00',
+    closesAt: '23:59',
+  };
+
   if (!user) {
+    if (showEntryModal) {
+      return (
+        <GuestEntryModal
+          isOpen={showEntryModal}
+          sites={sitesList}
+          currentSiteCode={selectedSiteCode}
+          onSelectStaffLogin={() => {
+            setShowEntryModal(false);
+            setGuestMode(false);
+            setSelectedSiteCodeState('hung_vuong');
+            setSelectedSiteCode('hung_vuong');
+          }}
+          onSelectGuestOrder={(siteCode) => {
+            setShowEntryModal(false);
+            setGuestMode(true);
+            setSelectedSiteCodeState(siteCode);
+            setSelectedSiteCode(siteCode);
+            getMenu(siteCode).then((m) => {
+              if (Array.isArray(m) && m.length > 0) setMenu(m);
+            });
+            const guestOrders = getCachedOrders(undefined, siteCode);
+            setOrders(guestOrders);
+          }}
+        />
+      );
+    }
+
+    if (guestMode) {
+      return (
+        <OrderHome
+          currentUser={guestUserProfile}
+          menu={menu}
+          orders={orders}
+          timeStatus={guestTimeStatus}
+          error={error}
+          onRefresh={async () => {
+            const m = await getMenu(selectedSiteCode);
+            if (Array.isArray(m)) setMenu(m);
+            const o = getCachedOrders(undefined, selectedSiteCode);
+            setOrders(o);
+          }}
+          onLogout={() => {
+            setGuestMode(false);
+            setShowEntryModal(true);
+          }}
+          isGuest={true}
+          activeSite={currentSite}
+          onExitGuest={() => {
+            setGuestMode(false);
+            setShowEntryModal(false);
+          }}
+          onSwitchSite={(code) => {
+            setSelectedSiteCodeState(code);
+            setSelectedSiteCode(code);
+            getMenu(code).then((m) => {
+              if (Array.isArray(m)) setMenu(m);
+            });
+            const o = getCachedOrders(undefined, code);
+            setOrders(o);
+          }}
+        />
+      );
+    }
+
     return (
       <LoginPage
         onSuccess={async (profile) => {
@@ -344,6 +471,17 @@ export default function App() {
             setCurrentView('order');
             refreshOrderData(profile);
           }
+        }}
+        onSwitchToGuest={() => {
+          setGuestMode(true);
+          setShowEntryModal(false);
+          setSelectedSiteCodeState('g_group');
+          setSelectedSiteCode('g_group');
+          getMenu('g_group').then((m) => {
+            if (Array.isArray(m) && m.length > 0) setMenu(m);
+          });
+          const guestOrders = getCachedOrders(undefined, 'g_group');
+          setOrders(guestOrders);
         }}
       />
     );

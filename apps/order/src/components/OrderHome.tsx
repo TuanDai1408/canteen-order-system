@@ -7,13 +7,19 @@ import {
   getOrderDisplayItems,
   getCachedQRTokens,
   getCachedOrders,
+  subscribeGuestOrder,
   type UserProfile,
   type MenuItem,
   type Order,
   type TimeGateStatus,
   type DeliveryMethod,
+  type Site,
+  type SiteCode,
+  type PaymentMethod,
+  type PaymentStatus,
 } from '@canteen/shared';
 import { BrandLogo } from './BrandLogo';
+import { GuestPaymentModal } from './GuestPaymentModal';
 import {
   UtensilsCrossed,
   ShoppingBag,
@@ -41,6 +47,10 @@ import {
   Info,
   Loader2,
   RefreshCw,
+  Banknote,
+  CreditCard,
+  UserCheck,
+  Store,
 } from 'lucide-react';
 
 interface Props {
@@ -51,8 +61,12 @@ interface Props {
   error?: string | null;
   onRefresh: () => void;
   onLogout: () => void;
-  onUserUpdate: (u: UserProfile) => void;
+  onUserUpdate?: (u: UserProfile) => void;
   onSwitchToPortal?: () => void;
+  isGuest?: boolean;
+  activeSite?: Site;
+  onExitGuest?: () => void;
+  onSwitchSite?: (siteCode: SiteCode) => void;
 }
 
 export function OrderHome({
@@ -65,6 +79,10 @@ export function OrderHome({
   onLogout,
   onUserUpdate,
   onSwitchToPortal,
+  isGuest = false,
+  activeSite,
+  onExitGuest,
+  onSwitchSite,
 }: Props) {
   const [tab, setTab] = useState<'menu' | 'orders'>('menu');
   const [cart, setCart] = useState<Record<string, number>>({});
@@ -93,6 +111,24 @@ export function OrderHome({
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Guest order states
+  const [guestName, setGuestName] = useState('');
+  const [guestPhone, setGuestPhone] = useState('');
+  const [guestPaymentMethod, setGuestPaymentMethod] = useState<PaymentMethod>('cash');
+  const [guestWaitingOrder, setGuestWaitingOrder] = useState<{
+    id: string;
+    orderCode: string;
+    totalAmount: number;
+    paymentMethod: PaymentMethod;
+    guestName?: string;
+    guestPhone?: string;
+    pickupTime?: string;
+    site?: Site;
+  } | null>(null);
+  const [guestPaymentStatus, setGuestPaymentStatus] = useState<PaymentStatus>('pending');
+  const [guestRejectReason, setGuestRejectReason] = useState<string | undefined>(undefined);
+  const [isGuestPaymentModalOpen, setIsGuestPaymentModalOpen] = useState(false);
 
   // Ticker cập nhật mỗi giây để đồng hồ đếm ngược 5 phút hủy món chạy chính xác
   useEffect(() => {
@@ -256,44 +292,63 @@ export function OrderHome({
       return;
     }
 
-    if (!timeStatus.isOpen && !exceptionToken.trim()) {
-      setFeedbackModal({
-        title: 'Cổng đặt món đã đóng',
-        message: `${timeStatus.message}.\n\nNếu bạn có nhu cầu đặt suất ăn bổ sung ngoài giờ quy định, vui lòng nhập "Mã QR Ngoại Lệ" do Quản lý Căn tin cấp.`,
-        type: 'warning',
-      });
-      setShowExceptionField(true);
-      return;
-    }
+    if (isGuest) {
+      if (!guestName.trim()) {
+        setFeedbackModal({
+          title: 'Thiếu thông tin khách hàng',
+          message: 'Vui lòng nhập Họ và tên của bạn để nhân viên Căn tin tiện xưng hô và gọi tên nhận món.',
+          type: 'warning',
+        });
+        return;
+      }
+      if (!guestPhone.trim()) {
+        setFeedbackModal({
+          title: 'Thiếu số điện thoại',
+          message: 'Vui lòng nhập số điện thoại nhận suất ăn.',
+          type: 'warning',
+        });
+        return;
+      }
+    } else {
+      if (!timeStatus.isOpen && !exceptionToken.trim()) {
+        setFeedbackModal({
+          title: 'Cổng đặt món đã đóng',
+          message: `${timeStatus.message}.\n\nNếu bạn có nhu cầu đặt suất ăn bổ sung ngoài giờ quy định, vui lòng nhập "Mã QR Ngoại Lệ" do Quản lý Căn tin cấp.`,
+          type: 'warning',
+        });
+        setShowExceptionField(true);
+        return;
+      }
 
-    if (tokenValidation && tokenValidation.status === 'invalid') {
-      setFeedbackModal({
-        title: 'Mã QR ngoại lệ không hợp lệ',
-        message: tokenValidation.text,
-        type: 'error',
-      });
-      return;
-    }
+      if (tokenValidation && tokenValidation.status === 'invalid') {
+        setFeedbackModal({
+          title: 'Mã QR ngoại lệ không hợp lệ',
+          message: tokenValidation.text,
+          type: 'error',
+        });
+        return;
+      }
 
-    const isUserDisabled = Boolean(
-      currentUser.isDisabled || (currentUser.isActive === false && Number(currentUser.walletBalance ?? 0) > 0)
-    );
-    if (isUserDisabled) {
-      setFeedbackModal({
-        title: 'Tài khoản đã bị vô hiệu hóa',
-        message: 'Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Bạn không thể thực hiện đặt suất ăn. Vui lòng liên hệ Ban Quản lý Căn tin để được hỗ trợ mở lại.',
-        type: 'error',
-      });
-      return;
-    }
+      const isUserDisabled = Boolean(
+        currentUser.isDisabled || (currentUser.isActive === false && Number(currentUser.walletBalance ?? 0) > 0)
+      );
+      if (isUserDisabled) {
+        setFeedbackModal({
+          title: 'Tài khoản đã bị vô hiệu hóa',
+          message: 'Tài khoản của bạn đã bị vô hiệu hóa bởi Quản trị viên. Bạn không thể thực hiện đặt suất ăn. Vui lòng liên hệ Ban Quản lý Căn tin để được hỗ trợ mở lại.',
+          type: 'error',
+        });
+        return;
+      }
 
-    if (currentUser.walletBalance < cartSubtotal) {
-      setFeedbackModal({
-        title: 'Số dư ví không đủ',
-        message: `Tổng tiền đơn hàng là ${formatVnd(cartSubtotal)}, nhưng số dư ví của bạn hiện chỉ còn ${formatVnd(currentUser.walletBalance)}. Vui lòng liên hệ Quản lý Căn tin để được cấp thêm hạn mức ví.`,
-        type: 'error',
-      });
-      return;
+      if (currentUser.walletBalance < cartSubtotal) {
+        setFeedbackModal({
+          title: 'Số dư ví không đủ',
+          message: `Tổng tiền đơn hàng là ${formatVnd(cartSubtotal)}, nhưng số dư ví của bạn hiện chỉ còn ${formatVnd(currentUser.walletBalance)}. Vui lòng liên hệ Quản lý Căn tin để được cấp thêm hạn mức ví.`,
+          type: 'error',
+        });
+        return;
+      }
     }
 
     // Kết hợp giờ dùng bữa mong muốn và ghi chú dặn dò để admin và bill POS in đầy đủ
@@ -317,8 +372,14 @@ export function OrderHome({
         roomNumber: deliveryMethod === 'room_delivery' ? roomNumber.trim() : undefined,
         pickupTime,
         note: finalNote || undefined,
-        isExceptionOrder: !timeStatus.isOpen && Boolean(exceptionToken.trim()),
-        exceptionToken: exceptionToken.trim() || undefined,
+        isExceptionOrder: !isGuest && !timeStatus.isOpen && Boolean(exceptionToken.trim()),
+        exceptionToken: !isGuest ? exceptionToken.trim() || undefined : undefined,
+        // Multi-site & Guest:
+        isGuest,
+        siteId: activeSite?.code || 'g_group',
+        guestName: isGuest ? guestName.trim() : undefined,
+        guestPhone: isGuest ? guestPhone.trim() : undefined,
+        paymentMethod: isGuest ? guestPaymentMethod : 'wallet',
       });
 
       if (!result.success) {
@@ -329,22 +390,59 @@ export function OrderHome({
         });
         await onRefresh();
       } else {
-        if (result.new_balance !== undefined) {
-          currentUser.walletBalance = result.new_balance;
-          onUserUpdate?.({ ...currentUser, walletBalance: result.new_balance });
+        if (isGuest) {
+          const guestOrderObj = {
+            id: result.order_id || 'ORD-GUEST',
+            orderCode: result.order_code || 'ORD-GUEST',
+            totalAmount: result.total_amount || cartSubtotal,
+            paymentMethod: guestPaymentMethod,
+            guestName: guestName.trim(),
+            guestPhone: guestPhone.trim(),
+            pickupTime,
+            site: activeSite,
+          };
+          setGuestWaitingOrder(guestOrderObj);
+          setGuestPaymentStatus('pending');
+          setGuestRejectReason(undefined);
+          setIsGuestPaymentModalOpen(true);
+
+          // Lắng nghe Realtime xác nhận từ Portal theo order id
+          if (result.order_id) {
+            const unsub = subscribeGuestOrder(result.order_id, (update) => {
+              if (update.paymentStatus === 'paid') {
+                setGuestPaymentStatus('paid');
+                onRefresh();
+              } else if (update.paymentStatus === 'rejected') {
+                setGuestPaymentStatus('rejected');
+                setGuestRejectReason(update.order?.cancelReason || 'Nhân viên đã từ chối đơn hàng');
+                onRefresh();
+              }
+            });
+            setTimeout(() => unsub(), 30 * 60 * 1000);
+          }
+
+          setCart({});
+          setIsCartOpen(false);
+          setOrderNote('');
+          await onRefresh();
+        } else {
+          if (result.new_balance !== undefined) {
+            currentUser.walletBalance = result.new_balance;
+            onUserUpdate?.({ ...currentUser, walletBalance: result.new_balance });
+          }
+          setFeedbackModal({
+            title: 'Đặt món thành công! 🎉',
+            message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}${orderNote.trim() ? `\nGhi chú: ${orderNote.trim()}` : ''}`,
+            type: 'success',
+          });
+          setCart({});
+          setIsCartOpen(false);
+          setOrderNote('');
+          setExceptionToken('');
+          setShowExceptionField(false);
+          await onRefresh();
+          setTab('orders');
         }
-        setFeedbackModal({
-          title: 'Đặt món thành công! 🎉',
-          message: `Mã đơn hàng: ${result.order_code}\nTổng thanh toán: ${formatVnd(result.total_amount || cartSubtotal)}\nThời gian nhận: ${pickupTime}${orderNote.trim() ? `\nGhi chú: ${orderNote.trim()}` : ''}`,
-          type: 'success',
-        });
-        setCart({});
-        setIsCartOpen(false);
-        setOrderNote('');
-        setExceptionToken('');
-        setShowExceptionField(false);
-        await onRefresh();
-        setTab('orders');
       }
     } catch (e: any) {
       setFeedbackModal({
@@ -452,14 +550,30 @@ export function OrderHome({
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                   Live Sync
                 </span>
+                {isGuest && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200">
+                    {activeSite?.name || 'Canteen G-Group'}
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-600 font-medium mt-0.5">
-                {currentUser.name} · {currentUser.department || 'Cán bộ'}
+                {isGuest ? 'Khách hàng vãng lai' : `${currentUser.name} · ${currentUser.department || 'Cán bộ'}`}
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3">
+            {isGuest && onExitGuest && (
+              <button
+                onClick={onExitGuest}
+                className="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                title="Đăng nhập tài khoản cán bộ Hùng Vương"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span className="hidden xs:inline">Đăng nhập Cán bộ</span>
+              </button>
+            )}
+
             <button
               onClick={handleManualRefresh}
               disabled={isRefreshing}
@@ -480,13 +594,25 @@ export function OrderHome({
               </button>
             )}
 
-            <button
-              onClick={onLogout}
-              className="p-2 text-slate-500 hover:text-red-600 rounded-xl hover:bg-red-50 transition cursor-pointer"
-              title="Đăng xuất"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
+            {!isGuest ? (
+              <button
+                onClick={onLogout}
+                className="p-2 text-slate-500 hover:text-red-600 rounded-xl hover:bg-red-50 transition cursor-pointer"
+                title="Đăng xuất"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            ) : (
+              onExitGuest && (
+                <button
+                  onClick={onExitGuest}
+                  className="p-2 text-slate-500 hover:text-slate-800 rounded-xl hover:bg-slate-100 transition cursor-pointer sm:hidden"
+                  title="Đổi phương thức truy cập"
+                >
+                  <UserCheck className="w-4 h-4 text-indigo-600" />
+                </button>
+              )
+            )}
           </div>
         </div>
       </header>
@@ -502,22 +628,32 @@ export function OrderHome({
             <div className="sm:col-span-2">
               <div className="flex items-center gap-2 text-xs font-semibold text-teal-400 uppercase tracking-wider mb-1">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Hồ sơ Cán bộ · Đặt suất trưa</span>
+                <span>{isGuest ? `Khách lẻ · ${activeSite?.name || 'Canteen G-Group'}` : 'Hồ sơ Cán bộ · Đặt suất trưa'}</span>
               </div>
               <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                Xin chào, {currentUser.name}
+                {isGuest ? 'Xin chào, Quý Khách!' : `Xin chào, ${currentUser.name}`}
               </h1>
               <p className="text-xs sm:text-sm text-slate-300 mt-1 flex items-center gap-2 flex-wrap">
-                <span>{currentUser.roleTitle || 'Giáo viên'}</span>
-                <span>•</span>
-                <span>{currentUser.department}</span>
-                {currentUser.defaultRoom && (
+                {isGuest ? (
                   <>
+                    <span>Cơ sở: <strong>{activeSite?.name || 'Canteen G-Group'}</strong></span>
                     <span>•</span>
-                    <span className="inline-flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-md text-xs">
-                      <MapPin className="w-3 h-3 text-teal-300" />
-                      Phòng: {currentUser.defaultRoom}
-                    </span>
+                    <span>Đặt món trực tiếp không cần đăng nhập</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{currentUser.roleTitle || 'Giáo viên'}</span>
+                    <span>•</span>
+                    <span>{currentUser.department}</span>
+                    {currentUser.defaultRoom && (
+                      <>
+                        <span>•</span>
+                        <span className="inline-flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-md text-xs">
+                          <MapPin className="w-3 h-3 text-teal-300" />
+                          Phòng: {currentUser.defaultRoom}
+                        </span>
+                      </>
+                    )}
                   </>
                 )}
               </p>
@@ -527,43 +663,75 @@ export function OrderHome({
                 <span className="relative flex h-2 w-2">
                   <span
                     className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
-                      timeStatus.isOpen ? 'bg-emerald-400' : 'bg-red-400'
+                      isGuest || timeStatus.isOpen ? 'bg-emerald-400' : 'bg-red-400'
                     }`}
                   />
                   <span
                     className={`relative inline-flex rounded-full h-2 w-2 ${
-                      timeStatus.isOpen ? 'bg-emerald-500' : 'bg-red-500'
+                      isGuest || timeStatus.isOpen ? 'bg-emerald-500' : 'bg-red-500'
                     }`}
                   />
                 </span>
-                <span className={timeStatus.isOpen ? 'text-emerald-300 font-medium' : 'text-rose-300 font-medium'}>
-                  {timeStatus.isOpen ? 'Đang mở nhận đơn ngày mai' : 'Đã đóng cổng nhận đơn thường'}
+                <span className={isGuest || timeStatus.isOpen ? 'text-emerald-300 font-medium' : 'text-rose-300 font-medium'}>
+                  {isGuest ? 'Đang mở phục vụ khách lẻ (Không giới hạn khung giờ)' : timeStatus.isOpen ? 'Đang mở nhận đơn ngày mai' : 'Đã đóng cổng nhận đơn thường'}
                 </span>
-                <span className="text-slate-400 hidden sm:inline">· Hạn chót: {timeStatus.closesAt || '16:00'} hôm nay</span>
+                {!isGuest && (
+                  <span className="text-slate-400 hidden sm:inline">· Hạn chót: {timeStatus.closesAt || '16:00'} hôm nay</span>
+                )}
               </div>
             </div>
 
-            {/* Right: Wallet Balance Display */}
+            {/* Right: Wallet Balance Display OR Guest Payment Info */}
             <div className="bg-white/5 backdrop-blur-md rounded-2xl p-4 border border-white/10 flex flex-col justify-between">
-              <div className="flex items-center justify-between text-xs text-slate-300">
-                <span className="flex items-center gap-1.5">
-                  <Wallet className="w-3.5 h-3.5 text-teal-400" />
-                  Số dư ví suất ăn
-                </span>
-                <button
-                  onClick={onRefresh}
-                  className="text-[11px] text-teal-300 hover:text-teal-200 underline cursor-pointer"
-                >
-                  Làm mới
-                </button>
-              </div>
-              <div className="mt-2 text-2xl font-extrabold text-white tracking-tight">
-                {formatVnd(currentUser.walletBalance)}
-              </div>
-              <div className="mt-2 pt-2 border-t border-white/10 flex justify-between text-[11px] text-slate-400">
-                <span>Hạn mức tháng:</span>
-                <span className="text-slate-200 font-medium">{formatVnd(currentUser.monthlyAllowance)}</span>
-              </div>
+              {isGuest ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-xs text-slate-300">
+                    <span className="flex items-center gap-1.5">
+                      <CreditCard className="w-3.5 h-3.5 text-teal-400" />
+                      Hình thức thanh toán
+                    </span>
+                    <span className="text-[10px] bg-teal-500/20 text-teal-300 px-2 py-0.5 rounded-full font-bold">
+                      Linh hoạt
+                    </span>
+                  </div>
+                  <div className="text-sm font-extrabold text-white tracking-tight">
+                    Tiền mặt / VietQR
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    Chọn món xong thanh toán tại quầy hoặc quét mã QR ngân hàng tiện lợi.
+                  </p>
+                  {onExitGuest && (
+                    <button
+                      onClick={onExitGuest}
+                      className="mt-1 w-full py-1.5 px-2 bg-white/10 hover:bg-white/20 text-slate-200 text-[11px] font-bold rounded-lg transition text-center cursor-pointer"
+                    >
+                      Đăng nhập Cán bộ Hùng Vương →
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between text-xs text-slate-300">
+                    <span className="flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-teal-400" />
+                      Số dư ví suất ăn
+                    </span>
+                    <button
+                      onClick={onRefresh}
+                      className="text-[11px] text-teal-300 hover:text-teal-200 underline cursor-pointer"
+                    >
+                      Làm mới
+                    </button>
+                  </div>
+                  <div className="mt-2 text-2xl font-extrabold text-white tracking-tight">
+                    {formatVnd(currentUser.walletBalance)}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-white/10 flex justify-between text-[11px] text-slate-400">
+                    <span>Hạn mức tháng:</span>
+                    <span className="text-slate-200 font-medium">{formatVnd(currentUser.monthlyAllowance)}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -954,31 +1122,55 @@ export function OrderHome({
                       </div>
 
                       {/* Status Badge */}
-                      <span
-                        className={`text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1.5 ${
-                          isCancelled
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : isCompleted
-                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              : isPreparing
-                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
-                                : 'bg-teal-50 text-teal-700 border border-teal-200'
-                        }`}
-                      >
-                        {isCancelled && <XCircle className="w-3.5 h-3.5" />}
-                        {isCompleted && <CheckCircle2 className="w-3.5 h-3.5" />}
-                        {isPreparing && <Clock className="w-3.5 h-3.5 animate-spin" />}
-                        {isConfirmed && <Check className="w-3.5 h-3.5" />}
-                        <span>
-                          {isCancelled
-                            ? 'Đã hủy'
-                            : isCompleted
-                              ? 'Đã hoàn thành'
-                              : isPreparing
-                                ? 'Bếp đang nấu'
-                                : 'Đã xác nhận'}
+                      {o.paymentStatus === 'pending' ? (
+                        <button
+                          onClick={() => {
+                            setGuestWaitingOrder({
+                              id: o.id,
+                              orderCode: o.orderCode,
+                              totalAmount: o.totalAmount,
+                              paymentMethod: o.paymentMethod || 'cash',
+                              guestName: o.guestName,
+                              guestPhone: o.guestPhone,
+                              pickupTime: o.pickupTime,
+                              site: activeSite,
+                            });
+                            setGuestPaymentStatus('pending');
+                            setIsGuestPaymentModalOpen(true);
+                          }}
+                          className="text-xs px-3 py-1 rounded-full font-bold flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-300 animate-pulse cursor-pointer shadow-2xs"
+                          title="Bấm để xem thông tin thanh toán & quét mã QR"
+                        >
+                          <Clock className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                          <span>Chờ thanh toán ({o.paymentMethod === 'bank_transfer' ? 'Chuyển khoản' : 'Tiền mặt'})</span>
+                        </button>
+                      ) : (
+                        <span
+                          className={`text-xs px-3 py-1 rounded-full font-semibold flex items-center gap-1.5 ${
+                            isCancelled
+                              ? 'bg-red-50 text-red-700 border border-red-200'
+                              : isCompleted
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : isPreparing
+                                  ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                  : 'bg-teal-50 text-teal-700 border border-teal-200'
+                          }`}
+                        >
+                          {isCancelled && <XCircle className="w-3.5 h-3.5" />}
+                          {isCompleted && <CheckCircle2 className="w-3.5 h-3.5" />}
+                          {isPreparing && <Clock className="w-3.5 h-3.5 animate-spin" />}
+                          {isConfirmed && <Check className="w-3.5 h-3.5" />}
+                          <span>
+                            {isCancelled
+                              ? 'Đã hủy'
+                              : isCompleted
+                                ? 'Đã hoàn thành'
+                                : isPreparing
+                                  ? 'Bếp đang nấu'
+                                  : 'Đã xác nhận'}
+                          </span>
                         </span>
-                      </span>
+                      )}
                     </div>
 
                     {/* Delivery Mode Info */}
@@ -1333,32 +1525,158 @@ export function OrderHome({
                 </p>
               </div>
 
-              {/* Wallet Deduction Preview */}
-              <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-2">
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span>Số dư ví hiện tại:</span>
-                  <span className="font-semibold">{formatVnd(currentUser.walletBalance)}</span>
-                </div>
-                <div className="flex justify-between text-xs text-slate-300">
-                  <span>Tổng tiền suất ăn:</span>
-                  <span className="font-semibold text-teal-400">− {formatVnd(cartSubtotal)}</span>
-                </div>
-                <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-bold">
-                  <span>Số dư dự kiến sau đặt:</span>
-                  <span className={isBalanceSufficient ? 'text-emerald-400' : 'text-red-400'}>
-                    {formatVnd(remainingWallet)}
-                  </span>
-                </div>
-                {!isBalanceSufficient && (
-                  <p className="text-[11px] text-red-300 bg-red-500/20 p-2 rounded-lg mt-1 flex items-center gap-1.5">
-                    <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
-                    <span>Số dư ví không đủ. Vui lòng liên hệ Quản lý Căn tin để nạp thêm.</span>
-                  </p>
-                )}
-              </div>
+              {/* Customer / Payment info */}
+              {isGuest ? (
+                <div className="space-y-3 p-4 bg-teal-50/70 rounded-2xl border border-teal-200">
+                  <div className="flex items-center gap-2 text-xs font-bold text-teal-900">
+                    <UserCheck className="w-4 h-4 text-teal-600" />
+                    <span>Thông tin khách hàng nhận món</span>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Họ và tên khách hàng <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={guestName}
+                      onChange={(e) => setGuestName(e.target.value)}
+                      placeholder="Ví dụ: Nguyễn Văn A"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Số điện thoại liên hệ <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="tel"
+                      value={guestPhone}
+                      onChange={(e) => setGuestPhone(e.target.value)}
+                      placeholder="Ví dụ: 0912345678"
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    />
+                  </div>
 
-              {/* Exception Token field (if closed) */}
-              {(!timeStatus.isOpen || showExceptionField) && (
+                  {/* Chọn phương thức thanh toán */}
+                  <div className="pt-2">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1.5 uppercase tracking-wider">
+                      Phương thức thanh toán <span className="text-rose-500">*</span>
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setGuestPaymentMethod('cash')}
+                        className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${
+                          guestPaymentMethod === 'cash'
+                            ? 'border-teal-600 bg-white ring-2 ring-teal-500/20 font-bold text-teal-950 shadow-xs'
+                            : 'border-slate-200 bg-white/60 text-slate-600 hover:bg-white'
+                        }`}
+                      >
+                        <Banknote className="w-4 h-4 text-amber-600 shrink-0" />
+                        <div>
+                          <p className="text-xs">Tiền mặt</p>
+                          <p className="text-[10px] text-slate-400 font-normal">Tại quầy</p>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setGuestPaymentMethod('bank_transfer')}
+                        className={`p-2.5 rounded-xl border text-left flex items-center gap-2 transition cursor-pointer ${
+                          guestPaymentMethod === 'bank_transfer'
+                            ? 'border-teal-600 bg-white ring-2 ring-teal-500/20 font-bold text-teal-950 shadow-xs'
+                            : 'border-slate-200 bg-white/60 text-slate-600 hover:bg-white'
+                        }`}
+                      >
+                        <QrCode className="w-4 h-4 text-teal-600 shrink-0" />
+                        <div>
+                          <p className="text-xs">Chuyển khoản</p>
+                          <p className="text-[10px] text-slate-400 font-normal">Mã VietQR</p>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Hiển thị QR kèm giá tiền bill ngay khi chọn Chuyển khoản QR */}
+                    {guestPaymentMethod === 'bank_transfer' && (
+                      <div className="mt-2.5 p-3.5 bg-gradient-to-br from-teal-50 to-emerald-50 rounded-2xl border-2 border-dashed border-teal-300 text-center space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-teal-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <QrCode className="w-3.5 h-3.5 text-teal-600" />
+                            Mã VietQR thanh toán bill
+                          </span>
+                          <span className="text-xs font-black text-teal-700 bg-white/90 border border-teal-200 px-2 py-0.5 rounded-full shadow-2xs">
+                            {formatVnd(cartSubtotal)}
+                          </span>
+                        </div>
+
+                        {/* Hình ảnh QR kèm số tiền của bill */}
+                        <div className="bg-white p-2.5 rounded-xl shadow-xs border border-teal-200 inline-block mx-auto">
+                          <img
+                            src={`https://img.vietqr.io/image/MB-${activeSite?.bankAccountNo || '999988886666'}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(`CT ${activeSite?.code || 'G-GROUP'}`)}&accountName=${encodeURIComponent(activeSite?.bankAccountName || 'CANTEEN G-GROUP')}`}
+                            alt="VietQR thanh toán suất ăn"
+                            className="w-44 h-44 object-contain mx-auto rounded-lg"
+                          />
+                          <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-center gap-1 text-xs font-bold text-teal-900">
+                            <span className="text-slate-500 font-normal">Giá tiền bill:</span>
+                            <span className="text-teal-700 font-black">{formatVnd(cartSubtotal)}</span>
+                          </div>
+                        </div>
+
+                        <div className="text-[11px] text-slate-700 bg-white/90 p-2.5 rounded-xl text-left space-y-1 border border-teal-100 font-medium">
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Ngân hàng:</span>
+                            <span className="font-bold text-slate-800">{activeSite?.bankName || 'MB Bank (Quân Đội)'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Số tài khoản:</span>
+                            <span className="font-mono font-bold text-slate-900">{activeSite?.bankAccountNo || '999988886666'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-500">Chủ tài khoản:</span>
+                            <span className="font-bold text-slate-800">{activeSite?.bankAccountName || 'CANTEEN G-GROUP'}</span>
+                          </div>
+                        </div>
+
+                        <p className="text-[10px] text-teal-700 italic">
+                          💡 Quét mã QR trên bằng mọi app Ngân hàng (app sẽ tự động điền đúng {formatVnd(cartSubtotal)}). Sau khi bấm "Xác nhận đặt đơn", bạn sẽ nhận mã đơn chính thức để đối soát.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-teal-200/80 flex justify-between items-center text-xs">
+                    <span className="text-slate-600 font-medium">Tổng tiền thanh toán:</span>
+                    <span className="text-base font-black text-teal-700">{formatVnd(cartSubtotal)}</span>
+                  </div>
+                </div>
+              ) : (
+                /* Cán bộ: Wallet Deduction Preview */
+                <div className="bg-slate-900 rounded-2xl p-4 text-white space-y-2">
+                  <div className="flex justify-between text-xs text-slate-300">
+                    <span>Số dư ví hiện tại:</span>
+                    <span className="font-semibold">{formatVnd(currentUser.walletBalance)}</span>
+                  </div>
+                  <div className="flex justify-between text-xs text-slate-300">
+                    <span>Tổng tiền suất ăn:</span>
+                    <span className="font-semibold text-teal-400">− {formatVnd(cartSubtotal)}</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-800 flex justify-between text-sm font-bold">
+                    <span>Số dư dự kiến sau đặt:</span>
+                    <span className={isBalanceSufficient ? 'text-emerald-400' : 'text-red-400'}>
+                      {formatVnd(remainingWallet)}
+                    </span>
+                  </div>
+                  {!isBalanceSufficient && (
+                    <p className="text-[11px] text-red-300 bg-red-500/20 p-2 rounded-lg mt-1 flex items-center gap-1.5">
+                      <ShieldAlert className="w-3.5 h-3.5 flex-shrink-0" />
+                      <span>Số dư ví không đủ. Vui lòng liên hệ Quản lý Căn tin để nạp thêm.</span>
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Exception Token field (chỉ cho cán bộ khi đóng cổng) */}
+              {!isGuest && (!timeStatus.isOpen || showExceptionField) && (
                 <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-200 space-y-2">
                   <div className="flex items-center gap-2 text-xs font-bold text-amber-800">
                     <QrCode className="w-4 h-4 text-amber-600" />
@@ -1407,13 +1725,16 @@ export function OrderHome({
                 onClick={handlePlaceOrder}
                 disabled={
                   submitting ||
-                  (!timeStatus.isOpen && !exceptionToken.trim()) ||
-                  tokenValidation?.status === 'invalid' ||
-                  Boolean(
-                    tokenValidation?.status === 'valid' &&
-                      tokenValidation.remaining !== undefined &&
-                      tokenValidation.remaining <= 0
-                  )
+                  (isGuest && (!guestName.trim() || !guestPhone.trim())) ||
+                  (!isGuest && (
+                    (!timeStatus.isOpen && !exceptionToken.trim()) ||
+                    tokenValidation?.status === 'invalid' ||
+                    Boolean(
+                      tokenValidation?.status === 'valid' &&
+                        tokenValidation.remaining !== undefined &&
+                        tokenValidation.remaining <= 0
+                    )
+                  ))
                 }
                 className="flex-1 py-3 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-700 hover:to-emerald-700 disabled:opacity-40 text-white font-bold text-xs rounded-xl shadow-md shadow-teal-600/20 flex items-center justify-center gap-2 cursor-pointer"
               >
@@ -1424,7 +1745,7 @@ export function OrderHome({
                   </>
                 ) : (
                   <>
-                    <span>Xác nhận đặt suất ({formatVnd(cartSubtotal)})</span>
+                    <span>{isGuest ? `Thanh toán (${formatVnd(cartSubtotal)})` : `Xác nhận đặt suất (${formatVnd(cartSubtotal)})`}</span>
                     <Check className="w-4 h-4" />
                   </>
                 )}
@@ -1536,6 +1857,20 @@ export function OrderHome({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ================= MODAL: GUEST PAYMENT STATUS ================= */}
+      {isGuestPaymentModalOpen && guestWaitingOrder && (
+        <GuestPaymentModal
+          isOpen={isGuestPaymentModalOpen}
+          order={guestWaitingOrder}
+          status={guestPaymentStatus}
+          rejectReason={guestRejectReason}
+          onClose={() => {
+            setIsGuestPaymentModalOpen(false);
+            setTab('orders');
+          }}
+        />
       )}
     </div>
   );

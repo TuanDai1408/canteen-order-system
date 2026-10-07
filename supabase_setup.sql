@@ -300,3 +300,206 @@ SELECT cron.schedule(
   '5 0 1 * *',
   $$SELECT reset_monthly_wallets();$$
 );
+
+-- ========================================================
+-- PHẦN MỞ RỘNG: ĐA SITE (HÙNG VƯƠNG & G-GROUP) VÀ ĐẶT MÓN KHÁCH LẺ
+-- ========================================================
+
+-- 1. Bảng Sites (Cơ sở Căn tin)
+CREATE TABLE IF NOT EXISTS sites (
+    id TEXT PRIMARY KEY,
+    code TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    bank_name TEXT DEFAULT '',
+    bank_account_no TEXT DEFAULT '',
+    bank_account_name TEXT DEFAULT '',
+    bank_qr_image_url TEXT DEFAULT '',
+    bank_account_info JSONB DEFAULT '{}'::jsonb,
+    features JSONB DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Bật RLS và Public Policies cho bảng sites
+ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public read sites" ON sites;
+CREATE POLICY "Public read sites" ON sites FOR SELECT USING (true);
+DROP POLICY IF EXISTS "All write sites" ON sites;
+CREATE POLICY "All write sites" ON sites FOR ALL USING (true) WITH CHECK (true);
+
+-- 2. Thêm cột site_id và các trường khách lẻ trên các bảng nghiệp vụ
+-- Chuyển đổi an toàn cột site_id từ UUID sang TEXT nếu trước đó đã bị tạo kiểu UUID trên database
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'orders' AND column_name = 'site_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE orders ALTER COLUMN site_id DROP DEFAULT;
+    ALTER TABLE orders ALTER COLUMN site_id TYPE TEXT USING site_id::text;
+    ALTER TABLE orders ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'users' AND column_name = 'site_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE users ALTER COLUMN site_id DROP DEFAULT;
+    ALTER TABLE users ALTER COLUMN site_id TYPE TEXT USING site_id::text;
+    ALTER TABLE users ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
+  END IF;
+END $$;
+
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT false;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_name TEXT DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS guest_phone TEXT DEFAULT '';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'wallet';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT DEFAULT 'paid';
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_confirmed_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_confirmed_by TEXT DEFAULT '';
+
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS available_site_ids TEXT[] DEFAULT ARRAY['hung_vuong', 'g_group']::text[];
+ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS site_id TEXT;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+
+-- 3. Cấu hình linh hoạt khoá ngoại orders_user_id_fkey & bản ghi Khách lẻ
+-- Cho phép orders.user_id có thể là NULL để khách lẻ hoặc đơn vãng lai không bao giờ bị chặn bởi khoá ngoại
+ALTER TABLE orders ALTER COLUMN user_id DROP NOT NULL;
+
+DO $$
+BEGIN
+  ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_user_id_fkey;
+  ALTER TABLE orders ADD CONSTRAINT orders_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL;
+EXCEPTION
+  WHEN others THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  -- Tạo user guest với ID cố định nếu chưa có
+  IF NOT EXISTS (SELECT 1 FROM users WHERE id = '00000000-0000-4000-8000-000000000001') THEN
+    IF NOT EXISTS (SELECT 1 FROM users WHERE email = 'guest@canteen.local') THEN
+      INSERT INTO users (id, email, name, role, role_title, department, wallet_balance, monthly_allowance, is_active, site_id)
+      VALUES (
+        '00000000-0000-4000-8000-000000000001',
+        'guest@canteen.local',
+        'Khách Vãng Lai Căn Tin',
+        'teacher',
+        'Khách hàng',
+        'Khách lẻ vãng lai',
+        0,
+        0,
+        true,
+        'g_group'
+      );
+    ELSE
+      UPDATE users SET is_active = true WHERE email = 'guest@canteen.local';
+    END IF;
+  ELSE
+    UPDATE users SET is_active = true WHERE id = '00000000-0000-4000-8000-000000000001';
+  END IF;
+EXCEPTION
+  WHEN others THEN NULL;
+END $$;
+
+-- 4. Seed dữ liệu 2 Site mặc định
+INSERT INTO sites (id, code, name, description, bank_name, bank_account_no, bank_account_name, bank_qr_image_url, bank_account_info, features)
+VALUES
+(
+    'hung_vuong',
+    'hung_vuong',
+    'Đại học Hùng Vương',
+    'Cơ sở Đại học Hùng Vương — Dành cho Giáo viên & Cán bộ nhân viên',
+    '',
+    '',
+    '',
+    '',
+    '{}'::jsonb,
+    '{"qrException": true, "staffTab": true, "wallet": true, "timeGate": true, "guestOrder": false}'::jsonb
+),
+(
+    'g_group',
+    'g_group',
+    'Canteen G-Group',
+    'Cơ sở Canteen G-Group — Phục vụ Cán bộ và Khách hàng lẻ',
+    'MB Bank (Quân Đội)',
+    '999988886666',
+    'CANTEEN G-GROUP',
+    'https://img.vietqr.io/image/MB-999988886666-compact2.png',
+    '{"bankName": "MB Bank (Ngân hàng TMCP Quân Đội)", "accountNumber": "999988886666", "accountHolder": "CANTEEN G-GROUP", "qrImageUrl": "https://img.vietqr.io/image/MB-999988886666-compact2.png", "instructionNote": "Vui lòng ghi đúng nội dung chuyển khoản kèm mã đơn hàng để hệ thống tự động nhận diện thanh toán."}'::jsonb,
+    '{"qrException": false, "staffTab": false, "wallet": false, "timeGate": false, "guestOrder": true}'::jsonb
+)
+ON CONFLICT (code) DO UPDATE SET
+    name = EXCLUDED.name,
+    features = EXCLUDED.features;
+
+-- 5. Cập nhật menu_items hiện có cho phép bán trên cả 2 site
+UPDATE menu_items SET available_site_ids = ARRAY['hung_vuong', 'g_group']::text[] WHERE available_site_ids IS NULL;
+
+-- 6. RPC: Xác nhận thanh toán khách lẻ (confirm_guest_payment)
+CREATE OR REPLACE FUNCTION confirm_guest_payment(p_order_id UUID, p_admin_id TEXT DEFAULT NULL)
+RETURNS JSONB AS $$
+DECLARE
+    v_order RECORD;
+BEGIN
+    SELECT * INTO v_order FROM orders WHERE id = p_order_id;
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Không tìm thấy đơn hàng');
+    END IF;
+
+    UPDATE orders
+    SET payment_status = 'paid',
+        status = 'confirmed',
+        payment_confirmed_at = now(),
+        payment_confirmed_by = COALESCE(p_admin_id, 'Quản lý Căn tin'),
+        updated_at = now()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'payment_status', 'paid');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 7. RPC: Từ chối thanh toán khách lẻ & hoàn lại tồn kho (reject_guest_payment)
+CREATE OR REPLACE FUNCTION reject_guest_payment(p_order_id UUID, p_reason TEXT DEFAULT NULL)
+RETURNS JSONB AS $$
+DECLARE
+    item RECORD;
+BEGIN
+    -- Hoàn lại tồn kho cho từng món ăn
+    FOR item IN SELECT menu_item_id, quantity FROM order_items WHERE order_id = p_order_id LOOP
+        IF item.menu_item_id IS NOT NULL THEN
+            UPDATE menu_items
+            SET current_stock = current_stock + item.quantity,
+                updated_at = now()
+            WHERE id = item.menu_item_id;
+        END IF;
+    END LOOP;
+
+    -- Cập nhật đơn thành rejected / cancelled
+    UPDATE orders
+    SET payment_status = 'rejected',
+        status = 'cancelled',
+        cancelled_at = now(),
+        cancel_reason = COALESCE(p_reason, 'Nhân viên từ chối thanh toán'),
+        updated_at = now()
+    WHERE id = p_order_id;
+
+    RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'payment_status', 'rejected');
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 8. Thêm sites vào Realtime publication
+DO $$
+BEGIN
+  BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE sites;
+  EXCEPTION
+    WHEN others THEN NULL;
+  END;
+END $$;
+

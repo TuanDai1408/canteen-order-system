@@ -1,8 +1,42 @@
 export type UserRole = 'teacher' | 'admin' | 'data_entry' | 'executive';
 
+export type SiteCode = 'hung_vuong' | 'g_group';
+
+export interface SiteFeatures {
+  qrException: boolean;
+  staffTab: boolean;
+  wallet: boolean;
+  timeGate: boolean;
+  guestOrder: boolean;
+}
+
+export interface BankAccountInfo {
+  bankName?: string;
+  accountNumber?: string;
+  accountHolder?: string;
+  qrImageUrl?: string;
+  instructionNote?: string;
+}
+
+export interface Site {
+  id: string;
+  code: SiteCode;
+  name: string;
+  description?: string;
+  bankName?: string;
+  bankAccountNo?: string;
+  bankAccountName?: string;
+  bankQrImageUrl?: string;
+  bankAccountInfo?: BankAccountInfo;
+  features: SiteFeatures;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface UserProfile {
   id: string;
   authUserId?: string;
+  siteId?: string;
   name: string;
   role: UserRole;
   roleTitle: string;
@@ -31,11 +65,17 @@ export interface MenuItem {
   currentStock: number;
   isActive: boolean;
   forDate?: string; // YYYY-MM-DD
+  siteId?: string;
+  availableSiteIds?: string[]; // Danh sách site được bán món này (vd: ['hung_vuong', 'g_group'])
 }
 
 export type DeliveryMethod = 'dine_in' | 'room_delivery';
 
 export type OrderStatus = 'confirmed' | 'preparing' | 'completed' | 'cancelled';
+
+export type PaymentMethod = 'wallet' | 'cash' | 'bank_transfer';
+
+export type PaymentStatus = 'paid' | 'pending' | 'rejected';
 
 export interface OrderItem {
   menuItemId: string;
@@ -48,10 +88,18 @@ export interface OrderItem {
 export interface Order {
   id: string;
   orderCode: string;
+  siteId?: string;
   userId: string;
   userName: string;
   userPhone: string;
   userDepartment: string;
+  isGuest?: boolean;
+  guestName?: string;
+  guestPhone?: string;
+  paymentMethod?: PaymentMethod;
+  paymentStatus?: PaymentStatus;
+  paymentConfirmedAt?: string;
+  paymentConfirmedBy?: string;
   items: OrderItem[];
   totalAmount: number;
   deliveryMethod: DeliveryMethod;
@@ -81,6 +129,7 @@ export interface Order {
 
 export interface QRExceptionToken {
   token: string;
+  siteId?: string;
   createdAt: string;
   expiresAt: string;
   createdBy: string;
@@ -106,6 +155,7 @@ export interface TimeGateStatus {
 
 export interface WalletTransaction {
   id: string;
+  siteId?: string;
   userId: string;
   amount: number;
   type: 'order' | 'refund' | 'allowance' | 'manual' | 'monthly_reset' | string;

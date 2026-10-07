@@ -125,8 +125,22 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-slate-600">Cán bộ:</span>
-          <span className="font-bold text-slate-900">{order.userName}</span>
+          <span className="text-slate-600">{order.isGuest ? 'Khách hàng:' : 'Cán bộ:'}</span>
+          <span className="font-bold text-slate-900">{order.userName || (order as any).guestName || 'Khách vãng lai'}</span>
+        </div>
+        {order.isGuest && (order as any).guestPhone && (
+          <div className="flex justify-between">
+            <span className="text-slate-600">SĐT:</span>
+            <span className="font-mono text-slate-900 font-semibold">{(order as any).guestPhone}</span>
+          </div>
+        )}
+        <div className="flex justify-between">
+          <span className="text-slate-600">Thanh toán:</span>
+          <span className="font-semibold text-slate-800">
+            {order.isGuest
+              ? (order.paymentMethod === 'bank_transfer' ? 'Chuyển khoản VietQR' : 'Tiền mặt')
+              : 'Trừ ví suất ăn'}
+          </span>
         </div>
         <div className="flex justify-between">
           <span className="text-slate-600">Hình thức:</span>
@@ -323,7 +337,7 @@ export const PosReceiptTicket: React.FC<PosReceiptTicketProps> = ({
 
       {/* Footer message */}
       <div className="text-center pt-2 text-[10px] text-slate-600 space-y-0.5">
-        <p className="font-semibold text-slate-800">Chúc quý Thầy / Cô ngon miệng!</p>
+        <p className="font-semibold text-slate-800">Chúc quý khách ngon miệng!</p>
       </div>
 
       {/* Paper tear line separator in preview modal */}

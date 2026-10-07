@@ -600,7 +600,7 @@ export function renderTicketToCanvasImage(
     c.font = `bold ${Math.round(15 * s)}px ${fontSans}`;
     c.textAlign = 'center';
     c.fillStyle = '#000000';
-    c.fillText('Chúc quý Thầy / Cô ngon miệng!', width / 2, footMainY);
+    c.fillText('Chúc quý khách ngon miệng!', width / 2, footMainY);
   });
   y += 24 * s;
 
