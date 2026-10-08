@@ -59,6 +59,7 @@ import {
   confirmGuestPayment,
   rejectGuestPayment,
   updateSite,
+  getVietQrBankCode,
   type Site,
   type SiteCode,
 } from '@canteen/shared';
@@ -202,7 +203,7 @@ interface Props {
   onSwitchToOrder?: () => void;
 }
 
-type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr' | 'printers';
+type Tab = 'overview' | 'menu' | 'orders' | 'kitchen' | 'users' | 'qr' | 'printers' | 'bank_qr';
 
 export function PortalDashboard({
   currentUser,
@@ -241,6 +242,53 @@ export function PortalDashboard({
       setTab('overview');
     }
     onRefresh();
+  };
+
+  // Cấu hình Ngân hàng & Mã QR chuyển khoản theo cơ sở
+  const [bankNameForm, setBankNameForm] = useState('');
+  const [bankAccountNoForm, setBankAccountNoForm] = useState('');
+  const [bankAccountNameForm, setBankAccountNameForm] = useState('');
+  const [bankQrImageUrlForm, setBankQrImageUrlForm] = useState('');
+  const [bankInstructionNoteForm, setBankInstructionNoteForm] = useState('');
+  const [testBillAmount, setTestBillAmount] = useState(35000);
+  const [isSavingBankSettings, setIsSavingBankSettings] = useState(false);
+
+  useEffect(() => {
+    setBankNameForm(activeSite.bankName || activeSite.bankAccountInfo?.bankName || 'MB Bank (Quân Đội)');
+    setBankAccountNoForm(activeSite.bankAccountNo || activeSite.bankAccountInfo?.accountNumber || '999988886666');
+    setBankAccountNameForm(activeSite.bankAccountName || activeSite.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP');
+    setBankQrImageUrlForm(activeSite.bankQrImageUrl || activeSite.bankAccountInfo?.qrImageUrl || '');
+    setBankInstructionNoteForm(
+      activeSite.bankAccountInfo?.instructionNote ||
+        'Vui lòng ghi đúng nội dung chuyển khoản kèm mã đơn hàng để hệ thống tự động nhận diện thanh toán.'
+    );
+  }, [activeSite]);
+
+  const handleSaveBankSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingBankSettings(true);
+    try {
+      const updated = await updateSite(selectedSiteCode, {
+        bankName: bankNameForm.trim(),
+        bankAccountNo: bankAccountNoForm.trim(),
+        bankAccountName: bankAccountNameForm.trim(),
+        bankQrImageUrl: bankQrImageUrlForm.trim(),
+        bankAccountInfo: {
+          bankName: bankNameForm.trim(),
+          accountNumber: bankAccountNoForm.trim(),
+          accountHolder: bankAccountNameForm.trim(),
+          qrImageUrl: bankQrImageUrlForm.trim(),
+          instructionNote: bankInstructionNoteForm.trim(),
+        },
+      });
+      setSitesList((prev) => prev.map((s) => (s.code === selectedSiteCode ? updated : s)));
+      setMsg({ type: 'ok', text: `Đã lưu thành công cài đặt Ngân hàng & Mã QR cho cơ sở ${activeSite.name}!` });
+      onRefresh();
+    } catch (err: any) {
+      setMsg({ type: 'err', text: err?.message || 'Không thể lưu cài đặt ngân hàng.' });
+    } finally {
+      setIsSavingBankSettings(false);
+    }
   };
 
   // Search & Filter states
@@ -1914,7 +1962,10 @@ export function PortalDashboard({
       ? [{ id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode }]
       : []),
     ...(currentUser?.role === 'admin'
-      ? [{ id: 'printers' as Tab, label: 'Cài đặt máy in', icon: Printer }]
+      ? [
+          { id: 'printers' as Tab, label: 'Cài đặt máy in', icon: Printer },
+          { id: 'bank_qr' as Tab, label: 'Mã QR & Ngân hàng', icon: CreditCard },
+        ]
       : []),
   ];
 
@@ -5077,6 +5128,315 @@ export function PortalDashboard({
                   </button>
                 </div>
               </form>
+            </div>
+          )}
+
+          {/* ================= TAB 8: SETUP MÃ QR & NGÂN HÀNG (BANK QR) ================= */}
+          {tab === 'bank_qr' && currentUser?.role === 'admin' && (
+            <div className="space-y-6 max-w-5xl mx-auto">
+              {/* Header Card */}
+              <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs space-y-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-lg sm:text-xl font-extrabold text-slate-900">
+                        Cấu hình Mã QR & Tài khoản Ngân hàng
+                      </h2>
+                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-teal-50 text-teal-700 border border-teal-200">
+                        VietQR & Mã QR Riêng
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Thiết lập thông tin nhận chuyển khoản cho cơ sở{' '}
+                      <strong className="text-slate-800">{activeSite.name}</strong> ({activeSite.code}). Thông tin này sẽ hiển thị trực tiếp cho khách hàng khi chọn hình thức Chuyển khoản QR.
+                    </p>
+                  </div>
+
+                  {/* Site Switcher Pill */}
+                  <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
+                    {sitesList.map((st) => (
+                      <button
+                        key={st.code}
+                        type="button"
+                        onClick={() => handleSwitchSite(st.code)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                          selectedSiteCode === st.code
+                            ? 'bg-white text-indigo-700 shadow-2xs'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        {st.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Form & Live Preview Grid */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                {/* Left: Configuration Form */}
+                <form
+                  onSubmit={handleSaveBankSettings}
+                  className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs space-y-5"
+                >
+                  <div className="border-b border-slate-100 pb-3">
+                    <h3 className="text-sm font-extrabold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                      <CreditCard className="w-4 h-4 text-teal-600" />
+                      <span>Thông Tin Tài Khoản Nhận Tiền</span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Điền thông tin tài khoản ngân hàng hoặc tải lên ảnh QR của bạn
+                    </p>
+                  </div>
+
+                  {/* Quick Select Popular Banks */}
+                  <div className="space-y-1.5">
+                    <label className="block text-[11px] font-bold text-slate-700">
+                      Chọn nhanh ngân hàng phổ biến:
+                    </label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { code: 'MB', name: 'MB Bank (Quân Đội)' },
+                        { code: 'VCB', name: 'Vietcombank' },
+                        { code: 'TCB', name: 'Techcombank' },
+                        { code: 'BIDV', name: 'BIDV' },
+                        { code: 'CTG', name: 'VietinBank' },
+                        { code: 'ACB', name: 'ACB' },
+                        { code: 'VPB', name: 'VPBank' },
+                        { code: 'TPB', name: 'TPBank' },
+                        { code: 'VBA', name: 'Agribank' },
+                      ].map((b) => (
+                        <button
+                          key={b.code}
+                          type="button"
+                          onClick={() => setBankNameForm(b.name)}
+                          className={`px-2.5 py-1 text-[11px] rounded-lg font-bold border transition cursor-pointer ${
+                            bankNameForm.includes(b.name) || bankNameForm.includes(b.code)
+                              ? 'bg-teal-50 border-teal-500 text-teal-800 shadow-2xs'
+                              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
+                          }`}
+                        >
+                          {b.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Bank Name Field */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Tên Ngân hàng <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bankNameForm}
+                      onChange={(e) => setBankNameForm(e.target.value)}
+                      placeholder="Ví dụ: MB Bank (Quân Đội) hoặc Vietcombank"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  {/* Account Number Field */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Số tài khoản ngân hàng <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bankAccountNoForm}
+                      onChange={(e) => setBankAccountNoForm(e.target.value)}
+                      placeholder="Ví dụ: 0912345678 hoặc 999988886666"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono font-bold text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  {/* Account Holder Name Field */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Tên chủ tài khoản (Người thụ hưởng) <span className="text-rose-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={bankAccountNameForm}
+                      onChange={(e) => setBankAccountNameForm(e.target.value)}
+                      placeholder="Ví dụ: NGUYEN VAN A hoặc CANTEEN G-GROUP"
+                      className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold uppercase text-slate-900 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  {/* Custom QR Image URL / Upload Field */}
+                  <div className="space-y-2 pt-1 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Hình ảnh Mã QR tuỳ chỉnh (Ảnh bạn đã tải/gửi)
+                      </label>
+                      {bankQrImageUrlForm && (
+                        <button
+                          type="button"
+                          onClick={() => setBankQrImageUrlForm('')}
+                          className="text-[11px] text-rose-600 hover:text-rose-800 font-bold cursor-pointer"
+                        >
+                          Xoá ảnh (dùng VietQR tự động)
+                        </button>
+                      )}
+                    </div>
+
+                    <input
+                      type="url"
+                      value={bankQrImageUrlForm}
+                      onChange={(e) => setBankQrImageUrlForm(e.target.value)}
+                      placeholder="Dán link ảnh mã QR (https://...) hoặc chọn file bên dưới"
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-hidden"
+                    />
+
+                    <div className="flex items-center gap-2">
+                      <label className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition cursor-pointer border border-slate-200 flex items-center gap-1.5">
+                        <Upload className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Tải ảnh mã QR từ thiết bị</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={async (e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              try {
+                                const base64 = await fileToBase64(file);
+                                setBankQrImageUrlForm(base64);
+                                setMsg({ type: 'ok', text: 'Đã tải ảnh mã QR lên thành công! Xem trước ở cột bên phải.' });
+                              } catch {
+                                setMsg({ type: 'err', text: 'Không thể đọc file ảnh.' });
+                              }
+                            }
+                          }}
+                        />
+                      </label>
+                      <span className="text-[11px] text-slate-400">
+                        Hỗ trợ PNG, JPG, WebP. Nếu để trống, hệ thống sẽ tự sinh VietQR chuẩn ngân hàng.
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Instruction Note */}
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Ghi chú dặn dò khách chuyển khoản:
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={bankInstructionNoteForm}
+                      onChange={(e) => setBankInstructionNoteForm(e.target.value)}
+                      placeholder="Ghi chú hiển thị dưới mã QR..."
+                      className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-hidden resize-none"
+                    />
+                  </div>
+
+                  {/* Action Button */}
+                  <div className="pt-2 flex items-center justify-end">
+                    <button
+                      type="submit"
+                      disabled={isSavingBankSettings}
+                      className="px-6 py-3 bg-teal-600 hover:bg-teal-700 disabled:opacity-50 text-white font-extrabold text-xs rounded-2xl shadow-md shadow-teal-600/20 flex items-center gap-2 transition cursor-pointer"
+                    >
+                      {isSavingBankSettings ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4" />
+                      )}
+                      <span>Lưu Cài Đặt Mã QR & Ngân Hàng ({activeSite.name})</span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* Right: Real-time Live Preview */}
+                <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
+                  <div className="border-b border-slate-100 pb-3 flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                        <QrCode className="w-4 h-4 text-teal-600" />
+                        <span>Xem trước hiển thị khách hàng</span>
+                      </h4>
+                      <p className="text-[11px] text-slate-500 mt-0.5">Khách quét mã sẽ nhìn thấy đúng hình ảnh này</p>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-50 text-teal-700 border border-teal-200">
+                      Live Preview
+                    </span>
+                  </div>
+
+                  {/* Test Bill Amount Controls */}
+                  <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-bold text-slate-700">Số tiền bill thử nghiệm:</span>
+                      <span className="font-black text-teal-700 font-mono">{formatVnd(testBillAmount)}</span>
+                    </div>
+                    <div className="flex gap-1.5">
+                      {[35000, 50000, 70000, 100000].map((amt) => (
+                        <button
+                          key={amt}
+                          type="button"
+                          onClick={() => setTestBillAmount(amt)}
+                          className={`flex-1 py-1 text-[10px] font-bold rounded-lg border transition cursor-pointer ${
+                            testBillAmount === amt
+                              ? 'bg-teal-600 text-white border-teal-600'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          {amt / 1000}k
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* QR Image Box */}
+                  <div className="bg-gradient-to-b from-teal-50/50 to-emerald-50/30 p-4 rounded-2xl border-2 border-dashed border-teal-300 text-center space-y-3">
+                    <div className="bg-white p-3 rounded-2xl shadow-xs border border-teal-200 inline-block mx-auto max-w-[220px]">
+                      <img
+                        src={
+                          bankQrImageUrlForm.trim()
+                            ? bankQrImageUrlForm.trim()
+                            : `https://img.vietqr.io/image/${getVietQrBankCode(bankNameForm)}-${bankAccountNoForm.trim() || '999988886666'}-compact2.png?amount=${testBillAmount}&addInfo=${encodeURIComponent(`CT ORD-TEST`)}&accountName=${encodeURIComponent(bankAccountNameForm.trim() || 'CANTEEN G-GROUP')}`
+                        }
+                        alt="Mã QR thanh toán ngân hàng"
+                        className="w-48 h-48 object-contain mx-auto rounded-lg"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = `https://img.vietqr.io/image/MB-${bankAccountNoForm.trim() || '999988886666'}-compact2.png?amount=${testBillAmount}&addInfo=${encodeURIComponent('CT ORD-TEST')}&accountName=${encodeURIComponent(bankAccountNameForm.trim() || 'CANTEEN G-GROUP')}`;
+                        }}
+                      />
+                      <div className="mt-2 py-1 px-2.5 bg-teal-50 border border-teal-200 rounded-lg flex items-center justify-center gap-1 text-xs font-bold text-teal-800">
+                        <span>Giá tiền bill:</span>
+                        <span className="text-teal-950 font-black">{formatVnd(testBillAmount)}</span>
+                      </div>
+                    </div>
+
+                    {/* Information Summary */}
+                    <div className="p-3 bg-white rounded-xl border border-slate-200 text-left space-y-1.5 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Ngân hàng:</span>
+                        <span className="font-bold text-slate-800">{bankNameForm || 'Chưa điền'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Số tài khoản:</span>
+                        <span className="font-mono font-bold text-slate-900">{bankAccountNoForm || 'Chưa điền'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-500">Chủ tài khoản:</span>
+                        <span className="font-bold text-slate-800 uppercase">{bankAccountNameForm || 'Chưa điền'}</span>
+                      </div>
+                      <div className="flex justify-between items-center bg-teal-50/80 -mx-1 px-2 py-1 rounded-lg border border-teal-200">
+                        <span className="font-bold text-teal-900">Nội dung CK:</span>
+                        <span className="font-mono font-black text-indigo-700">CT [Mã đơn hàng]</span>
+                      </div>
+                    </div>
+
+                    <p className="text-[11px] text-teal-800 italic leading-snug">
+                      {bankInstructionNoteForm || 'Vui lòng ghi đúng nội dung chuyển khoản kèm mã đơn hàng.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </main>

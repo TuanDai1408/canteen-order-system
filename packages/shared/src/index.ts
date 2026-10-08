@@ -107,6 +107,7 @@ export {
   confirmGuestPayment,
   rejectGuestPayment,
   subscribeGuestOrder,
+  getVietQrBankCode,
   getCachedSites,
   setCachedSites,
   getSelectedSiteCode,

@@ -2808,7 +2808,7 @@ export async function confirmGuestPayment(
     console.warn('[confirmGuestPayment RPC notice]:', rpcEx);
   }
 
-  // 2. Cập nhật trực tiếp bảng orders trên Supabase (Adaptive update)
+  // 2. Cập nhật trực tiếp bảng orders trên Supabase (Adaptive update - hỗ trợ cả id UUID và order_code)
   try {
     const { error: updErr } = await supabase
       .from('orders')
@@ -2819,7 +2819,7 @@ export async function confirmGuestPayment(
         payment_confirmed_by: confirmedBy,
         updated_at: now,
       })
-      .eq('id', cleanId);
+      .or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
 
     if (updErr) {
       await supabase
@@ -2829,7 +2829,7 @@ export async function confirmGuestPayment(
           status: 'confirmed',
           updated_at: now,
         })
-        .eq('id', cleanId);
+        .or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
     }
   } catch (e: any) {
     console.warn('[confirmGuestPayment update DB notice]:', e);
@@ -2998,19 +2998,45 @@ export async function rejectGuestPayment(
   return { success: true };
 }
 
+export function getVietQrBankCode(bankName?: string): string {
+  if (!bankName) return 'MB';
+  const norm = bankName.toLowerCase();
+  if (norm.includes('vietcombank') || norm.includes('vcb')) return 'VCB';
+  if (norm.includes('techcombank') || norm.includes('tcb')) return 'TCB';
+  if (norm.includes('bidv')) return 'BIDV';
+  if (norm.includes('vietinbank') || norm.includes('vietin') || norm.includes('ctg') || norm.includes('icb')) return 'CTG';
+  if (norm.includes('agribank') || norm.includes('vba')) return 'VBA';
+  if (norm.includes('acb')) return 'ACB';
+  if (norm.includes('vpbank') || norm.includes('vpb')) return 'VPB';
+  if (norm.includes('tpbank') || norm.includes('tpb')) return 'TPB';
+  if (norm.includes('sacombank') || norm.includes('stb')) return 'STB';
+  if (norm.includes('hdbank') || norm.includes('hdb')) return 'HDB';
+  if (norm.includes('vib')) return 'VIB';
+  if (norm.includes('shb')) return 'SHB';
+  if (norm.includes('msb')) return 'MSB';
+  if (norm.includes('ocb')) return 'OCB';
+  if (norm.includes('lienviet') || norm.includes('lpb') || norm.includes('lpbank')) return 'LPB';
+  if (norm.includes('mb') || norm.includes('quân đội')) return 'MB';
+  return 'MB';
+}
+
 export function subscribeGuestOrder(
   orderId: string,
   onUpdate: (payload: { paymentStatus: PaymentStatus; status: OrderStatus; order?: Order }) => void
 ): () => void {
   const cleanId = orderId.trim();
+  let isSubActive = true;
 
   // 1. Lắng nghe broadcast / CustomEvent cục bộ
   const localListener = (e: Event) => {
     const detail = (e as CustomEvent).detail;
-    if (detail && (detail.orderId === cleanId || detail.order?.id === cleanId)) {
+    if (detail && (detail.orderId === cleanId || detail.order?.id === cleanId || detail.order?.orderCode === cleanId)) {
+      const pStatus = detail.paymentStatus || detail.order?.paymentStatus || 'pending';
+      const oStatus = detail.status || detail.order?.status || 'pending';
+      const isConfirmed = pStatus === 'paid';
       onUpdate({
-        paymentStatus: detail.paymentStatus || detail.order?.paymentStatus || 'pending',
-        status: detail.status || detail.order?.status || 'confirmed',
+        paymentStatus: isConfirmed ? 'paid' : pStatus,
+        status: oStatus,
         order: detail.order,
       });
     }
@@ -3019,9 +3045,12 @@ export function subscribeGuestOrder(
   const channelHandler = (ev: MessageEvent) => {
     if (ev.data && (ev.data.orderId === cleanId || ev.data.payload?.orderId === cleanId)) {
       const data = ev.data.payload || ev.data;
+      const pStatus = data.paymentStatus || 'pending';
+      const oStatus = data.status || 'pending';
+      const isConfirmed = pStatus === 'paid';
       onUpdate({
-        paymentStatus: data.paymentStatus || 'pending',
-        status: data.status || 'confirmed',
+        paymentStatus: isConfirmed ? 'paid' : pStatus,
+        status: oStatus,
         order: data.order,
       });
     }
@@ -3044,14 +3073,17 @@ export function subscribeGuestOrder(
         .channel(`guest-order-${cleanId}-${Date.now()}`)
         .on(
           'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${cleanId}` },
+          { event: 'UPDATE', schema: 'public', table: 'orders' },
           (payload) => {
             const row = payload.new;
-            if (row) {
+            if (row && (row.id === cleanId || row.order_code === cleanId)) {
               const mapped = mapOrder(row);
+              const pStatus = (row.payment_status as PaymentStatus) || 'pending';
+              const oStatus = (row.status as OrderStatus) || 'pending';
+              const isConfirmed = pStatus === 'paid';
               onUpdate({
-                paymentStatus: (row.payment_status as PaymentStatus) || 'pending',
-                status: (row.status as OrderStatus) || 'confirmed',
+                paymentStatus: isConfirmed ? 'paid' : pStatus,
+                status: oStatus,
                 order: mapped,
               });
             }
@@ -3063,7 +3095,80 @@ export function subscribeGuestOrder(
     }
   }
 
+  // 3. Fallback chủ động thăm dò (Active Polling) mỗi 1.2s đảm bảo chắc chắn cập nhật ngay cả khi Realtime/Broadcast không qua mạng
+  let pollInterval: any = null;
+
+  const pollOrderStatus = async () => {
+    if (!isSubActive) return;
+    try {
+      if (isSupabaseConfigured && supabase) {
+        const { data, error } = await supabase
+          .from('orders')
+          .select('*')
+          .or(`id.eq.${cleanId},order_code.eq.${cleanId}`)
+          .maybeSingle();
+
+        if (!error && data) {
+          const pStatus = (data.payment_status as PaymentStatus) || 'pending';
+          const oStatus = (data.status as OrderStatus) || 'pending';
+
+          // Chỉ thông báo thành công khi nhân viên admin đã bấm Xác nhận thanh toán (pStatus === 'paid')
+          if (pStatus === 'paid') {
+            const mapped = mapOrder(data);
+            onUpdate({
+              paymentStatus: 'paid',
+              status: oStatus,
+              order: mapped,
+            });
+            if (pollInterval) clearInterval(pollInterval);
+            return;
+          }
+
+          if (pStatus === 'rejected' || oStatus === 'cancelled') {
+            const mapped = mapOrder(data);
+            onUpdate({
+              paymentStatus: 'rejected',
+              status: 'cancelled',
+              order: mapped,
+            });
+            if (pollInterval) clearInterval(pollInterval);
+            return;
+          }
+        }
+      } else {
+        const cached = getCachedOrders();
+        const found = cached.find((o) => o.id === cleanId || o.orderCode === cleanId);
+        if (found) {
+          if (found.paymentStatus === 'paid') {
+            onUpdate({
+              paymentStatus: 'paid',
+              status: found.status,
+              order: found,
+            });
+            if (pollInterval) clearInterval(pollInterval);
+          } else if (found.paymentStatus === 'rejected' || found.status === 'cancelled') {
+            onUpdate({
+              paymentStatus: 'rejected',
+              status: 'cancelled',
+              order: found,
+            });
+            if (pollInterval) clearInterval(pollInterval);
+          }
+        }
+      }
+    } catch (pollErr) {
+      console.warn('[subscribeGuestOrder poll note]:', pollErr);
+    }
+  };
+
+  pollOrderStatus();
+  pollInterval = setInterval(pollOrderStatus, 1200);
+
   return () => {
+    isSubActive = false;
+    if (pollInterval) {
+      clearInterval(pollInterval);
+    }
     if (typeof window !== 'undefined') {
       window.removeEventListener('canteen_payment_confirmed', localListener);
       window.removeEventListener('canteen_payment_rejected', localListener);
@@ -3458,10 +3563,21 @@ export async function updateOrderStatus(
   }
 
   try {
+    const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
+    const updatePayload: Record<string, any> = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (isConfirming) {
+      updatePayload.payment_status = 'paid';
+      updatePayload.payment_confirmed_at = new Date().toISOString();
+      updatePayload.payment_confirmed_by = actor?.name || actor?.id || 'Quản lý Căn tin';
+    }
+
     const { error: updErr } = await supabase
       .from('orders')
-      .update({ status, updated_at: new Date().toISOString() })
-      .eq('id', orderId);
+      .update(updatePayload)
+      .or(`id.eq.${orderId},order_code.eq.${orderId}`);
     if (updErr) {
       console.warn('Update order status remote error:', updErr);
       return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng: ' + updErr.message };
@@ -3474,12 +3590,29 @@ export async function updateOrderStatus(
   // Cập nhật trạng thái trong cache cục bộ
   try {
     const all = getCachedOrders();
-    const updatedAll = all.map((o) => (o.id === orderId ? { ...o, status: status as any } : o));
+    const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
+    const updatedAll = all.map((o) =>
+      o.id === orderId || o.orderCode === orderId
+        ? {
+            ...o,
+            status: status as any,
+            ...(isConfirming ? { paymentStatus: 'paid' as const } : {}),
+          }
+        : o
+    );
     setCachedOrders(updatedAll);
   } catch {}
 
   // Phát tín hiệu broadcast cập nhật trạng thái đơn tức thì toàn hệ thống
-  broadcastSystemEvent('canteen_order_updated', { orderId, status });
+  const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
+  broadcastSystemEvent('canteen_order_updated', {
+    orderId,
+    status,
+    paymentStatus: isConfirming ? 'paid' : undefined,
+  });
+  if (isConfirming) {
+    broadcastSystemEvent('canteen_payment_confirmed', { orderId, paymentStatus: 'paid', status });
+  }
   return { success: true };
 }
 

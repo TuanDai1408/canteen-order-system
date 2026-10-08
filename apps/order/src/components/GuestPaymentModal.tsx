@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   RefreshCw,
 } from 'lucide-react';
-import { formatVnd, Site, PaymentMethod, PaymentStatus } from '@canteen/shared';
+import { formatVnd, Site, PaymentMethod, PaymentStatus, getVietQrBankCode } from '@canteen/shared';
 
 interface GuestPaymentModalProps {
   isOpen: boolean;
@@ -54,11 +54,22 @@ export function GuestPaymentModal({
   const bankAccountNo = order.site?.bankAccountNo || order.site?.bankAccountInfo?.accountNumber || '999988886666';
   const bankAccountName = order.site?.bankAccountName || order.site?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
   const transferNote = `CT ${order.orderCode}`;
+  const bankCode = getVietQrBankCode(bankName);
 
-  // VietQR động luôn luôn tích hợp chính xác giá tiền bill đơn hàng: amount=${order.totalAmount}
-  const qrUrl = `https://img.vietqr.io/image/MB-${bankAccountNo}-compact2.png?amount=${order.totalAmount}&addInfo=${encodeURIComponent(
-    transferNote
-  )}&accountName=${encodeURIComponent(bankAccountName)}`;
+  // Nếu có ảnh QR tuỳ chỉnh do Quản trị viên tải lên (không phải mẫu mặc định) thì hiển thị ảnh đó,
+  // nếu không sẽ tạo mã VietQR động theo chuẩn ngân hàng kèm số tiền bill: amount=${order.totalAmount}
+  const customQrImage =
+    order.site?.bankQrImageUrl && !order.site.bankQrImageUrl.includes('MB-999988886666')
+      ? order.site.bankQrImageUrl
+      : order.site?.bankAccountInfo?.qrImageUrl && !order.site.bankAccountInfo.qrImageUrl.includes('MB-999988886666')
+      ? order.site.bankAccountInfo.qrImageUrl
+      : null;
+
+  const qrUrl =
+    customQrImage ||
+    `https://img.vietqr.io/image/${bankCode}-${bankAccountNo}-compact2.png?amount=${order.totalAmount}&addInfo=${encodeURIComponent(
+      transferNote
+    )}&accountName=${encodeURIComponent(bankAccountName)}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200 overflow-y-auto">

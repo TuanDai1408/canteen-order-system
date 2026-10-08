@@ -8,6 +8,8 @@ import {
   getCachedQRTokens,
   getCachedOrders,
   subscribeGuestOrder,
+  getVietQrBankCode,
+  fetchOrderWithItems,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -137,6 +139,32 @@ export function OrderHome({
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Chủ động thăm dò trạng thái đơn hàng khi đang mở màn hình chờ thanh toán
+  useEffect(() => {
+    if (!isGuestPaymentModalOpen || !guestWaitingOrder || guestPaymentStatus !== 'pending') return;
+
+    const pollTimer = setInterval(async () => {
+      try {
+        const orderId = guestWaitingOrder.id;
+        const latestOrder = await fetchOrderWithItems(orderId, 1, 0);
+        if (latestOrder) {
+          if (latestOrder.paymentStatus === 'paid') {
+            setGuestPaymentStatus('paid');
+            onRefresh();
+          } else if (latestOrder.paymentStatus === 'rejected' || latestOrder.status === 'cancelled') {
+            setGuestPaymentStatus('rejected');
+            setGuestRejectReason(latestOrder.cancelReason || 'Nhân viên đã từ chối đơn hàng');
+            onRefresh();
+          }
+        }
+      } catch (e) {
+        console.warn('[OrderHome active status poll note]:', e);
+      }
+    }, 1500);
+
+    return () => clearInterval(pollTimer);
+  }, [isGuestPaymentModalOpen, guestWaitingOrder, guestPaymentStatus, onRefresh]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -293,21 +321,24 @@ export function OrderHome({
     }
 
     if (isGuest) {
-      if (!guestName.trim()) {
-        setFeedbackModal({
-          title: 'Thiếu thông tin khách hàng',
-          message: 'Vui lòng nhập Họ và tên của bạn để nhân viên Căn tin tiện xưng hô và gọi tên nhận món.',
-          type: 'warning',
-        });
-        return;
-      }
-      if (!guestPhone.trim()) {
-        setFeedbackModal({
-          title: 'Thiếu số điện thoại',
-          message: 'Vui lòng nhập số điện thoại nhận suất ăn.',
-          type: 'warning',
-        });
-        return;
+      // Chỉ bắt buộc nhập tên và số điện thoại khi chọn "Giao tận phòng"
+      if (deliveryMethod === 'room_delivery') {
+        if (!guestName.trim()) {
+          setFeedbackModal({
+            title: 'Thiếu thông tin khách hàng',
+            message: 'Khi chọn giao tận phòng, vui lòng nhập Họ và tên để nhân viên Căn tin giao đúng người nhận.',
+            type: 'warning',
+          });
+          return;
+        }
+        if (!guestPhone.trim()) {
+          setFeedbackModal({
+            title: 'Thiếu số điện thoại',
+            message: 'Khi chọn giao tận phòng, vui lòng nhập số điện thoại để nhân viên liên hệ khi giao suất ăn.',
+            type: 'warning',
+          });
+          return;
+        }
       }
     } else {
       if (!timeStatus.isOpen && !exceptionToken.trim()) {
@@ -377,8 +408,10 @@ export function OrderHome({
         // Multi-site & Guest:
         isGuest,
         siteId: activeSite?.code || 'g_group',
-        guestName: isGuest ? guestName.trim() : undefined,
-        guestPhone: isGuest ? guestPhone.trim() : undefined,
+        guestName: isGuest
+          ? guestName.trim() || (deliveryMethod === 'dine_in' ? 'Khách ăn tại Canteen' : 'Khách vãng lai')
+          : undefined,
+        guestPhone: isGuest ? guestPhone.trim() || undefined : undefined,
         paymentMethod: isGuest ? guestPaymentMethod : 'wallet',
       });
 
@@ -396,8 +429,8 @@ export function OrderHome({
             orderCode: result.order_code || 'ORD-GUEST',
             totalAmount: result.total_amount || cartSubtotal,
             paymentMethod: guestPaymentMethod,
-            guestName: guestName.trim(),
-            guestPhone: guestPhone.trim(),
+            guestName: guestName.trim() || (deliveryMethod === 'dine_in' ? 'Khách ăn tại Canteen' : 'Khách vãng lai'),
+            guestPhone: guestPhone.trim() || (deliveryMethod === 'dine_in' ? 'Tại quầy' : ''),
             pickupTime,
             site: activeSite,
           };
@@ -406,13 +439,14 @@ export function OrderHome({
           setGuestRejectReason(undefined);
           setIsGuestPaymentModalOpen(true);
 
-          // Lắng nghe Realtime xác nhận từ Portal theo order id
-          if (result.order_id) {
-            const unsub = subscribeGuestOrder(result.order_id, (update) => {
+          // Lắng nghe Realtime & Polling xác nhận từ Portal theo order id / code
+          const trackingOrderId = result.order_id || result.order_code;
+          if (trackingOrderId) {
+            const unsub = subscribeGuestOrder(trackingOrderId, (update) => {
               if (update.paymentStatus === 'paid') {
                 setGuestPaymentStatus('paid');
                 onRefresh();
-              } else if (update.paymentStatus === 'rejected') {
+              } else if (update.paymentStatus === 'rejected' || update.status === 'cancelled') {
                 setGuestPaymentStatus('rejected');
                 setGuestRejectReason(update.order?.cancelReason || 'Nhân viên đã từ chối đơn hàng');
                 onRefresh();
@@ -1534,25 +1568,35 @@ export function OrderHome({
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      Họ và tên khách hàng <span className="text-rose-500">*</span>
+                      Họ và tên khách hàng{' '}
+                      {deliveryMethod === 'room_delivery' ? (
+                        <span className="text-rose-500 font-bold">* (Bắt buộc)</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal text-[10px]">(Không bắt buộc khi ăn tại Canteen)</span>
+                      )}
                     </label>
                     <input
                       type="text"
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
-                      placeholder="Ví dụ: Nguyễn Văn A"
+                      placeholder={deliveryMethod === 'room_delivery' ? 'Ví dụ: Nguyễn Văn A' : 'Ví dụ: Nguyễn Văn A (không bắt buộc)'}
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
                     />
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                      Số điện thoại liên hệ <span className="text-rose-500">*</span>
+                      Số điện thoại liên hệ{' '}
+                      {deliveryMethod === 'room_delivery' ? (
+                        <span className="text-rose-500 font-bold">* (Bắt buộc)</span>
+                      ) : (
+                        <span className="text-slate-400 font-normal text-[10px]">(Không bắt buộc khi ăn tại Canteen)</span>
+                      )}
                     </label>
                     <input
                       type="tel"
                       value={guestPhone}
                       onChange={(e) => setGuestPhone(e.target.value)}
-                      placeholder="Ví dụ: 0912345678"
+                      placeholder={deliveryMethod === 'room_delivery' ? 'Ví dụ: 0912345678' : 'Ví dụ: 0912345678 (không bắt buộc)'}
                       className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-teal-500"
                     />
                   </div>
@@ -1612,7 +1656,11 @@ export function OrderHome({
                         {/* Hình ảnh QR kèm số tiền của bill */}
                         <div className="bg-white p-2.5 rounded-xl shadow-xs border border-teal-200 inline-block mx-auto">
                           <img
-                            src={`https://img.vietqr.io/image/MB-${activeSite?.bankAccountNo || '999988886666'}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(`CT ${activeSite?.code || 'G-GROUP'}`)}&accountName=${encodeURIComponent(activeSite?.bankAccountName || 'CANTEEN G-GROUP')}`}
+                            src={
+                              activeSite?.bankQrImageUrl && !activeSite.bankQrImageUrl.includes('MB-999988886666')
+                                ? activeSite.bankQrImageUrl
+                                : `https://img.vietqr.io/image/${getVietQrBankCode(activeSite?.bankName)}-${activeSite?.bankAccountNo || '999988886666'}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(`CT ${activeSite?.code || 'G-GROUP'}`)}&accountName=${encodeURIComponent(activeSite?.bankAccountName || 'CANTEEN G-GROUP')}`
+                            }
                             alt="VietQR thanh toán suất ăn"
                             className="w-44 h-44 object-contain mx-auto rounded-lg"
                           />
@@ -1725,7 +1773,7 @@ export function OrderHome({
                 onClick={handlePlaceOrder}
                 disabled={
                   submitting ||
-                  (isGuest && (!guestName.trim() || !guestPhone.trim())) ||
+                  (isGuest && deliveryMethod === 'room_delivery' && (!guestName.trim() || !guestPhone.trim() || !roomNumber.trim())) ||
                   (!isGuest && (
                     (!timeStatus.isOpen && !exceptionToken.trim()) ||
                     tokenValidation?.status === 'invalid' ||
