@@ -137,37 +137,56 @@ export default function App() {
     }
   }, []);
 
-  const refreshPortalData = useCallback(async (tables?: string[]) => {
+  const refreshPortalData = useCallback(async (siteOrTables?: string | string[], tables?: string[]) => {
     if (isRefreshingPortalRef.current) {
       pendingRefreshPortalRef.current = true;
       return;
     }
     isRefreshingPortalRef.current = true;
     try {
-      const shouldFetchAll = !tables || tables.length === 0;
-      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
-      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
-      const needUsers = shouldFetchAll || tables.includes('users');
-      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens');
-      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+      let targetSite: string | undefined = undefined;
+      let targetTables: string[] | undefined = undefined;
+
+      if (typeof siteOrTables === 'string') {
+        targetSite = siteOrTables;
+        targetTables = tables;
+      } else if (Array.isArray(siteOrTables)) {
+        targetTables = siteOrTables;
+      }
+
+      const activeProfile = userRef.current;
+      const isSuper = activeProfile?.role === 'super_admin';
+      const effectiveSite: SiteCode = isSuper
+        ? ((targetSite as SiteCode) || getSelectedSiteCode())
+        : (activeProfile?.siteId === 'g_group' ? 'g_group' : 'hung_vuong');
+
+      setSelectedSiteCodeState(effectiveSite);
+      setSelectedSiteCode(effectiveSite);
+
+      const shouldFetchAll = !targetTables || targetTables.length === 0;
+      const needMenu = shouldFetchAll || (targetTables ? targetTables.includes('menu_items') || targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      const needOrders = shouldFetchAll || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      const needUsers = shouldFetchAll || (targetTables ? targetTables.includes('users') : false);
+      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') : false);
+      const needTimeGate = targetTables ? targetTables.includes('settings') || targetTables.includes('system_settings') : false;
 
       const promises: Promise<any>[] = [];
       const keys: string[] = [];
 
       if (needMenu) {
-        promises.push(getAllMenuItems());
+        promises.push(getAllMenuItems({ siteId: effectiveSite }));
         keys.push('menu');
       }
       if (needOrders) {
-        promises.push(getOrders());
+        promises.push(getOrders({ siteId: effectiveSite }));
         keys.push('orders');
       }
       if (needUsers) {
-        promises.push(getUsers());
+        promises.push(getUsers(effectiveSite));
         keys.push('users');
       }
       if (needTokens) {
-        promises.push(getQRTokens());
+        promises.push(getQRTokens(effectiveSite));
         keys.push('tokens');
       }
       if (needTimeGate) {
@@ -227,9 +246,12 @@ export default function App() {
         if (profile) {
           setShowEntryModal(false);
           setGuestMode(false);
-          if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
+          if (['super_admin', 'admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
-            refreshPortalData();
+            const targetSite = profile.role === 'super_admin' ? getSelectedSiteCode() : (profile.siteId === 'g_group' ? 'g_group' : 'hung_vuong');
+            setSelectedSiteCodeState(targetSite);
+            setSelectedSiteCode(targetSite);
+            refreshPortalData(targetSite);
           } else {
             setCurrentView('order');
             const [ordersRes] = await Promise.allSettled([
@@ -502,9 +524,13 @@ export default function App() {
       <LoginPage
         onSuccess={async (profile) => {
           setUser(profile);
-          if (['admin', 'data_entry', 'executive'].includes(profile.role)) {
+          userRef.current = profile;
+          if (['super_admin', 'admin', 'data_entry', 'executive'].includes(profile.role)) {
             setCurrentView('portal');
-            refreshPortalData();
+            const targetSite = profile.role === 'super_admin' ? getSelectedSiteCode() : (profile.siteId === 'g_group' ? 'g_group' : 'hung_vuong');
+            setSelectedSiteCodeState(targetSite);
+            setSelectedSiteCode(targetSite);
+            refreshPortalData(targetSite);
           } else {
             setCurrentView('order');
             refreshOrderData(profile);
@@ -525,7 +551,7 @@ export default function App() {
     );
   }
 
-  const isManagementRole = Boolean(user && ['admin', 'data_entry', 'executive'].includes(user.role));
+  const isManagementRole = Boolean(user && ['super_admin', 'admin', 'data_entry', 'executive'].includes(user.role));
 
   // Kiểm tra tài khoản có bị vô hiệu hóa không
   const isUserDisabled = Boolean(

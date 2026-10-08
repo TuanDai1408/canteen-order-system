@@ -13,11 +13,14 @@ import {
   logout,
   getCachedMenu,
   getCachedOrders,
+  getSelectedSiteCode,
+  setSelectedSiteCode,
   type UserProfile,
   type MenuItem,
   type Order,
   type QRExceptionToken,
   type TimeGateStatus,
+  type SiteCode,
 } from '@canteen/shared';
 import { LoginPage } from './components/LoginPage';
 import { PortalDashboard } from './components/PortalDashboard';
@@ -35,38 +38,71 @@ export default function App() {
   const isMountedRef = useRef(true);
   const isRefreshingRef = useRef(false);
   const pendingRefreshRef = useRef(false);
+  const userRef = useRef<UserProfile | null>(null);
+  userRef.current = user;
 
-  const refresh = useCallback(async (tables?: string[]) => {
+  const currentSiteRef = useRef<SiteCode>(getSelectedSiteCode());
+
+  const getEffectiveSite = useCallback((profile: UserProfile | null, targetSiteCode?: string): SiteCode => {
+    if (!profile) return 'hung_vuong';
+    if (profile.role === 'super_admin') {
+      if (targetSiteCode === 'hung_vuong' || targetSiteCode === 'g_group') {
+        return targetSiteCode;
+      }
+      return currentSiteRef.current || getSelectedSiteCode();
+    }
+    // Đối với admin và staff thông thường: BẮT BUỘC theo profile.siteId
+    return profile.siteId === 'g_group' ? 'g_group' : 'hung_vuong';
+  }, []);
+
+  const refresh = useCallback(async (siteOrTables?: string | string[], tables?: string[]) => {
     if (isRefreshingRef.current) {
       pendingRefreshRef.current = true;
       return;
     }
     isRefreshingRef.current = true;
     try {
-      const shouldFetchAll = !tables || tables.length === 0;
-      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
-      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
-      const needUsers = shouldFetchAll || tables.includes('users');
-      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens');
-      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+      let targetSite: string | undefined = undefined;
+      let targetTables: string[] | undefined = undefined;
+
+      if (typeof siteOrTables === 'string') {
+        targetSite = siteOrTables;
+        targetTables = tables;
+      } else if (Array.isArray(siteOrTables)) {
+        targetTables = siteOrTables;
+      }
+
+      const activeProfile = userRef.current;
+      const effectiveSite = getEffectiveSite(activeProfile, targetSite);
+      currentSiteRef.current = effectiveSite;
+
+      // Đồng bộ vào localStorage nếu là super_admin chuyển site hoặc bảo vệ admin cố định site
+      setSelectedSiteCode(effectiveSite);
+
+      const shouldFetchAll = !targetTables || targetTables.length === 0;
+      const needMenu = shouldFetchAll || (targetTables ? targetTables.includes('menu_items') || targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      const needOrders = shouldFetchAll || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      const needUsers = shouldFetchAll || (targetTables ? targetTables.includes('users') : false);
+      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') : false);
+      const needTimeGate = targetTables ? targetTables.includes('settings') || targetTables.includes('system_settings') : false;
 
       const promises: Promise<any>[] = [];
       const keys: string[] = [];
 
       if (needMenu) {
-        promises.push(getAllMenuItems());
+        promises.push(getAllMenuItems({ siteId: effectiveSite }));
         keys.push('menu');
       }
       if (needOrders) {
-        promises.push(getOrders());
+        promises.push(getOrders({ siteId: effectiveSite }));
         keys.push('orders');
       }
       if (needUsers) {
-        promises.push(getUsers());
+        promises.push(getUsers(effectiveSite));
         keys.push('users');
       }
       if (needTokens) {
-        promises.push(getQRTokens());
+        promises.push(getQRTokens(effectiveSite));
         keys.push('tokens');
       }
       if (needTimeGate) {
@@ -100,33 +136,38 @@ export default function App() {
         refresh();
       }
     }
-  }, []);
+  }, [getEffectiveSite]);
 
   // 1. Khởi tạo dữ liệu ban đầu
   useEffect(() => {
     isMountedRef.current = true;
     async function init() {
       try {
-        const [profileRes, mRes, _] = await Promise.allSettled([
+        const [profileRes, _] = await Promise.allSettled([
           getCurrentUserProfile(),
-          getAllMenuItems(),
           fetchTimeGateConfig(),
         ]);
         if (!isMountedRef.current) return;
-        if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
-          setMenu(mRes.value);
-        }
         setTimeStatus(getTimeGateStatus());
         const profile = profileRes.status === 'fulfilled' ? profileRes.value : null;
         setUser(profile);
+        userRef.current = profile;
 
         if (profile) {
-          const [oRes, uRes, tRes] = await Promise.allSettled([
-            getOrders(),
-            getUsers(),
-            getQRTokens(),
+          const effectiveSite = getEffectiveSite(profile);
+          currentSiteRef.current = effectiveSite;
+          setSelectedSiteCode(effectiveSite);
+
+          const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
+            getAllMenuItems({ siteId: effectiveSite }),
+            getOrders({ siteId: effectiveSite }),
+            getUsers(effectiveSite),
+            getQRTokens(effectiveSite),
           ]);
           if (!isMountedRef.current) return;
+          if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
+            setMenu(mRes.value);
+          }
           if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
             setOrders(oRes.value);
           }
@@ -149,7 +190,7 @@ export default function App() {
     return () => {
       isMountedRef.current = false;
     };
-  }, []);
+  }, [getEffectiveSite]);
 
   // 2. Kênh Realtime Supabase: CHỈ kích hoạt sau khi đã có user đăng nhập, dọn dẹp khi logout/unmount
   useEffect(() => {
@@ -242,13 +283,14 @@ export default function App() {
       <LoginPage
         onSuccess={async (profile) => {
           setUser(profile);
+          userRef.current = profile;
           await refresh();
         }}
       />
     );
   }
 
-  if (!['admin', 'data_entry', 'executive'].includes(user.role)) {
+  if (!['super_admin', 'admin', 'data_entry', 'executive'].includes(user.role)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6 font-sans">
         <div className="bg-white border border-slate-200 rounded-3xl shadow-xl shadow-slate-200/50 p-8 max-w-md w-full text-center space-y-4">
@@ -257,7 +299,7 @@ export default function App() {
           </div>
           <h1 className="text-lg font-extrabold text-slate-900">Không có quyền truy cập Portal</h1>
           <p className="text-slate-600 text-xs leading-relaxed">
-            Portal chỉ dành cho Quản lý Căn tin, Nhân viên Bếp và Ban Giám hiệu.
+            Portal chỉ dành cho Quản trị Cấp cao, Quản lý Căn tin, Nhân viên Bếp và Ban Giám hiệu.
             <br />
             Tài khoản hiện tại: <strong className="text-slate-900 font-bold">{user.name}</strong> ({user.roleTitle || user.role})
           </p>

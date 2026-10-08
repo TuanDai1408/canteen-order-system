@@ -1,4 +1,4 @@
-export type UserRole = 'teacher' | 'admin' | 'data_entry' | 'executive';
+export type UserRole = 'teacher' | 'admin' | 'super_admin' | 'data_entry' | 'executive';
 
 export type SiteCode = 'hung_vuong' | 'g_group';
 

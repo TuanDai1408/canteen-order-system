@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type {
   UserProfile,
+  UserRole,
   MenuItem,
   Order,
   OrderStatus,
@@ -560,9 +561,16 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
         user.email?.includes('bep') ||
         user.email?.includes('hieutruong');
 
-      const role =
+      const isSuperAdmin =
+        user.user_metadata?.role === 'super_admin' ||
+        user.email?.includes('superadmin') ||
+        user.email === 'trantuandai2508@gmail.com';
+
+      const role: UserRole =
         user.user_metadata?.role ||
-        (user.email?.includes('admin') || user.email === 'trantuandai2508@gmail.com'
+        (isSuperAdmin
+          ? 'super_admin'
+          : user.email?.includes('admin')
           ? 'admin'
           : user.email?.includes('bep')
           ? 'data_entry'
@@ -571,7 +579,9 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
           : 'teacher');
 
       const roleTitle =
-        role === 'admin'
+        role === 'super_admin'
+          ? 'Quản trị Cấp cao'
+          : role === 'admin'
           ? 'Quản lý Căn tin'
           : role === 'data_entry'
           ? 'Nhân viên Bếp'
@@ -581,6 +591,10 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
 
       const isActive = isStaff ? true : false;
       const initialWallet = isStaff ? 2000000 : 0;
+      const assignedSiteId =
+        role === 'super_admin'
+          ? (user.user_metadata?.site_id || null)
+          : (user.user_metadata?.site_id || 'hung_vuong');
 
       const newRow = {
         name: user.user_metadata?.full_name || user.email?.split('@')[0] || 'Cán bộ Căn tin',
@@ -591,6 +605,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
         wallet_balance: initialWallet,
         monthly_allowance: initialWallet,
         is_active: isActive,
+        site_id: assignedSiteId,
       };
 
       try {
@@ -606,6 +621,7 @@ export async function getCurrentUserProfile(): Promise<UserProfile | null> {
         const fallbackProfile: UserProfile = {
           id: user.id,
           authUserId: user.id,
+          siteId: assignedSiteId || undefined,
           name: newRow.name,
           role,
           roleTitle,
@@ -643,9 +659,9 @@ export async function getUsers(siteId?: string): Promise<UserProfile[]> {
     let query = supabase.from('users').select('*').order('name');
     if (siteId) {
       if (siteId === 'hung_vuong') {
-        query = query.or('site_id.eq.hung_vuong,site_id.is.null,role.eq.admin');
+        query = query.or('site_id.eq.hung_vuong,site_id.is.null');
       } else {
-        query = query.or(`site_id.eq.${siteId},role.eq.admin`);
+        query = query.eq('site_id', siteId);
       }
     }
 
@@ -655,7 +671,10 @@ export async function getUsers(siteId?: string): Promise<UserProfile[]> {
       'Timeout fetch users'
     );
     if (!error && data) {
-      const list = data.map(mapUser);
+      let list = data.map(mapUser);
+      if (siteId) {
+        list = list.filter((u) => (siteId === 'hung_vuong' ? !u.siteId || u.siteId === 'hung_vuong' : u.siteId === siteId));
+      }
       setCachedUsers(list);
       return list;
     }
@@ -665,7 +684,7 @@ export async function getUsers(siteId?: string): Promise<UserProfile[]> {
       if (fbData) {
         let list = fbData.map(mapUser);
         if (siteId) {
-          list = list.filter((u) => u.role === 'admin' || !u.siteId || u.siteId === siteId);
+          list = list.filter((u) => (siteId === 'hung_vuong' ? !u.siteId || u.siteId === 'hung_vuong' : u.siteId === siteId));
         }
         setCachedUsers(list);
         return list;
@@ -674,14 +693,14 @@ export async function getUsers(siteId?: string): Promise<UserProfile[]> {
     }
     const cached = getCachedUsers();
     if (siteId) {
-      return cached.filter((u) => u.role === 'admin' || !u.siteId || u.siteId === siteId);
+      return cached.filter((u) => (siteId === 'hung_vuong' ? !u.siteId || u.siteId === 'hung_vuong' : u.siteId === siteId));
     }
     return cached;
   } catch (err) {
     console.warn('[getUsers error]:', err);
     const cached = getCachedUsers();
     if (siteId) {
-      return cached.filter((u) => u.role === 'admin' || !u.siteId || u.siteId === siteId);
+      return cached.filter((u) => (siteId === 'hung_vuong' ? !u.siteId || u.siteId === 'hung_vuong' : u.siteId === siteId));
     }
     return cached;
   }
@@ -729,13 +748,22 @@ export async function createUserByAdmin(
   }
 
   const roleTitle =
-    params.role === 'admin'
+    params.role === 'super_admin'
+      ? 'Quản trị Cấp cao'
+      : params.role === 'admin'
       ? 'Quản lý Căn tin'
       : params.role === 'data_entry'
       ? 'Nhân viên Bếp'
       : params.role === 'executive'
       ? 'Ban Giám hiệu'
       : 'Giáo viên';
+
+  // Nếu actor là super_admin: cho phép chọn site_id (hoặc null nếu tạo super_admin khác).
+  // Nếu actor là admin thường / nhân viên: BẮT BUỘC gán site_id = site của actor
+  const assignedSiteId =
+    actor.role === 'super_admin'
+      ? (params.role === 'super_admin' ? (params.siteId || null) : (params.siteId || 'hung_vuong'))
+      : (actor.siteId || 'hung_vuong');
 
   const newRow: Record<string, any> = {
     id: authUserId && isValidUuid(authUserId) ? authUserId : userUuid,
@@ -750,7 +778,7 @@ export async function createUserByAdmin(
     wallet_balance: params.walletBalance ?? MONTHLY_WALLET_ALLOWANCE,
     monthly_allowance: params.monthlyAllowance ?? MONTHLY_WALLET_ALLOWANCE,
     is_active: true,
-    site_id: params.siteId || 'hung_vuong',
+    site_id: assignedSiteId,
   };
 
   let { data, error } = await supabase.from('users').upsert(newRow).select().single();
@@ -1278,10 +1306,16 @@ export async function createMenuItem(
   actor: UserProfile
 ): Promise<MenuItem> {
   checkSupabase();
-  const availableSiteIds =
+  let availableSiteIds =
     item.availableSiteIds && item.availableSiteIds.length > 0
       ? item.availableSiteIds
       : ['hung_vuong', 'g_group'];
+
+  // Nếu actor không phải super_admin, khóa món ăn chỉ thuộc site của actor
+  if (actor.role !== 'super_admin') {
+    const actorSite = actor.siteId || 'hung_vuong';
+    availableSiteIds = [actorSite];
+  }
 
   let data: any = null;
   let insertError: any = null;
@@ -3731,16 +3765,22 @@ export async function createQRToken(
   actor: UserProfile,
   note?: string,
   expiresInMinutes = 30,
-  quantity = 1
+  quantity = 1,
+  siteId?: string
 ): Promise<QRExceptionToken> {
   checkSupabase();
+  const targetSiteId =
+    actor.role === 'super_admin'
+      ? (siteId || 'hung_vuong')
+      : (actor.siteId || 'hung_vuong');
+
   const token = `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
   const cleanUserNote = note ? note.replace(/\[Số lượng:\s*\d+\s*(suất|lượt)\]\s*/gi, '').trim() : '';
   const formattedNote = cleanUserNote ? `[Số lượng: ${quantity} lượt] ${cleanUserNote}` : `[Số lượng: ${quantity} lượt]`;
 
   let insertedData: any = null;
-  // Try inserting with quantity and used_count
+  // Try inserting with quantity, used_count, and site_id
   try {
     const { data, error } = await supabase
       .from('qr_exception_tokens')
@@ -3753,6 +3793,7 @@ export async function createQRToken(
         quantity,
         used_count: 0,
         is_used: false,
+        site_id: targetSiteId,
       })
       .select()
       .single();
@@ -3760,7 +3801,7 @@ export async function createQRToken(
     if (!error && data) {
       insertedData = data;
     } else if (error) {
-      // Retry without quantity/used_count column if schema does not have it yet
+      // Retry without site_id / quantity if schema does not have it yet
       const { data: retryData, error: retryErr } = await supabase
         .from('qr_exception_tokens')
         .insert({
@@ -3781,6 +3822,7 @@ export async function createQRToken(
   }
 
   const newToken = mapQRToken(insertedData);
+  newToken.siteId = targetSiteId;
   newToken.quantity = quantity;
   newToken.usedCount = 0;
   newToken.isUsed = false;
@@ -3789,15 +3831,25 @@ export async function createQRToken(
   return newToken;
 }
 
-export async function getQRTokens(): Promise<QRExceptionToken[]> {
+export async function getQRTokens(siteId?: string): Promise<QRExceptionToken[]> {
   checkSupabase();
   try {
+    let query = supabase
+      .from('qr_exception_tokens')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (siteId) {
+      if (siteId === 'hung_vuong') {
+        query = query.or('site_id.eq.hung_vuong,site_id.is.null');
+      } else {
+        query = query.eq('site_id', siteId);
+      }
+    }
+
     const { data, error } = await withQueryTimeout(
-      supabase
-        .from('qr_exception_tokens')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50),
+      query,
       12000,
       'Timeout fetch qr_exception_tokens'
     );
@@ -3805,7 +3857,7 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
     const allOrders = getCachedOrders();
 
     if (!error && data) {
-      const list = data.map((row) => {
+      let list = data.map((row) => {
         const tokenObj = mapQRToken(row);
         const actualOrders = allOrders.filter(
           (o) =>
@@ -3818,6 +3870,9 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
         tokenObj.isUsed = tokenObj.isUsed || dynamicUsed >= qty;
         return tokenObj;
       });
+      if (siteId) {
+        list = list.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
+      }
       setCachedQRTokens(list);
       return list;
     }
@@ -3826,7 +3881,7 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
     }
 
     const cached = getCachedQRTokens();
-    const recalculated = cached.map((t) => {
+    let recalculated = cached.map((t) => {
       const actualOrders = allOrders.filter(
         (o) =>
           (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === t.token.toUpperCase()) ||
@@ -3840,11 +3895,18 @@ export async function getQRTokens(): Promise<QRExceptionToken[]> {
         isUsed: t.isUsed || dynamicUsed >= qty,
       };
     });
+    if (siteId) {
+      recalculated = recalculated.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
+    }
     setCachedQRTokens(recalculated);
     return recalculated;
   } catch (err) {
     console.warn('[getQRTokens error]:', err);
-    return getCachedQRTokens();
+    let cached = getCachedQRTokens();
+    if (siteId) {
+      cached = cached.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
+    }
+    return cached;
   }
 }
 
@@ -4749,6 +4811,7 @@ function mapUser(row: any): UserProfile {
   return {
     id: row.id,
     authUserId: row.auth_user_id || undefined,
+    siteId: row.site_id || undefined,
     name: row.name,
     role: row.role,
     roleTitle: row.role_title || '',
@@ -5435,6 +5498,7 @@ function mapQRToken(row: any): QRExceptionToken {
 
   return {
     token: row.token,
+    siteId: row.site_id || undefined,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     createdBy: row.created_by,

@@ -198,7 +198,7 @@ interface Props {
   users: UserProfile[];
   tokens: QRExceptionToken[];
   timeStatus: TimeGateStatus;
-  onRefresh: () => void;
+  onRefresh: (siteId?: string, tables?: string[]) => void | Promise<void>;
   onLogout: () => void;
   onSwitchToOrder?: () => void;
 }
@@ -223,8 +223,26 @@ export function PortalDashboard({
   const [seeding, setSeeding] = useState(false);
 
   // Multi-site & Active Site states
+  const isSuperAdmin = currentUser.role === 'super_admin';
+  const userSiteCode: SiteCode = currentUser.siteId === 'g_group' ? 'g_group' : 'hung_vuong';
+
   const [sitesList, setSitesList] = useState<Site[]>(() => getCachedSites());
-  const [selectedSiteCode, setSelectedSiteCodeState] = useState<SiteCode>(() => getSelectedSiteCode());
+  // Đối với super_admin: cho phép lấy site đang chọn. Đối với admin/staff: BẮT BUỘC chỉ được lấy đúng site của mình
+  const [selectedSiteCode, setSelectedSiteCodeState] = useState<SiteCode>(() => {
+    if (!isSuperAdmin) {
+      return userSiteCode;
+    }
+    return getSelectedSiteCode();
+  });
+
+  // Client protection: Nếu không phải super_admin, luôn ép về site của profile, chặn URL & localStorage
+  useEffect(() => {
+    if (!isSuperAdmin) {
+      setSelectedSiteCodeState(userSiteCode);
+      setSelectedSiteCode(userSiteCode);
+    }
+  }, [isSuperAdmin, userSiteCode]);
+
   const activeSite = useMemo(() => {
     return (
       sitesList.find((s) => s.code === selectedSiteCode) ||
@@ -255,12 +273,13 @@ export function PortalDashboard({
   }, []);
 
   const handleSwitchSite = (code: SiteCode) => {
+    if (!isSuperAdmin) return;
     setSelectedSiteCode(code);
     setSelectedSiteCodeState(code);
     if (code === 'g_group' && (tab === 'users' || tab === 'qr')) {
       setTab('overview');
     }
-    onRefresh();
+    onRefresh(code);
   };
 
   // Cấu hình Ngân hàng & Mã QR chuyển khoản theo cơ sở
@@ -452,6 +471,7 @@ export function PortalDashboard({
     defaultRoom: string;
     walletBalance: number;
     monthlyAllowance: number;
+    siteId: string;
   }>({
     name: '',
     email: '',
@@ -462,6 +482,7 @@ export function PortalDashboard({
     defaultRoom: '',
     walletBalance: MONTHLY_WALLET_ALLOWANCE,
     monthlyAllowance: MONTHLY_WALLET_ALLOWANCE,
+    siteId: '',
   });
 
   // Kiểm tra kết nối QZ Tray và tải danh sách máy in từ hệ điều hành
@@ -1192,7 +1213,7 @@ export function PortalDashboard({
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await onRefresh();
+    await onRefresh(isSuperAdmin ? selectedSiteCode : userSiteCode);
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
@@ -1342,28 +1363,39 @@ export function PortalDashboard({
     }).length;
   }, [orders, selectedSiteCode, menu]);
 
-  // Disabled users count
+  // Disabled users count (chỉ đếm cán bộ thuộc site đang chọn)
   const disabledUsersCount = useMemo(() => {
-    return users.filter((u) => Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0))).length;
-  }, [users]);
+    return users.filter((u) => {
+      const matchSite = selectedSiteCode === 'g_group' ? u.siteId === 'g_group' : !u.siteId || u.siteId === 'hung_vuong';
+      return matchSite && Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
+    }).length;
+  }, [users, selectedSiteCode]);
 
-  // Pending users count for approval
+  // Pending users count for approval (chỉ đếm cán bộ thuộc site đang chọn)
   const pendingUsersCount = useMemo(() => {
-    return users.filter((u) => Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0)).length;
-  }, [users]);
+    return users.filter((u) => {
+      const matchSite = selectedSiteCode === 'g_group' ? u.siteId === 'g_group' : !u.siteId || u.siteId === 'hung_vuong';
+      return matchSite && Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
+    }).length;
+  }, [users, selectedSiteCode]);
 
-  // Active users count
+  // Active users count (chỉ đếm cán bộ thuộc site đang chọn)
   const activeUsersCount = useMemo(() => {
     return users.filter((u) => {
+      const matchSite = selectedSiteCode === 'g_group' ? u.siteId === 'g_group' : !u.siteId || u.siteId === 'hung_vuong';
+      if (!matchSite) return false;
       const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
       const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
       return !isDis && !isPend;
     }).length;
-  }, [users]);
+  }, [users, selectedSiteCode]);
 
-  // Filtered Users
+  // Filtered Users (CHỈ lọc cán bộ đúng site đang chọn)
   const filteredUsers = useMemo(() => {
     return users.filter((u) => {
+      const matchSite = selectedSiteCode === 'g_group' ? u.siteId === 'g_group' : !u.siteId || u.siteId === 'hung_vuong';
+      if (!matchSite) return false;
+
       const isDis = Boolean(u.isDisabled || (u.isActive === false && Number(u.walletBalance ?? 0) > 0));
       const isPend = Boolean(!u.isDisabled && u.isActive === false && Number(u.walletBalance ?? 0) === 0);
       const isAct = !isDis && !isPend;
@@ -1383,7 +1415,7 @@ export function PortalDashboard({
         (u.department || '').toLowerCase().includes(userSearch.toLowerCase());
       return matchStatus && matchSearch;
     });
-  }, [users, userSearch, userStatusFilter]);
+  }, [users, selectedSiteCode, userSearch, userStatusFilter]);
 
   // User map for quick profile lookup in orders and overview
   const userMap = useMemo(() => {
@@ -1462,7 +1494,7 @@ export function PortalDashboard({
   // Enriched QR Tokens with real-time dynamic usage from Orders
   const enrichedTokens = useMemo(() => {
     return tokens
-      .filter((t) => !t.siteId || t.siteId === selectedSiteCode)
+      .filter((t) => (selectedSiteCode === 'g_group' ? t.siteId === 'g_group' : !t.siteId || t.siteId === 'hung_vuong'))
       .map((t) => {
       const cleanToken = t.token.trim().toUpperCase();
       const matchingOrders = orders.filter(
@@ -1638,7 +1670,7 @@ export function PortalDashboard({
   const handleCreateQR = async () => {
     setIsCreatingQR(true);
     try {
-      const token = await createQRToken(currentUser, qrNote, qrExpiryMins, qrQuantity);
+      const token = await createQRToken(currentUser, qrNote, qrExpiryMins, qrQuantity, selectedSiteCode);
       setMsg({
         type: 'ok',
         text: `Đã tạo mã QR: ${token.token} (Hiệu lực ${qrExpiryMins} phút, số lượt đặt: ${qrQuantity} lượt)`,
@@ -1759,6 +1791,7 @@ export function PortalDashboard({
             'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=500&auto=format&fit=crop',
           isActive: true,
           forDate: getTomorrowStr(),
+          availableSiteIds: [selectedSiteCode],
         },
         currentUser
       );
@@ -1881,6 +1914,7 @@ export function PortalDashboard({
     e.preventDefault();
     setIsCreatingUser(true);
     try {
+      const targetSiteId = isSuperAdmin ? (newUserForm.siteId || selectedSiteCode) : userSiteCode;
       const created = await createUserByAdmin(
         {
           name: newUserForm.name.trim(),
@@ -1892,12 +1926,13 @@ export function PortalDashboard({
           defaultRoom: newUserForm.defaultRoom.trim(),
           walletBalance: Number(newUserForm.walletBalance),
           monthlyAllowance: Number(newUserForm.monthlyAllowance),
+          siteId: targetSiteId,
         },
         currentUser
       );
       setMsg({
         type: 'ok',
-        text: `Đã tạo thành viên "${created.name}" (${created.email}) đồng bộ trên Supabase thành công!`,
+        text: `Đã tạo thành viên "${created.name}" (${created.email}) thuộc cơ sở ${targetSiteId === 'hung_vuong' ? 'ĐH Hùng Vương' : 'G-Group'} thành công!`,
       });
       setIsAddUserOpen(false);
       setNewUserForm({
@@ -1910,8 +1945,9 @@ export function PortalDashboard({
         defaultRoom: '',
         walletBalance: MONTHLY_WALLET_ALLOWANCE,
         monthlyAllowance: MONTHLY_WALLET_ALLOWANCE,
+        siteId: '',
       });
-      onRefresh();
+      onRefresh(isSuperAdmin ? selectedSiteCode : userSiteCode);
     } catch (err: any) {
       setMsg({ type: 'err', text: err.message || 'Lỗi khi tạo thành viên mới' });
     } finally {
@@ -2029,15 +2065,17 @@ export function PortalDashboard({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Quick Site Switch Mobile */}
-          <button
-            onClick={() => handleSwitchSite(selectedSiteCode === 'hung_vuong' ? 'g_group' : 'hung_vuong')}
-            className="px-2 py-1 bg-slate-100 text-slate-700 font-bold rounded-lg text-[11px] border border-slate-200 cursor-pointer min-h-[38px] flex items-center gap-1"
-            title="Đổi cơ sở quản lý"
-          >
-            <RotateCcw className="w-3 h-3 text-indigo-600" />
-            <span>{selectedSiteCode === 'hung_vuong' ? 'G-Group' : 'Hùng Vương'}</span>
-          </button>
+          {/* Quick Site Switch Mobile: CHỈ hiện khi là super_admin */}
+          {isSuperAdmin && (
+            <button
+              onClick={() => handleSwitchSite(selectedSiteCode === 'hung_vuong' ? 'g_group' : 'hung_vuong')}
+              className="px-2 py-1 bg-slate-100 text-slate-700 font-bold rounded-lg text-[11px] border border-slate-200 cursor-pointer min-h-[38px] flex items-center gap-1"
+              title="Đổi cơ sở quản lý (Dành riêng cho Super Admin)"
+            >
+              <RotateCcw className="w-3 h-3 text-indigo-600" />
+              <span>{selectedSiteCode === 'hung_vuong' ? 'G-Group' : 'Hùng Vương'}</span>
+            </button>
+          )}
 
           <button
             onClick={handleRefresh}
@@ -2096,34 +2134,48 @@ export function PortalDashboard({
                 {selectedSiteCode === 'hung_vuong' ? 'ĐH Hùng Vương' : 'G-Group'}
               </span>
             </div>
-            <div className="grid grid-cols-2 gap-1.5 bg-slate-200/60 p-1 rounded-xl">
-              <button
-                type="button"
-                onClick={() => handleSwitchSite('hung_vuong')}
-                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                  selectedSiteCode === 'hung_vuong'
-                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Đại học Hùng Vương (Giáo viên / Cán bộ & Ví suất ăn)"
-              >
-                <Building2 className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">Hùng Vương</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSwitchSite('g_group')}
-                className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
-                  selectedSiteCode === 'g_group'
-                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Canteen G-Group (Khách lẻ & Thanh toán VietQR)"
-              >
-                <Store className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">G-Group</span>
-              </button>
-            </div>
+            {isSuperAdmin ? (
+              <div className="grid grid-cols-2 gap-1.5 bg-slate-200/60 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSite('hung_vuong')}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    selectedSiteCode === 'hung_vuong'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Đại học Hùng Vương (Giáo viên / Cán bộ & Ví suất ăn)"
+                >
+                  <Building2 className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">Hùng Vương</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSite('g_group')}
+                  className={`py-2 px-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                    selectedSiteCode === 'g_group'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-extrabold border border-slate-200/80'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Canteen G-Group (Khách lẻ & Thanh toán VietQR)"
+                >
+                  <Store className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">G-Group</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 p-2 bg-white rounded-xl border border-slate-200 shadow-2xs">
+                <div className="w-6 h-6 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center shrink-0">
+                  {userSiteCode === 'hung_vuong' ? <Building2 className="w-3.5 h-3.5" /> : <Store className="w-3.5 h-3.5" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <span className="text-xs font-bold text-slate-800 block truncate">
+                    {userSiteCode === 'hung_vuong' ? 'Đại học Hùng Vương' : 'Canteen G-Group'}
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-medium">Cơ sở gắn cố định với tài khoản</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Timegate indicator in sidebar */}
@@ -2233,34 +2285,41 @@ export function PortalDashboard({
 
           <div className="flex items-center gap-3">
             {/* Quick Site Switcher in Desktop Header */}
-            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
-              <button
-                type="button"
-                onClick={() => handleSwitchSite('hung_vuong')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                  selectedSiteCode === 'hung_vuong'
-                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Cơ sở Đại học Hùng Vương"
-              >
-                <Building2 className="w-3.5 h-3.5" />
-                <span>ĐH Hùng Vương</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSwitchSite('g_group')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
-                  selectedSiteCode === 'g_group'
-                    ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
-                    : 'text-slate-600 hover:text-slate-900'
-                }`}
-                title="Cơ sở Canteen G-Group"
-              >
-                <Store className="w-3.5 h-3.5" />
-                <span>Canteen G-Group</span>
-              </button>
-            </div>
+            {isSuperAdmin ? (
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSite('hung_vuong')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                    selectedSiteCode === 'hung_vuong'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Cơ sở Đại học Hùng Vương"
+                >
+                  <Building2 className="w-3.5 h-3.5" />
+                  <span>ĐH Hùng Vương</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchSite('g_group')}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer min-h-[34px] ${
+                    selectedSiteCode === 'g_group'
+                      ? 'bg-white text-indigo-700 shadow-2xs font-extrabold'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                  title="Cơ sở Canteen G-Group"
+                >
+                  <Store className="w-3.5 h-3.5" />
+                  <span>Canteen G-Group</span>
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 min-h-[34px]">
+                {userSiteCode === 'hung_vuong' ? <Building2 className="w-3.5 h-3.5 text-indigo-600" /> : <Store className="w-3.5 h-3.5 text-indigo-600" />}
+                <span>{userSiteCode === 'hung_vuong' ? 'ĐH Hùng Vương' : 'Canteen G-Group'}</span>
+              </div>
+            )}
 
             {/* Quick Auto-Print Toggle in Header */}
             <button
@@ -5172,22 +5231,29 @@ export function PortalDashboard({
                   </div>
 
                   {/* Site Switcher Pill */}
-                  <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
-                    {sitesList.map((st) => (
-                      <button
-                        key={st.code}
-                        type="button"
-                        onClick={() => handleSwitchSite(st.code)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
-                          selectedSiteCode === st.code
-                            ? 'bg-white text-indigo-700 shadow-2xs'
-                            : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                      >
-                        {st.name}
-                      </button>
-                    ))}
-                  </div>
+                  {isSuperAdmin ? (
+                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl border border-slate-200">
+                      {sitesList.map((st) => (
+                        <button
+                          key={st.code}
+                          type="button"
+                          onClick={() => handleSwitchSite(st.code)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+                            selectedSiteCode === st.code
+                              ? 'bg-white text-indigo-700 shadow-2xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          {st.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 rounded-xl border border-slate-200 text-xs font-bold text-slate-700">
+                      {userSiteCode === 'hung_vuong' ? <Building2 className="w-3.5 h-3.5 text-indigo-600" /> : <Store className="w-3.5 h-3.5 text-indigo-600" />}
+                      <span>{activeSite.name}</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -6397,7 +6463,28 @@ export function PortalDashboard({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Cơ sở trực thuộc
+                  </label>
+                  {isSuperAdmin ? (
+                    <select
+                      value={newUserForm.siteId || selectedSiteCode}
+                      onChange={(e) => setNewUserForm({ ...newUserForm, siteId: e.target.value })}
+                      className="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-600 focus:bg-white"
+                    >
+                      <option value="hung_vuong">Đại học Hùng Vương</option>
+                      <option value="g_group">Canteen G-Group</option>
+                    </select>
+                  ) : (
+                    <div className="w-full px-3 py-2.5 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-700 font-semibold flex items-center gap-1.5 min-h-[38px]">
+                      {userSiteCode === 'hung_vuong' ? <Building2 className="w-3.5 h-3.5 text-indigo-600" /> : <Store className="w-3.5 h-3.5 text-indigo-600" />}
+                      <span>{userSiteCode === 'hung_vuong' ? 'Đại học Hùng Vương' : 'Canteen G-Group'}</span>
+                    </div>
+                  )}
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold text-slate-700 mb-1">
                     Mật khẩu ban đầu <span className="text-rose-500">*</span>
@@ -6426,6 +6513,7 @@ export function PortalDashboard({
                     <option value="teacher">Giáo viên / Cán bộ nhân viên</option>
                     <option value="data_entry">Nhân viên Canteen / Nhập liệu</option>
                     <option value="admin">Quản trị viên (Admin)</option>
+                    {isSuperAdmin && <option value="super_admin">Quản trị Cấp cao (Super Admin)</option>}
                     <option value="executive">Ban Giám Hiệu / Lãnh đạo</option>
                   </select>
                 </div>
