@@ -276,7 +276,7 @@ export function PortalDashboard({
     if (!isSuperAdmin) return;
     setSelectedSiteCode(code);
     setSelectedSiteCodeState(code);
-    if (code === 'g_group' && (tab === 'users' || tab === 'qr')) {
+    if (!isSuperAdmin && code === 'g_group' && (tab === 'users' || tab === 'qr')) {
       setTab('overview');
     }
     onRefresh(code);
@@ -578,6 +578,18 @@ export function PortalDashboard({
       if (!rawOrder) return;
       const orderId = rawOrder.id || rawOrder.order_code || rawOrder.orderCode;
       if (!orderId) return;
+
+      // Kiểm tra cơ sở (Site): Bỏ qua nếu đơn thuộc cơ sở khác
+      const orderSite = rawOrder.site_id || rawOrder.siteId;
+      if (orderSite) {
+        const isMatch = selectedSiteCode === 'g_group'
+          ? orderSite === 'g_group'
+          : !orderSite || orderSite === 'hung_vuong';
+        if (!isMatch) {
+          console.log(`[Auto-Print] Bỏ qua đơn ${orderId}: Thuộc cơ sở khác (${orderSite}).`);
+          return;
+        }
+      }
 
       const currentAutoCfg = getCustomAutoPrintConfig();
       if (!currentAutoCfg.enabled) {
@@ -1329,7 +1341,11 @@ export function PortalDashboard({
             ? o.paymentStatus === 'pending'
             : o.paymentStatus === 'paid' || (!o.paymentStatus && !o.isGuest);
         const orderDate = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
-        const matchDate = !orderDateFilter || orderDateFilter === 'all' || orderDate === orderDateFilter;
+        const matchDate =
+          !orderDateFilter ||
+          orderDateFilter === 'all' ||
+          (orderPaymentFilter === 'pending' && o.paymentStatus === 'pending') ||
+          orderDate === orderDateFilter;
         const matchUnprinted = !onlyUnprintedFilter || !isOrderFullyPrinted(o, menu);
         const matchSearch =
           o.orderCode.toLowerCase().includes(orderSearch.toLowerCase()) ||
@@ -1984,8 +2000,8 @@ export function PortalDashboard({
   };
 
   const isGGroupSite = selectedSiteCode === 'g_group' || activeSite.code === 'g_group';
-  const showStaffTab = !isGGroupSite && activeSite.features?.staffTab !== false;
-  const showQrTab = !isGGroupSite && activeSite.features?.qrException !== false;
+  const showStaffTab = isSuperAdmin || (!isGGroupSite && activeSite.features?.staffTab !== false);
+  const showQrTab = isSuperAdmin || (!isGGroupSite && activeSite.features?.qrException !== false);
 
   const navItems = [
     { id: 'overview' as Tab, label: 'Tổng quan', icon: LayoutDashboard },
@@ -2016,7 +2032,7 @@ export function PortalDashboard({
     ...(showQrTab
       ? [{ id: 'qr' as Tab, label: 'Mã QR Ngoại lệ', icon: QrCode }]
       : []),
-    ...(currentUser?.role === 'admin'
+    ...(currentUser?.role === 'admin' || currentUser?.role === 'super_admin'
       ? [
           { id: 'printers' as Tab, label: 'Cài đặt máy in', icon: Printer },
           { id: 'bank_qr' as Tab, label: 'Mã QR & Ngân hàng', icon: CreditCard },
@@ -2025,14 +2041,16 @@ export function PortalDashboard({
   ];
 
   useEffect(() => {
-    if (isGGroupSite && (tab === 'users' || tab === 'qr')) {
-      setTab('overview');
-    } else if (!showStaffTab && tab === 'users') {
-      setTab('overview');
-    } else if (!showQrTab && tab === 'qr') {
-      setTab('overview');
+    if (!isSuperAdmin) {
+      if (isGGroupSite && (tab === 'users' || tab === 'qr')) {
+        setTab('overview');
+      } else if (!showStaffTab && tab === 'users') {
+        setTab('overview');
+      } else if (!showQrTab && tab === 'qr') {
+        setTab('overview');
+      }
     }
-  }, [isGGroupSite, showStaffTab, showQrTab, tab]);
+  }, [isSuperAdmin, isGGroupSite, showStaffTab, showQrTab, tab]);
 
   const handleSelectTab = (selectedTab: Tab) => {
     setTab(selectedTab);
@@ -3140,7 +3158,10 @@ export function PortalDashboard({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setOrderPaymentFilter('pending')}
+                      onClick={() => {
+                        setOrderPaymentFilter('pending');
+                        setOrderDateFilter('all');
+                      }}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap transition cursor-pointer min-h-[34px] flex items-center gap-1.5 ${
                         orderPaymentFilter === 'pending'
                           ? 'bg-amber-600 text-white shadow-2xs'
@@ -3175,10 +3196,17 @@ export function PortalDashboard({
                   </div>
 
                   {pendingPaymentOrdersCount > 0 && (
-                    <div className="flex items-center gap-1 text-[11px] text-amber-800 bg-amber-50 px-2.5 py-1 rounded-xl border border-amber-200 font-semibold">
-                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                      <span>Có {pendingPaymentOrdersCount} đơn khách lẻ đang chờ bạn xác nhận thanh toán</span>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setOrderPaymentFilter('pending');
+                        setOrderDateFilter('all');
+                      }}
+                      className="flex items-center gap-1.5 text-[11px] text-amber-800 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-xl border border-amber-200 font-semibold cursor-pointer transition shadow-2xs text-left"
+                    >
+                      <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0 animate-bounce" />
+                      <span>Có <strong>{pendingPaymentOrdersCount}</strong> đơn khách lẻ đang chờ bạn xác nhận thanh toán (Bấm để xem)</span>
+                    </button>
                   )}
                 </div>
 
@@ -4801,7 +4829,7 @@ export function PortalDashboard({
           )}
 
           {/* ================= TAB 7: SETUP MÁY IN POS (QZ TRAY) ================= */}
-          {tab === 'printers' && currentUser?.role === 'admin' && (
+          {tab === 'printers' && (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
             <div className="space-y-6 max-w-5xl mx-auto">
               {/* Header & QZ Tray Connection Status Card */}
               <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs space-y-5">
@@ -5210,7 +5238,7 @@ export function PortalDashboard({
           )}
 
           {/* ================= TAB 8: SETUP MÃ QR & NGÂN HÀNG (BANK QR) ================= */}
-          {tab === 'bank_qr' && currentUser?.role === 'admin' && (
+          {tab === 'bank_qr' && (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') && (
             <div className="space-y-6 max-w-5xl mx-auto">
               {/* Header Card */}
               <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs space-y-3">

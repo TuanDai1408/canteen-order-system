@@ -191,7 +191,11 @@ DROP POLICY IF EXISTS "All write order_items" ON order_items;
 CREATE POLICY "All write order_items" ON order_items FOR ALL USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "All qr_tokens" ON qr_exception_tokens;
-CREATE POLICY "All qr_tokens" ON qr_exception_tokens FOR ALL USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "Public read qr_tokens" ON qr_exception_tokens;
+DROP POLICY IF EXISTS "All write qr_tokens" ON qr_exception_tokens;
+DROP POLICY IF EXISTS "Enable read access for all users" ON qr_exception_tokens;
+DROP POLICY IF EXISTS "Enable insert for authenticated users only" ON qr_exception_tokens;
+CREATE POLICY "All qr_tokens" ON qr_exception_tokens FOR ALL TO public USING (true) WITH CHECK (true);
 
 DROP POLICY IF EXISTS "All settings" ON settings;
 CREATE POLICY "All settings" ON settings FOR ALL USING (true) WITH CHECK (true);
@@ -305,21 +309,119 @@ SELECT cron.schedule(
 -- PHẦN MỞ RỘNG: ĐA SITE (HÙNG VƯƠNG & G-GROUP) VÀ ĐẶT MÓN KHÁCH LẺ
 -- ========================================================
 
+-- 0. GỠ BỎ TẤT CẢ KHÓA NGOẠI CŨ LIÊN QUAN ĐẾN site_id, payment_confirmed_by VÀ BẢNG sites TRƯỚC TIÊN
+-- (Khắc phục triệt để lỗi ERROR 42804: foreign key constraint cannot be implemented khi chuyển đổi cột từ UUID sang TEXT)
+DO $$
+DECLARE
+  fk RECORD;
+BEGIN
+  -- 1. Xoá các constraint tên cố định thường gặp nếu có
+  BEGIN ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  BEGIN ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_payment_confirmed_by_fkey; EXCEPTION WHEN others THEN NULL; END;
+  BEGIN ALTER TABLE users DROP CONSTRAINT IF EXISTS users_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  BEGIN ALTER TABLE menu_items DROP CONSTRAINT IF EXISTS menu_items_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  BEGIN ALTER TABLE qr_exception_tokens DROP CONSTRAINT IF EXISTS qr_exception_tokens_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  BEGIN ALTER TABLE wallet_transactions DROP CONSTRAINT IF EXISTS wallet_transactions_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+
+  -- 2. Quét động mọi foreign key ràng buộc cột site_id hoặc payment_confirmed_by
+  FOR fk IN (
+    SELECT tc.table_schema, tc.table_name, tc.constraint_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name
+      AND tc.table_schema = kcu.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND (
+        kcu.column_name IN ('site_id', 'payment_confirmed_by')
+        OR tc.constraint_name ILIKE '%site_id%'
+        OR tc.constraint_name ILIKE '%payment_confirmed_by%'
+      )
+  ) LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I CASCADE', fk.table_schema, fk.table_name, fk.constraint_name);
+    EXCEPTION WHEN others THEN NULL;
+    END;
+  END LOOP;
+
+  -- 3. Quét động mọi foreign key tham chiếu tới bảng sites
+  FOR fk IN (
+    SELECT tc.table_schema, tc.table_name, tc.constraint_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.constraint_column_usage ccu
+      ON tc.constraint_name = ccu.constraint_name
+      AND tc.table_schema = ccu.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND ccu.table_name = 'sites'
+  ) LOOP
+    BEGIN
+      EXECUTE format('ALTER TABLE %I.%I DROP CONSTRAINT IF EXISTS %I CASCADE', fk.table_schema, fk.table_name, fk.constraint_name);
+    EXCEPTION WHEN others THEN NULL;
+    END;
+  END LOOP;
+END $$;
+
 -- 1. Bảng Sites (Cơ sở Căn tin)
-CREATE TABLE IF NOT EXISTS sites (
-    id TEXT PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    name TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    bank_name TEXT DEFAULT '',
-    bank_account_no TEXT DEFAULT '',
-    bank_account_name TEXT DEFAULT '',
-    bank_qr_image_url TEXT DEFAULT '',
-    bank_account_info JSONB DEFAULT '{}'::jsonb,
-    features JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'sites') THEN
+    -- Đảm bảo có cột code
+    IF NOT EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'sites' AND column_name = 'code'
+    ) THEN
+      ALTER TABLE sites ADD COLUMN code TEXT;
+    END IF;
+
+    -- Nếu cột id đang là kiểu UUID, chuyển sang TEXT an toàn
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns 
+      WHERE table_name = 'sites' AND column_name = 'id' AND data_type = 'uuid'
+    ) THEN
+      ALTER TABLE sites ALTER COLUMN id DROP DEFAULT;
+      ALTER TABLE sites ALTER COLUMN id TYPE TEXT USING COALESCE(code, id::text);
+    END IF;
+  ELSE
+    -- Tạo mới bảng sites với id kiểu TEXT
+    CREATE TABLE sites (
+        id TEXT PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        bank_name TEXT DEFAULT '',
+        bank_account_no TEXT DEFAULT '',
+        bank_account_name TEXT DEFAULT '',
+        bank_qr_image_url TEXT DEFAULT '',
+        bank_account_info JSONB DEFAULT '{}'::jsonb,
+        features JSONB DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now()
+    );
+  END IF;
+END $$;
+
+-- Bổ sung đầy đủ các cột trên bảng sites nếu chưa có
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS name TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS description TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_name TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_qr_image_url TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_info JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS features JSONB DEFAULT '{}'::jsonb;
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT now();
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();
+
+-- Đảm bảo constraint UNIQUE cho cột code
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'sites_code_key'
+  ) THEN
+    ALTER TABLE sites ADD CONSTRAINT sites_code_key UNIQUE (code);
+  END IF;
+EXCEPTION WHEN others THEN NULL;
+END $$;
 
 -- Bật RLS và Public Policies cho bảng sites
 ALTER TABLE sites ENABLE ROW LEVEL SECURITY;
@@ -332,6 +434,8 @@ CREATE POLICY "All write sites" ON sites FOR ALL USING (true) WITH CHECK (true);
 -- Chuyển đổi an toàn cột site_id và payment_confirmed_by từ UUID sang TEXT nếu trước đó đã bị tạo kiểu UUID trên database
 DO $$
 BEGIN
+  -- orders.site_id
+  BEGIN ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'orders' AND column_name = 'site_id' AND data_type = 'uuid'
@@ -341,6 +445,8 @@ BEGIN
     ALTER TABLE orders ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
   END IF;
 
+  -- orders.payment_confirmed_by
+  BEGIN ALTER TABLE orders DROP CONSTRAINT IF EXISTS orders_payment_confirmed_by_fkey; EXCEPTION WHEN others THEN NULL; END;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'orders' AND column_name = 'payment_confirmed_by' AND data_type = 'uuid'
@@ -350,6 +456,8 @@ BEGIN
     ALTER TABLE orders ALTER COLUMN payment_confirmed_by SET DEFAULT '';
   END IF;
 
+  -- users.site_id
+  BEGIN ALTER TABLE users DROP CONSTRAINT IF EXISTS users_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'users' AND column_name = 'site_id' AND data_type = 'uuid'
@@ -358,13 +466,51 @@ BEGIN
     ALTER TABLE users ALTER COLUMN site_id TYPE TEXT USING site_id::text;
     ALTER TABLE users ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
   END IF;
-END $$;
 
-ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';
-ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';
-ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_name TEXT DEFAULT '';
-ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_qr_image_url TEXT DEFAULT '';
-ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_info JSONB DEFAULT '{}'::jsonb;
+  -- menu_items.site_id
+  BEGIN ALTER TABLE menu_items DROP CONSTRAINT IF EXISTS menu_items_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'menu_items' AND column_name = 'site_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE menu_items ALTER COLUMN site_id DROP DEFAULT;
+    ALTER TABLE menu_items ALTER COLUMN site_id TYPE TEXT USING site_id::text;
+  END IF;
+
+  -- menu_items.available_site_ids (chuyển đổi từ uuid[] sang text[] nếu trước đó bị tạo kiểu uuid[])
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'menu_items' 
+      AND column_name = 'available_site_ids' 
+      AND udt_name <> '_text'
+  ) THEN
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids DROP DEFAULT;
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids TYPE TEXT[] USING ARRAY['hung_vuong', 'g_group']::text[];
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids SET DEFAULT ARRAY['hung_vuong', 'g_group']::text[];
+  END IF;
+
+  -- qr_exception_tokens.site_id
+  BEGIN ALTER TABLE qr_exception_tokens DROP CONSTRAINT IF EXISTS qr_exception_tokens_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'qr_exception_tokens' AND column_name = 'site_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE qr_exception_tokens ALTER COLUMN site_id DROP DEFAULT;
+    ALTER TABLE qr_exception_tokens ALTER COLUMN site_id TYPE TEXT USING site_id::text;
+    ALTER TABLE qr_exception_tokens ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
+  END IF;
+
+  -- wallet_transactions.site_id
+  BEGIN ALTER TABLE wallet_transactions DROP CONSTRAINT IF EXISTS wallet_transactions_site_id_fkey; EXCEPTION WHEN others THEN NULL; END;
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'wallet_transactions' AND column_name = 'site_id' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE wallet_transactions ALTER COLUMN site_id DROP DEFAULT;
+    ALTER TABLE wallet_transactions ALTER COLUMN site_id TYPE TEXT USING site_id::text;
+    ALTER TABLE wallet_transactions ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
+  END IF;
+END $$;
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT false;
@@ -381,6 +527,10 @@ ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS site_id TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+
+-- Chuẩn hóa dữ liệu site_id về mã site hợp lệ
+UPDATE orders SET site_id = 'hung_vuong' WHERE site_id IS NULL OR site_id = '' OR site_id NOT IN ('hung_vuong', 'g_group');
+UPDATE users SET site_id = 'hung_vuong' WHERE site_id IS NULL OR site_id = '' OR site_id NOT IN ('hung_vuong', 'g_group');
 
 -- 3. Cấu hình linh hoạt khoá ngoại orders_user_id_fkey & bản ghi Khách lẻ
 -- Cho phép orders.user_id có thể là NULL để khách lẻ hoặc đơn vãng lai không bao giờ bị chặn bởi khoá ngoại
@@ -450,11 +600,44 @@ VALUES
     '{"qrException": false, "staffTab": false, "wallet": false, "timeGate": false, "guestOrder": true}'::jsonb
 )
 ON CONFLICT (code) DO UPDATE SET
+    id = EXCLUDED.id,
     name = EXCLUDED.name,
+    description = EXCLUDED.description,
+    bank_name = EXCLUDED.bank_name,
+    bank_account_no = EXCLUDED.bank_account_no,
+    bank_account_name = EXCLUDED.bank_account_name,
+    bank_qr_image_url = EXCLUDED.bank_qr_image_url,
+    bank_account_info = EXCLUDED.bank_account_info,
     features = EXCLUDED.features;
 
+-- Thêm lại khoá ngoại mềm an toàn trỏ tới sites(id) nếu có nhu cầu
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'orders_site_id_fkey') THEN
+    ALTER TABLE orders ADD CONSTRAINT orders_site_id_fkey FOREIGN KEY (site_id) REFERENCES sites(id) ON DELETE SET NULL;
+  END IF;
+EXCEPTION WHEN others THEN NULL;
+END $$;
+
 -- 5. Cập nhật menu_items hiện có cho phép bán trên cả 2 site
-UPDATE menu_items SET available_site_ids = ARRAY['hung_vuong', 'g_group']::text[] WHERE available_site_ids IS NULL;
+DO $$
+BEGIN
+  -- Đảm bảo cột available_site_ids mang kiểu TEXT[] an toàn
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'menu_items' 
+      AND column_name = 'available_site_ids' 
+      AND udt_name <> '_text'
+  ) THEN
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids DROP DEFAULT;
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids TYPE TEXT[] USING ARRAY['hung_vuong', 'g_group']::text[];
+    ALTER TABLE menu_items ALTER COLUMN available_site_ids SET DEFAULT ARRAY['hung_vuong', 'g_group']::text[];
+  END IF;
+
+  UPDATE menu_items 
+  SET available_site_ids = ARRAY['hung_vuong', 'g_group']::text[] 
+  WHERE available_site_ids IS NULL;
+END $$;
 
 -- 6. RPC: Xác nhận thanh toán khách lẻ (confirm_guest_payment)
 CREATE OR REPLACE FUNCTION confirm_guest_payment(p_order_id UUID, p_admin_id TEXT DEFAULT NULL)

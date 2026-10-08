@@ -1,6 +1,6 @@
 export type UserRole = 'teacher' | 'admin' | 'super_admin' | 'data_entry' | 'executive';
 
-export type SiteCode = 'hung_vuong' | 'g_group';
+export type SiteCode = 'all' | 'hung_vuong' | 'g_group';
 
 export interface SiteFeatures {
   qrException: boolean;

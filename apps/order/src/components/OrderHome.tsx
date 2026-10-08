@@ -407,7 +407,7 @@ export function OrderHome({
         exceptionToken: !isGuest ? exceptionToken.trim() || undefined : undefined,
         // Multi-site & Guest:
         isGuest,
-        siteId: activeSite?.code || 'g_group',
+        siteId: activeSite?.code || (isGuest ? 'g_group' : (currentUser?.siteId || 'hung_vuong')),
         guestName: isGuest
           ? guestName.trim() || (deliveryMethod === 'dine_in' ? 'Khách ăn tại Canteen' : 'Khách vãng lai')
           : undefined,

@@ -15,6 +15,7 @@ import {
   getCachedOrders,
   getSelectedSiteCode,
   setSelectedSiteCode,
+  mapOrder,
   type UserProfile,
   type MenuItem,
   type Order,
@@ -212,18 +213,18 @@ export default function App() {
   useEffect(() => {
     const handleOrderPrintUpdated = (e: Event) => {
       const detail = (e as CustomEvent).detail as
-        | { orderId: string; billType?: string; status?: string; [key: string]: any }
+        | { orderId?: string; id?: string; billType?: string; status?: string; paymentStatus?: string; [key: string]: any }
         | undefined;
-      if (!detail?.orderId) return;
+      const targetId = detail?.orderId || detail?.id;
+      if (!targetId) return;
 
       const fieldKey = Object.keys(detail).find((k) => k.startsWith('printed'));
       const statusKey = detail.status;
-
-      if (!fieldKey && !statusKey) return;
+      const paymentStatusKey = detail.paymentStatus || (detail as any).payment_status;
 
       setOrders((prev) =>
         prev.map((o) => {
-          if (o.id !== detail.orderId) return o;
+          if (o.id !== targetId && o.orderCode !== targetId) return o;
           const patch: Partial<Order> = {};
           if (fieldKey) {
             patch[fieldKey as keyof Order] = detail[fieldKey] || undefined;
@@ -231,13 +232,49 @@ export default function App() {
           if (statusKey) {
             patch.status = statusKey as any;
           }
+          if (paymentStatusKey) {
+            patch.paymentStatus = paymentStatusKey as any;
+          }
           return { ...o, ...patch };
         })
       );
     };
 
+    const handleNewOrderEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail) return;
+      const rawOrder = detail.order || detail;
+      if (!rawOrder.id && !rawOrder.order_code && !rawOrder.orderCode) return;
+
+      try {
+        const mapped = mapOrder(rawOrder);
+        setOrders((prev) => {
+          const exists = prev.some((o) => o.id === mapped.id || o.orderCode === mapped.orderCode);
+          if (exists) {
+            return prev.map((o) => (o.id === mapped.id || o.orderCode === mapped.orderCode ? { ...o, ...mapped } : o));
+          }
+          return [mapped, ...prev].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        });
+      } catch (err) {
+        console.warn('Realtime handleNewOrderEvent note:', err);
+      }
+    };
+
     window.addEventListener('canteen_order_updated', handleOrderPrintUpdated);
-    return () => window.removeEventListener('canteen_order_updated', handleOrderPrintUpdated);
+    window.addEventListener('canteen_payment_confirmed', handleOrderPrintUpdated);
+    window.addEventListener('canteen_new_order_inserted', handleNewOrderEvent);
+    window.addEventListener('canteen_order_created', handleNewOrderEvent);
+    window.addEventListener('canteen_order_placed', handleNewOrderEvent);
+    window.addEventListener('canteen_guest_order_pending', handleNewOrderEvent);
+
+    return () => {
+      window.removeEventListener('canteen_order_updated', handleOrderPrintUpdated);
+      window.removeEventListener('canteen_payment_confirmed', handleOrderPrintUpdated);
+      window.removeEventListener('canteen_new_order_inserted', handleNewOrderEvent);
+      window.removeEventListener('canteen_order_created', handleNewOrderEvent);
+      window.removeEventListener('canteen_order_placed', handleNewOrderEvent);
+      window.removeEventListener('canteen_guest_order_pending', handleNewOrderEvent);
+    };
   }, []);
 
   // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
