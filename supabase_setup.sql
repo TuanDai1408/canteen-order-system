@@ -526,6 +526,9 @@ ALTER TABLE menu_items ADD COLUMN IF NOT EXISTS site_id TEXT;
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
+ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS quantity INTEGER DEFAULT 1;
+ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS used_count INTEGER DEFAULT 0;
+ALTER TABLE qr_exception_tokens ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN DEFAULT false;
 ALTER TABLE wallet_transactions ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 
 -- Chuẩn hóa dữ liệu site_id về mã site hợp lệ

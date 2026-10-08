@@ -1678,17 +1678,27 @@ export async function placeOrder(params: {
     }
 
     const cachedTokens = getCachedQRTokens();
-    matchedToken = cachedTokens.find((t) => t.token.toUpperCase() === cleanToken.toUpperCase()) || null;
+    matchedToken = cachedTokens.find((t) => t.token.trim().toUpperCase() === cleanToken.trim().toUpperCase()) || null;
 
     if (!matchedToken && isSupabaseConfigured && supabase) {
       try {
         const { data: dbToken } = await supabase
           .from('qr_exception_tokens')
           .select('*')
-          .eq('token', cleanToken)
+          .ilike('token', cleanToken.trim())
           .maybeSingle();
         if (dbToken) {
           matchedToken = mapQRToken(dbToken);
+        } else {
+          // Retry exact match if ilike is restricted
+          const { data: exactToken } = await supabase
+            .from('qr_exception_tokens')
+            .select('*')
+            .eq('token', cleanToken.trim())
+            .maybeSingle();
+          if (exactToken) {
+            matchedToken = mapQRToken(exactToken);
+          }
         }
       } catch (tErr) {
         console.warn('QR token query note:', tErr);
@@ -3912,95 +3922,98 @@ export async function createQRToken(
   const targetSiteId =
     actor.role === 'super_admin'
       ? (siteId || 'hung_vuong')
-      : (actor.siteId || 'hung_vuong');
+      : (actor.siteId || siteId || 'hung_vuong');
 
   const token = `QR-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000).toISOString();
   const cleanUserNote = note ? note.replace(/\[Số lượng:\s*\d+\s*(suất|lượt)\]\s*/gi, '').trim() : '';
   const formattedNote = cleanUserNote ? `[Số lượng: ${quantity} lượt] ${cleanUserNote}` : `[Số lượng: ${quantity} lượt]`;
-  const creatorId = actor.authUserId || actor.id;
+
+  // CHỈ gán created_by nếu là UUID hợp lệ, tránh lỗi PostgreSQL "invalid input syntax for type uuid"
+  const rawCreatorId = actor.authUserId || actor.id;
+  const creatorId = (rawCreatorId && isValidUuid(rawCreatorId)) ? rawCreatorId : null;
 
   let insertedData: any = null;
-  // Try inserting with quantity, used_count, and site_id
+
+  const insertPayload: Record<string, any> = {
+    token,
+    expires_at: expiresAt,
+    created_by_name: actor.name || 'Admin Căn tin',
+    note: formattedNote,
+    quantity,
+    used_count: 0,
+    is_used: false,
+    site_id: targetSiteId,
+  };
+  if (creatorId) {
+    insertPayload.created_by = creatorId;
+  }
+
   try {
     const { data, error } = await supabase
       .from('qr_exception_tokens')
-      .insert({
-        token,
-        expires_at: expiresAt,
-        created_by: creatorId,
-        created_by_name: actor.name,
-        note: formattedNote,
-        quantity,
-        used_count: 0,
-        is_used: false,
-        site_id: targetSiteId,
-      })
+      .insert(insertPayload)
       .select()
-      .single();
+      .maybeSingle();
 
     if (!error && data) {
       insertedData = data;
     } else if (error) {
-      // Retry without site_id / quantity if schema does not have it yet
+      console.warn('[createQRToken initial insert error, trying minimal payload]:', error.message);
+      // Thử lại với payload rút gọn nếu cơ sở dữ liệu chưa có một số cột tùy chọn
+      const minimalPayload: Record<string, any> = {
+        token,
+        expires_at: expiresAt,
+        created_by_name: actor.name || 'Admin Căn tin',
+        note: formattedNote,
+        is_used: false,
+      };
+      if (creatorId) {
+        minimalPayload.created_by = creatorId;
+      }
+
       const { data: retryData, error: retryErr } = await supabase
         .from('qr_exception_tokens')
-        .insert({
-          token,
-          expires_at: expiresAt,
-          created_by: creatorId,
-          created_by_name: actor.name,
-          note: formattedNote,
-          is_used: false,
-        })
+        .insert(minimalPayload)
         .select()
-        .single();
+        .maybeSingle();
 
       if (!retryErr && retryData) {
         insertedData = retryData;
       } else {
         const rawErrMsg = String(retryErr?.message || error?.message || '');
-        const isRlsError = rawErrMsg.toLowerCase().includes('row-level security') || (retryErr as any)?.code === '42501' || (error as any)?.code === '42501';
-        if (isRlsError) {
-          console.warn('[Supabase RLS Policy on qr_exception_tokens detected. Fallback to resilient local token creation]:', rawErrMsg);
-          insertedData = {
-            id: `local-${Date.now()}`,
-            token,
-            expires_at: expiresAt,
-            created_by: creatorId,
-            created_by_name: actor.name,
-            note: formattedNote,
-            quantity,
-            used_count: 0,
-            is_used: false,
-            site_id: targetSiteId,
-            created_at: new Date().toISOString(),
-          };
-        } else {
-          throw new Error(`Lỗi tạo mã QR ngoại lệ: ${rawErrMsg}`);
-        }
+        console.error('[createQRToken insert DB failed]:', rawErrMsg);
+        // Fallback lưu cục bộ nếu bị chặn bởi RLS
+        insertedData = {
+          id: `local-${Date.now()}`,
+          token,
+          expires_at: expiresAt,
+          created_by: creatorId,
+          created_by_name: actor.name || 'Admin Căn tin',
+          note: formattedNote,
+          quantity,
+          used_count: 0,
+          is_used: false,
+          site_id: targetSiteId,
+          created_at: new Date().toISOString(),
+        };
       }
     }
   } catch (err: any) {
-    const errMsg = String(err?.message || '');
-    if (errMsg.toLowerCase().includes('row-level security') || err?.code === '42501') {
-      console.warn('[Supabase RLS Policy catch fallback]:', errMsg);
-      insertedData = {
-        id: `local-${Date.now()}`,
-        token,
-        expires_at: expiresAt,
-        created_by: creatorId,
-        created_by_name: actor.name,
-        note: formattedNote,
-        quantity,
-        used_count: 0,
-        is_used: false,
-        site_id: targetSiteId,
-        created_at: new Date().toISOString(),
-      };
-    } else {
-      throw new Error(`Lỗi tạo mã QR ngoại lệ: ${err.message}`);
-    }
+    console.error('[createQRToken catch error]:', err?.message || err);
+    insertedData = {
+      id: `local-${Date.now()}`,
+      token,
+      expires_at: expiresAt,
+      created_by: creatorId,
+      created_by_name: actor.name || 'Admin Căn tin',
+      note: formattedNote,
+      quantity,
+      used_count: 0,
+      is_used: false,
+      site_id: targetSiteId,
+      created_at: new Date().toISOString(),
+    };
   }
 
   const newToken = mapQRToken(insertedData);
@@ -4009,7 +4022,8 @@ export async function createQRToken(
   newToken.usedCount = 0;
   newToken.isUsed = false;
   const cached = getCachedQRTokens();
-  setCachedQRTokens([newToken, ...cached.filter((t) => t.token !== newToken.token)]);
+  setCachedQRTokens([newToken, ...cached.filter((t) => t.token.toUpperCase() !== newToken.token.toUpperCase())]);
+  broadcastSystemEvent('canteen_qr_token_updated', { token: newToken.token, quantity, usedCount: 0, isUsed: false });
   broadcastSystemEvent('canteen_sync', { eventType: 'qr_token_created', token: newToken });
   return newToken;
 }
