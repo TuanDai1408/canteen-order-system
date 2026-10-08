@@ -329,7 +329,7 @@ DROP POLICY IF EXISTS "All write sites" ON sites;
 CREATE POLICY "All write sites" ON sites FOR ALL USING (true) WITH CHECK (true);
 
 -- 2. Thêm cột site_id và các trường khách lẻ trên các bảng nghiệp vụ
--- Chuyển đổi an toàn cột site_id từ UUID sang TEXT nếu trước đó đã bị tạo kiểu UUID trên database
+-- Chuyển đổi an toàn cột site_id và payment_confirmed_by từ UUID sang TEXT nếu trước đó đã bị tạo kiểu UUID trên database
 DO $$
 BEGIN
   IF EXISTS (
@@ -343,6 +343,15 @@ BEGIN
 
   IF EXISTS (
     SELECT 1 FROM information_schema.columns 
+    WHERE table_name = 'orders' AND column_name = 'payment_confirmed_by' AND data_type = 'uuid'
+  ) THEN
+    ALTER TABLE orders ALTER COLUMN payment_confirmed_by DROP DEFAULT;
+    ALTER TABLE orders ALTER COLUMN payment_confirmed_by TYPE TEXT USING payment_confirmed_by::text;
+    ALTER TABLE orders ALTER COLUMN payment_confirmed_by SET DEFAULT '';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns 
     WHERE table_name = 'users' AND column_name = 'site_id' AND data_type = 'uuid'
   ) THEN
     ALTER TABLE users ALTER COLUMN site_id DROP DEFAULT;
@@ -350,6 +359,12 @@ BEGIN
     ALTER TABLE users ALTER COLUMN site_id SET DEFAULT 'hung_vuong';
   END IF;
 END $$;
+
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_name TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_no TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_name TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_qr_image_url TEXT DEFAULT '';
+ALTER TABLE sites ADD COLUMN IF NOT EXISTS bank_account_info JSONB DEFAULT '{}'::jsonb;
 
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS site_id TEXT DEFAULT 'hung_vuong';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS is_guest BOOLEAN DEFAULT false;

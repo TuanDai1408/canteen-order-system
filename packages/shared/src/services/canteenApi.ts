@@ -113,6 +113,9 @@ export function setCachedSites(sites: Site[]): void {
   } catch {}
 }
 
+export const isUuid = (val?: string): boolean =>
+  !!val && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(val).trim());
+
 export async function getSites(): Promise<Site[]> {
   if (!isSupabaseConfigured || !supabase) {
     return getCachedSites();
@@ -125,8 +128,9 @@ export async function getSites(): Promise<Site[]> {
       'Timeout fetch sites'
     );
 
+    let mappedSites: Site[] = [];
     if (!error && Array.isArray(data) && data.length > 0) {
-      const mappedSites: Site[] = data.map((r: any) => {
+      mappedSites = data.map((r: any) => {
         const defaultMatch = DEFAULT_SITES.find((s) => s.code === r.code) || DEFAULT_SITES[0];
         const mergedFeatures = {
           ...defaultMatch.features,
@@ -156,13 +160,49 @@ export async function getSites(): Promise<Site[]> {
 
       for (const def of DEFAULT_SITES) {
         if (!mappedSites.some((s) => s.code === def.code)) {
-          mappedSites.push(def);
+          mappedSites.push({ ...def });
         }
       }
-
-      setCachedSites(mappedSites);
-      return mappedSites;
+    } else {
+      mappedSites = DEFAULT_SITES.map((s) => ({ ...s }));
     }
+
+    // Luôn đọc cấu hình ngân hàng & QR từ system_settings phòng khi bảng sites chưa migrate các cột ngân hàng
+    try {
+      const { data: settingsData } = await supabase
+        .from('system_settings')
+        .select('key, value')
+        .like('key', 'canteen_site_settings_%');
+      if (Array.isArray(settingsData) && settingsData.length > 0) {
+        settingsData.forEach((row: any) => {
+          const sCode = row.key.replace('canteen_site_settings_', '');
+          const val = row.value;
+          if (val && typeof val === 'object') {
+            const match = mappedSites.find((s) => s.code === sCode);
+            if (match) {
+              if (val.name) match.name = val.name;
+              if (val.description) match.description = val.description;
+              if (val.bankName) match.bankName = val.bankName;
+              if (val.bankAccountNo) match.bankAccountNo = val.bankAccountNo;
+              if (val.bankAccountName) match.bankAccountName = val.bankAccountName;
+              if (val.bankQrImageUrl !== undefined) match.bankQrImageUrl = val.bankQrImageUrl;
+              if (val.bankAccountInfo) {
+                match.bankAccountInfo = {
+                  ...match.bankAccountInfo,
+                  ...val.bankAccountInfo,
+                };
+              }
+              if (val.features) match.features = { ...match.features, ...val.features };
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn('[getSites system_settings note]:', e);
+    }
+
+    setCachedSites(mappedSites);
+    return mappedSites;
   } catch (e) {
     console.warn('[getSites note]:', e);
   }
@@ -190,6 +230,7 @@ export async function updateSite(
   };
 
   if (isSupabaseConfigured && supabase) {
+    // 1. Thử lưu vào bảng sites
     try {
       const payload: Record<string, any> = { updated_at: new Date().toISOString() };
       if (updates.name !== undefined) payload.name = updates.name;
@@ -201,9 +242,31 @@ export async function updateSite(
       if (updates.bankAccountInfo !== undefined) payload.bank_account_info = updates.bankAccountInfo;
       if (updates.features !== undefined) payload.features = updates.features;
 
-      await supabase.from('sites').update(payload).eq('code', siteCode);
+      const { error: updErr } = await supabase
+        .from('sites')
+        .update(payload)
+        .or(`code.eq.${siteCode},id.eq.${siteCode}`);
+      if (updErr) {
+        console.warn('[updateSite sites update note]:', updErr);
+        // Fallback update features nếu bảng sites thiếu cột bank_*
+        await supabase
+          .from('sites')
+          .update({ features: merged.features, updated_at: new Date().toISOString() })
+          .or(`code.eq.${siteCode},id.eq.${siteCode}`);
+      }
     } catch (e) {
-      console.warn('[updateSite Supabase note]:', e);
+      console.warn('[updateSite Supabase sites note]:', e);
+    }
+
+    // 2. Luôn đồng bộ vào system_settings để đảm bảo 100% không bao giờ mất thông tin QR & Ngân hàng
+    try {
+      await supabase.from('system_settings').upsert({
+        key: `canteen_site_settings_${siteCode}`,
+        value: merged,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn('[updateSite Supabase system_settings note]:', e);
     }
   }
 
@@ -2793,13 +2856,14 @@ export async function confirmGuestPayment(
   checkSupabase();
   const cleanId = orderId.trim();
   const now = new Date().toISOString();
-  const confirmedBy = actor?.name || actor?.id || 'Quản lý Căn tin';
+  const adminUuid = isUuid(actor?.id) ? actor!.id : null;
+  const confirmedByName = actor?.name || 'Quản lý Căn tin';
 
   // 1. Thử gọi RPC confirm_guest_payment
   try {
     const { data: rpcRes, error: rpcErr } = await supabase.rpc('confirm_guest_payment', {
       p_order_id: cleanId,
-      p_admin_id: actor?.id || null,
+      p_admin_id: adminUuid,
     });
     if (!rpcErr && rpcRes && (rpcRes.success || rpcRes === true)) {
       console.log('[confirmGuestPayment]: RPC call succeeded');
@@ -2808,28 +2872,34 @@ export async function confirmGuestPayment(
     console.warn('[confirmGuestPayment RPC notice]:', rpcEx);
   }
 
-  // 2. Cập nhật trực tiếp bảng orders trên Supabase (Adaptive update - hỗ trợ cả id UUID và order_code)
+  // 2. Cập nhật trực tiếp bảng orders trên Supabase (Adaptive update - an toàn với kiểu UUID/TEXT của payment_confirmed_by)
   try {
-    const { error: updErr } = await supabase
-      .from('orders')
-      .update({
+    const updatePayload: Record<string, any> = {
+      payment_status: 'paid',
+      status: 'confirmed',
+      payment_confirmed_at: now,
+      updated_at: now,
+    };
+    if (adminUuid) {
+      updatePayload.payment_confirmed_by = adminUuid;
+    }
+
+    const runDirectUpdate = async (p: Record<string, any>) => {
+      if (isUuid(cleanId)) {
+        return await supabase.from('orders').update(p).or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
+      } else {
+        return await supabase.from('orders').update(p).eq('order_code', cleanId);
+      }
+    };
+
+    const { error: updErr } = await runDirectUpdate(updatePayload);
+    if (updErr) {
+      console.warn('[confirmGuestPayment direct update warning, retrying minimal]:', updErr);
+      await runDirectUpdate({
         payment_status: 'paid',
         status: 'confirmed',
-        payment_confirmed_at: now,
-        payment_confirmed_by: confirmedBy,
         updated_at: now,
-      })
-      .or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
-
-    if (updErr) {
-      await supabase
-        .from('orders')
-        .update({
-          payment_status: 'paid',
-          status: 'confirmed',
-          updated_at: now,
-        })
-        .or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
+      });
     }
   } catch (e: any) {
     console.warn('[confirmGuestPayment update DB notice]:', e);
@@ -2846,7 +2916,7 @@ export async function confirmGuestPayment(
           paymentStatus: 'paid',
           status: 'confirmed',
           paymentConfirmedAt: now,
-          paymentConfirmedBy: confirmedBy,
+          paymentConfirmedBy: confirmedByName,
         };
         updatedOrder = patched;
         return patched;
@@ -2861,6 +2931,13 @@ export async function confirmGuestPayment(
     orderId: cleanId,
     paymentStatus: 'paid',
     status: 'confirmed',
+    confirmedBy: confirmedByName,
+  });
+  broadcastSystemEvent('canteen_order_updated', {
+    orderId: cleanId,
+    paymentStatus: 'paid',
+    status: 'confirmed',
+    confirmedBy: confirmedByName,
     order: updatedOrder,
   });
   broadcastSystemEvent('canteen_order_updated', {
@@ -3562,27 +3639,59 @@ export async function updateOrderStatus(
     }
   }
 
-  try {
-    const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
-    const updatePayload: Record<string, any> = {
-      status,
-      updated_at: new Date().toISOString(),
-    };
-    if (isConfirming) {
-      updatePayload.payment_status = 'paid';
-      updatePayload.payment_confirmed_at = new Date().toISOString();
-      updatePayload.payment_confirmed_by = actor?.name || actor?.id || 'Quản lý Căn tin';
+  const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
+  const nowIso = new Date().toISOString();
+  const updatePayload: Record<string, any> = {
+    status,
+    updated_at: nowIso,
+  };
+  if (isConfirming) {
+    updatePayload.payment_status = 'paid';
+    updatePayload.payment_confirmed_at = nowIso;
+    // CRITICAL: Cột payment_confirmed_by trên Postgres có thể là UUID hoặc TEXT.
+    // Nếu actor?.id là UUID hợp lệ thì gán actor.id. Tuyệt đối không truyền chuỗi tên như "Admin Canteen"
+    // vào cột UUID để tránh lỗi Postgres: invalid input syntax for type uuid: "Admin Canteen"
+    if (isUuid(actor?.id)) {
+      updatePayload.payment_confirmed_by = actor.id;
     }
+  }
 
-    const { error: updErr } = await supabase
-      .from('orders')
-      .update(updatePayload)
-      .or(`id.eq.${orderId},order_code.eq.${orderId}`);
-    if (updErr) {
-      console.warn('Update order status remote error:', updErr);
-      return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng: ' + updErr.message };
+  const runRemoteUpdate = async (payload: Record<string, any>) => {
+    if (isUuid(orderId)) {
+      return await supabase
+        .from('orders')
+        .update(payload)
+        .or(`id.eq.${orderId},order_code.eq.${orderId}`);
+    } else {
+      return await supabase
+        .from('orders')
+        .update(payload)
+        .eq('order_code', orderId);
     }
-  } catch (e) {
+  };
+
+  try {
+    const { error: updErr } = await runRemoteUpdate(updatePayload);
+    if (updErr) {
+      console.warn('Update order status remote error, retrying with fallback payload:', updErr);
+      // Fallback 1: Bỏ payment_confirmed_by và payment_confirmed_at để tránh lỗi syntax UUID hoặc thiếu cột
+      const fallbackPayload: Record<string, any> = {
+        status,
+        updated_at: nowIso,
+      };
+      if (isConfirming) {
+        fallbackPayload.payment_status = 'paid';
+      }
+      const retry1 = await runRemoteUpdate(fallbackPayload);
+      if (retry1.error) {
+        // Fallback 2: Chỉ cập nhật duy nhất status và updated_at
+        const retry2 = await runRemoteUpdate({ status, updated_at: nowIso });
+        if (retry2.error) {
+          return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng: ' + retry2.error.message };
+        }
+      }
+    }
+  } catch (e: any) {
     console.warn('Update order status remote note:', e);
     return { success: false, error: 'Không thể cập nhật trạng thái đơn hàng. Vui lòng thử lại.' };
   }
@@ -3590,7 +3699,6 @@ export async function updateOrderStatus(
   // Cập nhật trạng thái trong cache cục bộ
   try {
     const all = getCachedOrders();
-    const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
     const updatedAll = all.map((o) =>
       o.id === orderId || o.orderCode === orderId
         ? {
@@ -3604,7 +3712,6 @@ export async function updateOrderStatus(
   } catch {}
 
   // Phát tín hiệu broadcast cập nhật trạng thái đơn tức thì toàn hệ thống
-  const isConfirming = ['confirmed', 'preparing', 'ready', 'completed'].includes(status);
   broadcastSystemEvent('canteen_order_updated', {
     orderId,
     status,
@@ -4498,6 +4605,16 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
           new CustomEvent('canteen_printer_config_updated', { detail: pCfg })
         );
       }
+      if (ev.data.type === 'canteen_site_updated' && typeof window !== 'undefined') {
+        if (ev.data.site) {
+          const current = getCachedSites();
+          const updated = current.map((s) => (s.code === ev.data.siteCode ? ev.data.site : s));
+          setCachedSites(updated);
+        }
+        window.dispatchEvent(
+          new CustomEvent('canteen_site_updated', { detail: ev.data })
+        );
+      }
       triggerDebounced(ev.data);
     }
   };
@@ -4515,6 +4632,8 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
     'canteen_auto_print_updated',
     'canteen_printer_config_updated',
     'canteen_qr_token_updated',
+    'canteen_site_updated',
+    'canteen_site_changed',
   ];
 
   if (typeof window !== 'undefined') {
@@ -4547,7 +4666,8 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
       }
     }).catch(() => {});
 
-    const channelName = `canteen-realtime-${Math.random().toString(36).substring(2, 9)}`;
+    // Dùng chung tên kênh canteen-global-sync để tất cả thiết bị và client đều nhận được broadcast
+    const channelName = 'canteen-global-sync';
     const channel = supabase
       .channel(channelName, { config: { broadcast: { self: false } } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'menu_items' }, (p) => triggerDebounced(p))
@@ -4564,8 +4684,36 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
       .on('postgres_changes', { event: '*', schema: 'public', table: 'users' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'qr_exception_tokens' }, (p) => triggerDebounced(p))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'settings' }, (p) => triggerDebounced(p))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => triggerDebounced(p))
-      .on('broadcast', { event: 'canteen_sync' }, (p) => triggerDebounced(p?.payload || p))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'system_settings' }, (p) => {
+        getSites().then((s) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_site_updated', { detail: { sites: s } }));
+          }
+        }).catch(() => {});
+        triggerDebounced(p);
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites' }, (p) => {
+        getSites().then((s) => {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_site_updated', { detail: { sites: s } }));
+          }
+        }).catch(() => {});
+        triggerDebounced(p);
+      })
+      .on('broadcast', { event: 'canteen_sync' }, (p) => {
+        const payload = p?.payload || p;
+        if (payload?.type === 'canteen_site_updated') {
+          if (payload?.site) {
+            const current = getCachedSites();
+            const updated = current.map((s) => (s.code === payload.siteCode ? payload.site : s));
+            setCachedSites(updated);
+          }
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('canteen_site_updated', { detail: payload }));
+          }
+        }
+        triggerDebounced(payload);
+      })
       .subscribe((status, err) => {
         if (status === 'SUBSCRIBED') {
           console.info('[@canteen/shared] Supabase Realtime subscribed successfully:', channelName);

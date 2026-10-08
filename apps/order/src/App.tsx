@@ -257,18 +257,25 @@ export default function App() {
     };
   }, []);
 
-  // 2. Kênh Realtime Supabase: CHỈ kích hoạt sau khi đã có user đăng nhập, dọn dẹp khi logout/unmount
+  // 2. Kênh Realtime Supabase: Kích hoạt cho cả user và khách lẻ để nhận cập nhật trạng thái đơn và cơ sở
   useEffect(() => {
-    if (!user) return;
-
     const handleRealtimeSync = (info?: { tables?: string[]; payload?: any }) => {
       setTimeStatus(getTimeGateStatus());
       const currentUser = userRef.current || user;
       const tables = info?.tables;
       if (currentViewRef.current === 'portal') {
         refreshPortalData(tables);
-      } else {
+      } else if (currentUser) {
         refreshOrderData(currentUser, tables);
+      } else if (guestMode) {
+        getSites().then((s) => {
+          if (Array.isArray(s) && s.length > 0) setSitesList(s);
+        }).catch(() => {});
+        getMenu(selectedSiteCode).then((m) => {
+          if (Array.isArray(m) && m.length > 0) setMenu(m);
+        }).catch(() => {});
+        const o = getCachedOrders(undefined, selectedSiteCode);
+        setOrders(o);
       }
     };
 
@@ -277,7 +284,34 @@ export default function App() {
     return () => {
       unsub();
     };
-  }, [user?.id, refreshOrderData, refreshPortalData]);
+  }, [user?.id, guestMode, selectedSiteCode, refreshOrderData, refreshPortalData]);
+
+  // Lắng nghe cập nhật thông tin Cơ sở & Mã QR Ngân hàng tức thì toàn hệ thống
+  useEffect(() => {
+    const handleSiteUpdated = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const site = detail?.site;
+      const siteCode = detail?.siteCode || site?.code;
+      if (site && siteCode) {
+        setSitesList((prev) => {
+          const exists = prev.some((s) => s.code === siteCode);
+          if (exists) return prev.map((s) => (s.code === siteCode ? site : s));
+          return [...prev, site];
+        });
+      } else {
+        getSites().then((s) => {
+          if (Array.isArray(s) && s.length > 0) setSitesList(s);
+        }).catch(() => {});
+      }
+    };
+
+    window.addEventListener('canteen_site_updated', handleSiteUpdated);
+    window.addEventListener('canteen_site_changed', handleSiteUpdated);
+    return () => {
+      window.removeEventListener('canteen_site_updated', handleSiteUpdated);
+      window.removeEventListener('canteen_site_changed', handleSiteUpdated);
+    };
+  }, []);
 
   // Cập nhật số dư ví lạc quan (optimistic) trên UI tức thì trước khi dữ liệu từ server về
   useEffect(() => {
@@ -432,8 +466,12 @@ export default function App() {
           timeStatus={guestTimeStatus}
           error={error}
           onRefresh={async () => {
-            const m = await getMenu(selectedSiteCode);
-            if (Array.isArray(m)) setMenu(m);
+            const [m, s] = await Promise.all([
+              getMenu(selectedSiteCode),
+              getSites(),
+            ]);
+            if (Array.isArray(m) && m.length > 0) setMenu(m);
+            if (Array.isArray(s) && s.length > 0) setSitesList(s);
             const o = getCachedOrders(undefined, selectedSiteCode);
             setOrders(o);
           }}

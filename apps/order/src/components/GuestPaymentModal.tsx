@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   CheckCircle2,
   Clock,
@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   RefreshCw,
 } from 'lucide-react';
-import { formatVnd, Site, PaymentMethod, PaymentStatus, getVietQrBankCode } from '@canteen/shared';
+import { formatVnd, Site, PaymentMethod, PaymentStatus, getVietQrBankCode, getCachedSites } from '@canteen/shared';
 
 interface GuestPaymentModalProps {
   isOpen: boolean;
@@ -41,6 +41,13 @@ export function GuestPaymentModal({
   onClose,
 }: GuestPaymentModalProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+  const [, setSiteVersion] = useState(0);
+
+  useEffect(() => {
+    const handleSiteUpdate = () => setSiteVersion((v) => v + 1);
+    window.addEventListener('canteen_site_updated', handleSiteUpdate);
+    return () => window.removeEventListener('canteen_site_updated', handleSiteUpdate);
+  }, []);
 
   if (!isOpen || !order) return null;
 
@@ -50,19 +57,21 @@ export function GuestPaymentModal({
     setTimeout(() => setCopiedKey(null), 2000);
   };
 
-  const bankName = order.site?.bankName || order.site?.bankAccountInfo?.bankName || 'MB Bank (Quân Đội)';
-  const bankAccountNo = order.site?.bankAccountNo || order.site?.bankAccountInfo?.accountNumber || '999988886666';
-  const bankAccountName = order.site?.bankAccountName || order.site?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
+  const siteCode = order.site?.code || 'g_group';
+  const latestSite = getCachedSites().find((s) => s.code === siteCode) || order.site;
+  const bankName = latestSite?.bankName || latestSite?.bankAccountInfo?.bankName || 'MB Bank (Quân Đội)';
+  const bankAccountNo = latestSite?.bankAccountNo || latestSite?.bankAccountInfo?.accountNumber || '999988886666';
+  const bankAccountName = latestSite?.bankAccountName || latestSite?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
   const transferNote = `CT ${order.orderCode}`;
   const bankCode = getVietQrBankCode(bankName);
 
   // Nếu có ảnh QR tuỳ chỉnh do Quản trị viên tải lên (không phải mẫu mặc định) thì hiển thị ảnh đó,
   // nếu không sẽ tạo mã VietQR động theo chuẩn ngân hàng kèm số tiền bill: amount=${order.totalAmount}
   const customQrImage =
-    order.site?.bankQrImageUrl && !order.site.bankQrImageUrl.includes('MB-999988886666')
-      ? order.site.bankQrImageUrl
-      : order.site?.bankAccountInfo?.qrImageUrl && !order.site.bankAccountInfo.qrImageUrl.includes('MB-999988886666')
-      ? order.site.bankAccountInfo.qrImageUrl
+    latestSite?.bankQrImageUrl && !latestSite.bankQrImageUrl.includes('MB-999988886666')
+      ? latestSite.bankQrImageUrl
+      : latestSite?.bankAccountInfo?.qrImageUrl && !latestSite.bankAccountInfo.qrImageUrl.includes('MB-999988886666')
+      ? latestSite.bankAccountInfo.qrImageUrl
       : null;
 
   const qrUrl =

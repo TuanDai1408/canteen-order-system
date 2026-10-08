@@ -226,13 +226,32 @@ export function PortalDashboard({
   const [sitesList, setSitesList] = useState<Site[]>(() => getCachedSites());
   const [selectedSiteCode, setSelectedSiteCodeState] = useState<SiteCode>(() => getSelectedSiteCode());
   const activeSite = useMemo(() => {
-    return sitesList.find((s) => s.code === selectedSiteCode) || DEFAULT_SITES[0];
+    return (
+      sitesList.find((s) => s.code === selectedSiteCode) ||
+      DEFAULT_SITES.find((s) => s.code === selectedSiteCode) ||
+      DEFAULT_SITES[0]
+    );
   }, [sitesList, selectedSiteCode]);
 
   useEffect(() => {
     getSites().then((s) => {
       if (Array.isArray(s) && s.length > 0) setSitesList(s);
     }).catch(() => {});
+
+    const onSiteUpdate = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const site = detail?.site;
+      const siteCode = detail?.siteCode || site?.code;
+      if (site && siteCode) {
+        setSitesList((prev) => prev.map((s) => (s.code === siteCode ? site : s)));
+      } else {
+        getSites().then((s) => {
+          if (Array.isArray(s) && s.length > 0) setSitesList(s);
+        }).catch(() => {});
+      }
+    };
+    window.addEventListener('canteen_site_updated', onSiteUpdate);
+    return () => window.removeEventListener('canteen_site_updated', onSiteUpdate);
   }, []);
 
   const handleSwitchSite = (code: SiteCode) => {
