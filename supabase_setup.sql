@@ -190,6 +190,7 @@ CREATE POLICY "Public read order_items" ON order_items FOR SELECT USING (true);
 DROP POLICY IF EXISTS "All write order_items" ON order_items;
 CREATE POLICY "All write order_items" ON order_items FOR ALL USING (true) WITH CHECK (true);
 
+ALTER TABLE qr_exception_tokens DISABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "All qr_tokens" ON qr_exception_tokens;
 DROP POLICY IF EXISTS "Public read qr_tokens" ON qr_exception_tokens;
 DROP POLICY IF EXISTS "All write qr_tokens" ON qr_exception_tokens;

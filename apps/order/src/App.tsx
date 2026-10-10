@@ -169,7 +169,7 @@ export default function App() {
       const needMenu = shouldFetchAll || (targetTables ? targetTables.includes('menu_items') || targetTables.includes('orders') || targetTables.includes('order_items') : false);
       const needOrders = shouldFetchAll || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
       const needUsers = shouldFetchAll || (targetTables ? targetTables.includes('users') : false);
-      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') : false);
+      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') || targetTables.includes('system_settings') : false);
       const needTimeGate = targetTables ? targetTables.includes('settings') || targetTables.includes('system_settings') : false;
 
       const promises: Promise<any>[] = [];

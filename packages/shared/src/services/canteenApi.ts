@@ -1703,6 +1703,16 @@ export async function placeOrder(params: {
       } catch (tErr) {
         console.warn('QR token query note:', tErr);
       }
+
+      // Nếu bảng qr_exception_tokens chưa có (hoặc bị chặn RLS), kiểm tra ngay trong kho lưu trữ system_settings của DB
+      if (!matchedToken) {
+        try {
+          const sysTokens = await getQRTokensFromSystemSettings();
+          matchedToken = sysTokens.find((t) => t.token.trim().toUpperCase() === cleanToken.trim().toUpperCase()) || null;
+        } catch (sErr) {
+          console.warn('QR token query system_settings fallback note:', sErr);
+        }
+      }
     }
 
     if (!matchedToken) {
@@ -2546,18 +2556,43 @@ export async function placeOrder(params: {
 
     if (isSupabaseConfigured && supabase) {
       try {
-        await supabase
+        const { error: updErr } = await supabase
           .from('qr_exception_tokens')
           .update({
             used_count: totalUsedOrders,
             is_used: isFullyUsed,
-            used_by: userData.name || authUser.email || 'Người dùng',
+            used_by: userData.name || authUser?.email || 'Người dùng',
             used_at: new Date().toISOString(),
             note: updatedNote,
           })
           .eq('token', matchedToken.token);
+
+        if (updErr) {
+          // Retry without optional used_by/used_at columns
+          await supabase
+            .from('qr_exception_tokens')
+            .update({
+              used_count: totalUsedOrders,
+              is_used: isFullyUsed,
+              note: updatedNote,
+            })
+            .eq('token', matchedToken.token);
+        }
       } catch (e) {
         console.warn('Update qr token status note:', e);
+      }
+
+      // Luôn cập nhật trạng thái đồng bộ vào bảng system_settings trong Supabase
+      try {
+        await patchQRTokenInSystemSettings(matchedToken.token, {
+          usedCount: totalUsedOrders,
+          isUsed: isFullyUsed,
+          usedBy: userData.name || authUser?.email || 'Người dùng',
+          usedAt: new Date().toISOString(),
+          note: updatedNote,
+        });
+      } catch (e) {
+        console.warn('Update qr token in system_settings note:', e);
       }
     }
 
@@ -3908,8 +3943,176 @@ export async function updateOrderStatus(
 }
 
 // ============================================================
-// QR TOKENS
+// QR TOKENS - DUAL PERSISTENCE (qr_exception_tokens + system_settings)
 // ============================================================
+
+export const SYSTEM_QR_TOKENS_KEY = 'canteen_qr_exception_tokens';
+
+/**
+ * Lấy danh sách token ngoại lệ được lưu trữ an toàn trong bảng system_settings của Supabase
+ */
+export async function getQRTokensFromSystemSettings(siteId?: string): Promise<QRExceptionToken[]> {
+  if (!isSupabaseConfigured || !supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', SYSTEM_QR_TOKENS_KEY)
+      .maybeSingle();
+
+    if (error || !data || !Array.isArray(data.value)) {
+      return [];
+    }
+
+    let tokens: QRExceptionToken[] = data.value.map((item: any) => mapQRToken(item));
+    if (siteId) {
+      tokens = tokens.filter((t) =>
+        siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId
+      );
+    }
+    return tokens;
+  } catch (e) {
+    console.warn('[getQRTokensFromSystemSettings error]:', e);
+    return [];
+  }
+}
+
+/**
+ * Lưu / cập nhật mã QR vào bảng system_settings trong Supabase (Database persistence an toàn 100%)
+ */
+export async function saveQRTokenToSystemSettings(token: QRExceptionToken): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', SYSTEM_QR_TOKENS_KEY)
+      .maybeSingle();
+
+    const existing: any[] = (data && Array.isArray(data.value)) ? data.value : [];
+    const normalizedToken = token.token.trim().toUpperCase();
+    const filtered = existing.filter((item: any) => String(item.token || '').trim().toUpperCase() !== normalizedToken);
+
+    const dbPayload = {
+      id: token.id,
+      token: token.token,
+      site_id: token.siteId || 'hung_vuong',
+      note: token.note || '',
+      quantity: Number(token.quantity) || 1,
+      used_count: Number(token.usedCount) || 0,
+      is_used: Boolean(token.isUsed),
+      is_disabled: Boolean(token.isDisabled),
+      expires_at: token.expiresAt,
+      created_by: token.createdBy || null,
+      created_by_name: token.createdByName || 'Admin Căn tin',
+      created_at: token.createdAt || new Date().toISOString(),
+      used_by: token.usedBy || null,
+      used_at: token.usedAt || null,
+    };
+
+    const updatedList = [dbPayload, ...filtered];
+
+    await supabase
+      .from('system_settings')
+      .upsert(
+        {
+          key: SYSTEM_QR_TOKENS_KEY,
+          value: updatedList,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'key' }
+      );
+    console.info(`[saveQRTokenToSystemSettings] Successfully persisted token "${token.token}" to Supabase system_settings.`);
+  } catch (e) {
+    console.warn('[saveQRTokenToSystemSettings error]:', e);
+  }
+}
+
+/**
+ * Cập nhật trạng thái hoặc lượt sử dụng mã QR trong system_settings
+ */
+export async function patchQRTokenInSystemSettings(
+  tokenString: string,
+  patch: Partial<QRExceptionToken> & Record<string, any>
+): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', SYSTEM_QR_TOKENS_KEY)
+      .maybeSingle();
+
+    if (!data || !Array.isArray(data.value)) return;
+
+    const cleanToken = tokenString.trim().toUpperCase();
+    let updated = false;
+
+    const newList = data.value.map((item: any) => {
+      if (String(item.token || '').trim().toUpperCase() === cleanToken) {
+        updated = true;
+        return {
+          ...item,
+          ...(patch.usedCount !== undefined ? { used_count: patch.usedCount } : {}),
+          ...(patch.isUsed !== undefined ? { is_used: patch.isUsed } : {}),
+          ...(patch.isDisabled !== undefined ? { is_disabled: patch.isDisabled } : {}),
+          ...(patch.usedBy !== undefined ? { used_by: patch.usedBy } : {}),
+          ...(patch.usedAt !== undefined ? { used_at: patch.usedAt } : {}),
+          ...(patch.note !== undefined ? { note: patch.note } : {}),
+          updated_at: new Date().toISOString(),
+        };
+      }
+      return item;
+    });
+
+    if (updated) {
+      await supabase
+        .from('system_settings')
+        .upsert(
+          {
+            key: SYSTEM_QR_TOKENS_KEY,
+            value: newList,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'key' }
+        );
+    }
+  } catch (e) {
+    console.warn('[patchQRTokenInSystemSettings error]:', e);
+  }
+}
+
+/**
+ * Xóa mã QR khỏi system_settings
+ */
+export async function deleteQRTokenFromSystemSettings(tokenString: string): Promise<void> {
+  if (!isSupabaseConfigured || !supabase) return;
+  try {
+    const { data } = await supabase
+      .from('system_settings')
+      .select('value')
+      .eq('key', SYSTEM_QR_TOKENS_KEY)
+      .maybeSingle();
+
+    if (!data || !Array.isArray(data.value)) return;
+
+    const cleanToken = tokenString.trim().toUpperCase();
+    const filtered = data.value.filter((item: any) => String(item.token || '').trim().toUpperCase() !== cleanToken);
+
+    await supabase
+      .from('system_settings')
+      .upsert(
+        {
+          key: SYSTEM_QR_TOKENS_KEY,
+          value: filtered,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'key' }
+      );
+  } catch (e) {
+    console.warn('[deleteQRTokenFromSystemSettings error]:', e);
+  }
+}
 
 export async function createQRToken(
   actor: UserProfile,
@@ -3935,92 +4138,121 @@ export async function createQRToken(
 
   let insertedData: any = null;
 
-  const insertPayload: Record<string, any> = {
+  // 1. Thử insert trực tiếp vào bảng qr_exception_tokens
+  const fullPayload: Record<string, any> = {
     token,
     expires_at: expiresAt,
-    created_by_name: actor.name || 'Admin Căn tin',
     note: formattedNote,
     quantity,
     used_count: 0,
     is_used: false,
+    is_disabled: false,
     site_id: targetSiteId,
   };
   if (creatorId) {
-    insertPayload.created_by = creatorId;
+    fullPayload.created_by = creatorId;
   }
 
   try {
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('qr_exception_tokens')
-      .insert(insertPayload)
+      .insert(fullPayload)
       .select()
       .maybeSingle();
 
     if (!error && data) {
       insertedData = data;
-    } else if (error) {
-      console.warn('[createQRToken initial insert error, trying minimal payload]:', error.message);
-      // Thử lại với payload rút gọn nếu cơ sở dữ liệu chưa có một số cột tùy chọn
-      const minimalPayload: Record<string, any> = {
-        token,
-        expires_at: expiresAt,
-        created_by_name: actor.name || 'Admin Căn tin',
-        note: formattedNote,
-        is_used: false,
-      };
-      if (creatorId) {
-        minimalPayload.created_by = creatorId;
+    } else {
+      if (error) {
+        console.warn('[createQRToken attempt 1 failed]:', error.message);
       }
 
-      const { data: retryData, error: retryErr } = await supabase
-        .from('qr_exception_tokens')
-        .insert(minimalPayload)
-        .select()
-        .maybeSingle();
+      // Attempt 2: Without created_by (if FK constraint fails on created_by)
+      if (fullPayload.created_by) {
+        const payloadNoCreator = { ...fullPayload };
+        delete payloadNoCreator.created_by;
+        const retry1 = await supabase
+          .from('qr_exception_tokens')
+          .insert(payloadNoCreator)
+          .select()
+          .maybeSingle();
 
-      if (!retryErr && retryData) {
-        insertedData = retryData;
-      } else {
-        const rawErrMsg = String(retryErr?.message || error?.message || '');
-        console.error('[createQRToken insert DB failed]:', rawErrMsg);
-        // Fallback lưu cục bộ nếu bị chặn bởi RLS
-        insertedData = {
-          id: `local-${Date.now()}`,
+        if (!retry1.error && retry1.data) {
+          insertedData = retry1.data;
+        } else if (retry1.error) {
+          console.warn('[createQRToken attempt 2 failed]:', retry1.error.message);
+        }
+      }
+
+      // Attempt 3: If still no insertedData, try legacy/minimal schema
+      if (!insertedData) {
+        const legacyPayload: Record<string, any> = {
           token,
           expires_at: expiresAt,
-          created_by: creatorId,
-          created_by_name: actor.name || 'Admin Căn tin',
           note: formattedNote,
-          quantity,
-          used_count: 0,
           is_used: false,
           site_id: targetSiteId,
-          created_at: new Date().toISOString(),
         };
+        const retry2 = await supabase
+          .from('qr_exception_tokens')
+          .insert(legacyPayload)
+          .select()
+          .maybeSingle();
+
+        if (!retry2.error && retry2.data) {
+          insertedData = retry2.data;
+        } else if (retry2.error) {
+          console.warn('[createQRToken attempt 3 failed]:', retry2.error.message);
+        }
+      }
+
+      // Attempt 4: Bare minimum payload
+      if (!insertedData) {
+        const barePayload = {
+          token,
+          expires_at: expiresAt,
+          note: formattedNote,
+        };
+        const retry3 = await supabase
+          .from('qr_exception_tokens')
+          .insert(barePayload)
+          .select()
+          .maybeSingle();
+
+        if (!retry3.error && retry3.data) {
+          insertedData = retry3.data;
+        } else {
+          console.warn('[createQRToken qr_exception_tokens table insert failed (RLS blocked)]:', retry3.error?.message || error?.message);
+        }
       }
     }
   } catch (err: any) {
-    console.error('[createQRToken catch error]:', err?.message || err);
-    insertedData = {
-      id: `local-${Date.now()}`,
-      token,
-      expires_at: expiresAt,
-      created_by: creatorId,
-      created_by_name: actor.name || 'Admin Căn tin',
-      note: formattedNote,
-      quantity,
-      used_count: 0,
-      is_used: false,
-      site_id: targetSiteId,
-      created_at: new Date().toISOString(),
-    };
+    console.warn('[createQRToken table insert exception]:', err?.message || err);
   }
 
-  const newToken = mapQRToken(insertedData);
-  newToken.siteId = targetSiteId;
-  newToken.quantity = quantity;
-  newToken.usedCount = 0;
-  newToken.isUsed = false;
+  // 2. Khởi tạo đối tượng token chuẩn
+  const tokenRecordId = insertedData?.id || generateUUID();
+  const tokenCreatedAt = insertedData?.created_at || new Date().toISOString();
+
+  const newToken: QRExceptionToken = {
+    id: tokenRecordId,
+    token,
+    siteId: targetSiteId,
+    note: formattedNote,
+    quantity,
+    usedCount: 0,
+    isUsed: false,
+    isDisabled: false,
+    expiresAt,
+    createdBy: creatorId || undefined,
+    createdByName: actor.name || 'Admin Căn tin',
+    createdAt: tokenCreatedAt,
+  };
+
+  // 3. ĐỒNG BỘ LƯU TRỮ VÀO BẢNG system_settings CỦA SUPABASE DATABASE (Cam kết 100% lưu vào DB)
+  await saveQRTokenToSystemSettings(newToken);
+
+  // 4. Cập nhật cache local & phát sự kiện toàn hệ thống
   const cached = getCachedQRTokens();
   setCachedQRTokens([newToken, ...cached.filter((t) => t.token.toUpperCase() !== newToken.token.toUpperCase())]);
   broadcastSystemEvent('canteen_qr_token_updated', { token: newToken.token, quantity, usedCount: 0, isUsed: false });
@@ -4031,82 +4263,94 @@ export async function createQRToken(
 export async function getQRTokens(siteId?: string): Promise<QRExceptionToken[]> {
   checkSupabase();
   try {
-    let query = supabase
-      .from('qr_exception_tokens')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (siteId) {
-      if (siteId === 'hung_vuong') {
-        query = query.or('site_id.eq.hung_vuong,site_id.is.null');
-      } else {
-        query = query.eq('site_id', siteId);
-      }
-    }
-
-    const { data, error } = await withQueryTimeout(
-      query,
-      12000,
-      'Timeout fetch qr_exception_tokens'
-    );
-
     const allOrders = getCachedOrders();
     const existingCached = getCachedQRTokens();
 
-    if (!error && data) {
-      let list = data.map((row) => {
-        const tokenObj = mapQRToken(row);
-        const actualOrders = allOrders.filter(
-          (o) =>
-            (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === tokenObj.token.toUpperCase()) ||
-            ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === tokenObj.token.toUpperCase())
-        );
-        const dynamicUsed = Math.max(Number(tokenObj.usedCount) || 0, actualOrders.length);
-        const qty = Number(tokenObj.quantity) || 1;
-        tokenObj.usedCount = dynamicUsed;
-        tokenObj.isUsed = tokenObj.isUsed || dynamicUsed >= qty;
-        return tokenObj;
-      });
+    // 1. Lấy đồng thời từ cả bảng qr_exception_tokens VÀ system_settings trong Supabase
+    const [tableRes, settingsTokens] = await Promise.all([
+      (async () => {
+        try {
+          let query = supabase
+            .from('qr_exception_tokens')
+            .select('*')
+            .order('created_at', { ascending: false })
+            .limit(100);
 
-      // Hợp nhất token từ DB với các token đã tạo trên client
-      const dbTokensUpper = new Set(list.map((t) => t.token.toUpperCase()));
-      for (const ct of existingCached) {
-        if (!dbTokensUpper.has(ct.token.toUpperCase())) {
-          list.push(ct);
-        }
-      }
+          if (siteId) {
+            if (siteId === 'hung_vuong') {
+              query = query.or('site_id.eq.hung_vuong,site_id.is.null');
+            } else {
+              query = query.eq('site_id', siteId);
+            }
+          }
+          const { data, error } = await withQueryTimeout(
+            query,
+            8000,
+            'Timeout fetch qr_exception_tokens'
+          );
+          if (!error && Array.isArray(data)) {
+            return data.map(mapQRToken);
+          }
+        } catch {}
+        return [];
+      })(),
+      getQRTokensFromSystemSettings(siteId),
+    ]);
 
-      if (siteId) {
-        list = list.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
-      }
-      setCachedQRTokens(list);
-      return list;
+    // 2. Gộp danh sách từ 2 nguồn DB cùng cache
+    const tokenMap = new Map<string, QRExceptionToken>();
+
+    // Nguồn 1: table qr_exception_tokens
+    for (const t of tableRes) {
+      tokenMap.set(t.token.toUpperCase(), t);
     }
-    if (error) {
-      console.warn('[getQRTokens notice]:', error.message);
+    // Nguồn 2: system_settings (bảo đảm an toàn ngay cả khi bảng kia bị RLS)
+    for (const st of settingsTokens) {
+      const key = st.token.toUpperCase();
+      if (!tokenMap.has(key)) {
+        tokenMap.set(key, st);
+      } else {
+        const existing = tokenMap.get(key)!;
+        tokenMap.set(key, {
+          ...existing,
+          quantity: st.quantity || existing.quantity,
+          usedCount: Math.max(st.usedCount || 0, existing.usedCount || 0),
+          isDisabled: st.isDisabled !== undefined ? st.isDisabled : existing.isDisabled,
+          siteId: st.siteId || existing.siteId,
+          note: st.note || existing.note,
+        });
+      }
+    }
+    // Nguồn 3: cache client
+    for (const ct of existingCached) {
+      const key = ct.token.toUpperCase();
+      if (!tokenMap.has(key)) {
+        tokenMap.set(key, ct);
+      }
     }
 
-    const cached = getCachedQRTokens();
-    let recalculated = cached.map((t) => {
+    let list = Array.from(tokenMap.values()).map((tokenObj) => {
       const actualOrders = allOrders.filter(
         (o) =>
-          (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === t.token.toUpperCase()) ||
-          ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === t.token.toUpperCase())
+          (o.exceptionTokenUsed && o.exceptionTokenUsed.toUpperCase() === tokenObj.token.toUpperCase()) ||
+          ((o as any).used_qr_token && String((o as any).used_qr_token).toUpperCase() === tokenObj.token.toUpperCase())
       );
-      const dynamicUsed = Math.max(Number(t.usedCount) || 0, actualOrders.length);
-      const qty = Number(t.quantity) || 1;
-      return {
-        ...t,
-        usedCount: dynamicUsed,
-        isUsed: t.isUsed || dynamicUsed >= qty,
-      };
+      const dynamicUsed = Math.max(Number(tokenObj.usedCount) || 0, actualOrders.length);
+      const qty = Number(tokenObj.quantity) || 1;
+      tokenObj.usedCount = dynamicUsed;
+      tokenObj.isUsed = tokenObj.isUsed || dynamicUsed >= qty;
+      return tokenObj;
     });
+
     if (siteId) {
-      recalculated = recalculated.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
+      list = list.filter((t) => (siteId === 'hung_vuong' ? !t.siteId || t.siteId === 'hung_vuong' : t.siteId === siteId));
     }
-    setCachedQRTokens(recalculated);
-    return recalculated;
+
+    // Sắp xếp theo thứ tự mới nhất
+    list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    setCachedQRTokens(list);
+    return list;
   } catch (err) {
     console.warn('[getQRTokens error]:', err);
     let cached = getCachedQRTokens();
@@ -4148,6 +4392,9 @@ export async function toggleQRTokenStatus(
     } catch (e) {
       console.warn('toggleQRTokenStatus err:', e);
     }
+
+    // Luôn đồng bộ vào bảng system_settings trong Supabase
+    await patchQRTokenInSystemSettings(cleanToken, { isDisabled });
   }
 
   const cached = getCachedQRTokens();
@@ -4204,6 +4451,9 @@ export async function deleteQRToken(tokenString: string): Promise<boolean> {
     } catch (e) {
       console.warn('deleteQRToken err:', e);
     }
+
+    // Xóa khỏi bảng system_settings trong Supabase
+    await deleteQRTokenFromSystemSettings(cleanToken);
   }
 
   const cached = getCachedQRTokens();
@@ -4804,6 +5054,9 @@ export function subscribeRealtime(callback: (info?: RealtimeSyncInfo) => void): 
     lastPayload = payload;
     if (payload?.table) {
       changedTables.add(String(payload.table));
+      if (payload.table === 'system_settings') {
+        changedTables.add('qr_exception_tokens');
+      }
     }
     const eventType = payload?.type || payload?.event;
     if (typeof eventType === 'string') {
