@@ -1594,6 +1594,196 @@ export async function bulkCreateMenuItems(
   }
 }
 
+export interface CopyMenuOptions {
+  sourceSiteId: string;
+  targetSiteId: string;
+  itemIds?: string[];
+  mode?: 'append' | 'replace';
+  actor?: UserProfile;
+  resetStockToPrepared?: boolean;
+}
+
+/**
+ * Sao chép thực đơn món ăn từ cơ sở này sang cơ sở khác (hỗ trợ append hoặc replace)
+ */
+export async function copyMenuBetweenSites(
+  options: CopyMenuOptions
+): Promise<{ success: boolean; count: number; error?: string }> {
+  checkSupabase();
+  const { sourceSiteId, targetSiteId, itemIds, mode = 'append', resetStockToPrepared = true } = options;
+
+  if (!sourceSiteId || !targetSiteId) {
+    return { success: false, count: 0, error: 'Vui lòng chọn cơ sở nguồn và cơ sở đích.' };
+  }
+  if (sourceSiteId === targetSiteId) {
+    return { success: false, count: 0, error: 'Cơ sở nguồn và cơ sở đích không được trùng nhau.' };
+  }
+
+  try {
+    // 1. Lấy tất cả món ăn từ cơ sở nguồn
+    let query = supabase.from('menu_items').select('*');
+    if (sourceSiteId === 'hung_vuong') {
+      query = query.or('site_id.eq.hung_vuong,site_id.is.null,available_site_ids.cs.{hung_vuong}');
+    } else {
+      query = query.or(`site_id.eq.${sourceSiteId},available_site_ids.cs.{${sourceSiteId}}`);
+    }
+
+    const { data: sourceData, error: srcErr } = await query;
+    if (srcErr) {
+      return { success: false, count: 0, error: `Lỗi khi tải thực đơn nguồn: ${srcErr.message}` };
+    }
+
+    let sourceItems = (sourceData || []).map(mapMenuItem);
+    if (itemIds && itemIds.length > 0) {
+      sourceItems = sourceItems.filter((it) => itemIds.includes(it.id));
+    }
+
+    if (sourceItems.length === 0) {
+      return { success: false, count: 0, error: 'Không tìm thấy món ăn nào từ cơ sở nguồn để sao chép.' };
+    }
+
+    // 2. Nếu chế độ 'replace' (thay thế toàn bộ): xóa các món cũ của site đích
+    if (mode === 'replace') {
+      try {
+        let delQuery = supabase.from('menu_items').delete();
+        if (targetSiteId === 'hung_vuong') {
+          delQuery = delQuery.or('site_id.eq.hung_vuong,site_id.is.null');
+        } else {
+          delQuery = delQuery.eq('site_id', targetSiteId);
+        }
+        await delQuery;
+      } catch (delErr: any) {
+        console.warn('[copyMenuBetweenSites delete old items notice]:', delErr);
+      }
+    }
+
+    // 2.1 Nếu chế độ 'append': lấy danh sách món hiện có của site đích để tránh trùng lặp
+    let existingTargetMap = new Map<string, string>();
+    if (mode === 'append') {
+      try {
+        let targetQuery = supabase.from('menu_items').select('id, name');
+        if (targetSiteId === 'hung_vuong') {
+          targetQuery = targetQuery.or('site_id.eq.hung_vuong,site_id.is.null');
+        } else {
+          targetQuery = targetQuery.eq('site_id', targetSiteId);
+        }
+        const { data: tData } = await targetQuery;
+        if (Array.isArray(tData)) {
+          tData.forEach((it) => {
+            if (it.name) existingTargetMap.set(it.name.trim().toLowerCase(), it.id);
+          });
+        }
+      } catch (tErr) {
+        console.warn('[copyMenuBetweenSites target query notice]:', tErr);
+      }
+    }
+
+    // 3. Chuẩn bị danh sách món mới cho site đích
+    let insertedRows: any[] = [];
+    const itemsToInsert: any[] = [];
+
+    for (const item of sourceItems) {
+      const pStock = Number(item.preparedStock) >= 0 ? Number(item.preparedStock) : 50;
+      const cStock = resetStockToPrepared
+        ? pStock
+        : Math.min(pStock, Number(item.currentStock) >= 0 ? Number(item.currentStock) : pStock);
+
+      const payload = {
+        name: item.name.trim(),
+        category: item.category?.trim() || 'Cơm trưa',
+        description: item.description?.trim() || '',
+        price: Number(item.price) > 0 ? Number(item.price) : 35000,
+        image_url: item.imageUrl?.trim() || '',
+        prepared_stock: pStock,
+        current_stock: cStock,
+        is_active: item.isActive !== false,
+        for_date: item.forDate || null,
+        site_id: targetSiteId,
+        available_site_ids: [targetSiteId],
+      };
+
+      const cleanLowerName = item.name.trim().toLowerCase();
+      const existingId = existingTargetMap.get(cleanLowerName);
+
+      if (mode === 'append' && existingId) {
+        // Món đã có sẵn tại site đích: cập nhật lại thông tin mới nhất
+        try {
+          const { data: updatedData } = await supabase
+            .from('menu_items')
+            .update({
+              ...payload,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', existingId)
+            .select()
+            .maybeSingle();
+          if (updatedData) insertedRows.push(updatedData);
+        } catch {}
+      } else {
+        itemsToInsert.push(payload);
+      }
+    }
+
+    // 4. Chèn vào bảng menu_items theo batch cho các món mới chưa tồn tại
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < itemsToInsert.length; i += BATCH_SIZE) {
+      const batch = itemsToInsert.slice(i, i + BATCH_SIZE);
+      const { data: insData, error: insErr } = await supabase
+        .from('menu_items')
+        .insert(batch)
+        .select();
+
+      if (!insErr && insData) {
+        insertedRows.push(...insData);
+      } else {
+        // Fallback bỏ for_date nếu bảng không có cột
+        const fallbackBatch = batch.map((r) => {
+          const c: any = { ...r };
+          delete c.for_date;
+          return c;
+        });
+        const { data: insData2, error: insErr2 } = await supabase
+          .from('menu_items')
+          .insert(fallbackBatch)
+          .select();
+        if (!insData2 && insErr2) {
+          throw new Error(insErr2?.message || insErr?.message || 'Không thể chèn món ăn mới');
+        } else if (insData2) {
+          insertedRows.push(...insData2);
+        }
+      }
+    }
+
+    // 5. Cập nhật cache cục bộ & broadcast sự kiện
+    const newMappedItems = insertedRows.map(mapMenuItem);
+    const existingCache = getCachedMenu();
+    let updatedCache: MenuItem[];
+    if (mode === 'replace') {
+      updatedCache = [
+        ...existingCache.filter((m) => m.siteId !== targetSiteId && (targetSiteId !== 'hung_vuong' || m.siteId)),
+        ...newMappedItems,
+      ];
+    } else {
+      updatedCache = [...newMappedItems, ...existingCache];
+    }
+    setCachedMenu(updatedCache);
+
+    broadcastSystemEvent('canteen_menu_updated');
+
+    return {
+      success: true,
+      count: insertedRows.length || itemsToInsert.length,
+    };
+  } catch (err: any) {
+    console.error('[copyMenuBetweenSites error]:', err);
+    return {
+      success: false,
+      count: 0,
+      error: err?.message || 'Lỗi khi sao chép thực đơn giữa các cơ sở',
+    };
+  }
+}
+
 export async function updateMenuItem(
   id: string,
   updates: Partial<MenuItem>,
@@ -1951,6 +2141,14 @@ export async function placeOrder(params: {
     dbMenuList = getCachedMenu();
   }
 
+  const targetSiteId = params.siteId || userData?.site_id || getSelectedSiteCode() || 'hung_vuong';
+  const targetIsGuest = Boolean(params.isGuest);
+  const targetDate = targetIsGuest ? getTodayStr() : getTomorrowStr();
+  const targetGuestName = targetIsGuest ? (params.guestName?.trim() || 'Khách vãng lai') : '';
+  const targetGuestPhone = targetIsGuest ? (params.guestPhone?.trim() || '') : '';
+  const targetPaymentMethod = targetIsGuest ? (params.paymentMethod || 'cash') : 'wallet';
+  const targetPaymentStatus = targetIsGuest ? 'pending' : 'paid';
+
   let totalAmount = 0;
   const orderItemsData: {
     menu_item_id: string;
@@ -2004,13 +2202,32 @@ export async function placeOrder(params: {
     // Chỉ gán real_db_item_id nếu ID đó là UUID hợp lệ và có trong bảng menu_items trên DB
     let realDbId: string | null = null;
     if (menuItem?.id && isValidUuid(menuItem.id)) {
-      realDbId = menuItem.id;
-    } else if (isValidUuid(requestedItem.menuItemId)) {
+      const dbMatch = dbMenuList.find((d) => d.id === menuItem.id);
+      if (dbMatch) {
+        realDbId = dbMatch.id;
+      }
+    }
+    // Tra cứu đối soát bằng tên món trong dbMenuList để luôn có UUID chính xác trong database
+    if (!realDbId && itemName) {
+      const cleanName = itemName.trim().toLowerCase();
+      const dbMatchByName =
+        dbMenuList.find(
+          (d) =>
+            d.name &&
+            d.name.trim().toLowerCase() === cleanName &&
+            (targetSiteId ? (d.site_id === targetSiteId || (d.available_site_ids && d.available_site_ids.includes(targetSiteId))) : true)
+        ) ||
+        dbMenuList.find((d) => d.name && d.name.trim().toLowerCase() === cleanName);
+      if (dbMatchByName && isValidUuid(dbMatchByName.id)) {
+        realDbId = dbMatchByName.id;
+      }
+    }
+    if (!realDbId && isValidUuid(requestedItem.menuItemId)) {
       realDbId = requestedItem.menuItemId;
     }
 
     orderItemsData.push({
-      menu_item_id: requestedItem.menuItemId,
+      menu_item_id: realDbId || requestedItem.menuItemId,
       real_db_item_id: realDbId,
       name: itemName,
       price: itemPrice,
@@ -2038,20 +2255,12 @@ export async function placeOrder(params: {
   const sec = String(now.getSeconds()).padStart(2, '0');
   const randSuffix = Math.floor(1000 + Math.random() * 9000);
   let orderCode = `CT-${yyyy}${mm}${dd}-${hh}${min}${sec}-${randSuffix}`;
-  const targetIsGuest = Boolean(params.isGuest);
-  const targetDate = targetIsGuest ? getTodayStr() : getTomorrowStr();
   const itemsSummaryText = orderItemsData
     .map((it) => `${it.quantity}x ${it.name} (${formatVnd(it.price)})`)
     .join(', ');
 
   let orderUuid = generateUUID();
   const userCustomNote = params.note?.trim() || '';
-
-  const targetSiteId = params.siteId || userData?.site_id || getSelectedSiteCode() || 'hung_vuong';
-  const targetGuestName = targetIsGuest ? (params.guestName?.trim() || 'Khách vãng lai') : '';
-  const targetGuestPhone = targetIsGuest ? (params.guestPhone?.trim() || '') : '';
-  const targetPaymentMethod = targetIsGuest ? (params.paymentMethod || 'cash') : 'wallet';
-  const targetPaymentStatus = targetIsGuest ? 'pending' : 'paid';
 
   // 6. Chèn đơn hàng vào bảng orders trên Supabase (Adaptive Schema Insertion)
   let newOrder: any = null;
@@ -2932,7 +3141,7 @@ export async function cancelOrder(
       }
     }
 
-    // Phục hồi lại số lượng tồn kho món ăn trong bảng menu_items
+    // Phục hồi lại số lượng tồn kho món ăn trong bảng menu_items (ĐẢM BẢO KHÔNG VƯỢT QUÁ PREPARED_STOCK)
     try {
       const { data: fetchedItems } = await supabase
         .from('order_items')
@@ -2945,7 +3154,7 @@ export async function cancelOrder(
           if (it.menu_item_id && isValidUuid(it.menu_item_id)) {
             const { data } = await supabase
               .from('menu_items')
-              .select('id, current_stock')
+              .select('id, current_stock, prepared_stock')
               .eq('id', it.menu_item_id)
               .maybeSingle();
             mItem = data;
@@ -2953,7 +3162,7 @@ export async function cancelOrder(
           if (!mItem && it.name) {
             const { data } = await supabase
               .from('menu_items')
-              .select('id, current_stock')
+              .select('id, current_stock, prepared_stock')
               .ilike('name', it.name.trim())
               .limit(1)
               .maybeSingle();
@@ -2961,7 +3170,13 @@ export async function cancelOrder(
           }
 
           if (mItem) {
-            const restoredStock = Number(mItem.current_stock ?? 0) + Number(it.quantity ?? 1);
+            const prepStock = mItem.prepared_stock !== null && mItem.prepared_stock !== undefined
+              ? Number(mItem.prepared_stock)
+              : Number(mItem.current_stock ?? 0);
+            const currStock = Number(mItem.current_stock ?? 0);
+            const qtyToRestore = Number(it.quantity ?? 1);
+            // Giới hạn tồn kho không bao giờ được vượt quá số lượng chuẩn bị ban đầu (prepared_stock)
+            const restoredStock = Math.min(prepStock, currStock + qtyToRestore);
             await supabase
               .from('menu_items')
               .update({ current_stock: restoredStock, updated_at: new Date().toISOString() })
@@ -2976,7 +3191,11 @@ export async function cancelOrder(
             (it) => it.menu_item_id === m.id || (it.name && m.name && it.name.trim().toLowerCase() === m.name.trim().toLowerCase())
           );
           if (matchingIt) {
-            return { ...m, currentStock: m.currentStock + Number(matchingIt.quantity ?? 1) };
+            const prepStock = m.preparedStock !== null && m.preparedStock !== undefined
+              ? Number(m.preparedStock)
+              : Number(m.currentStock ?? 0);
+            const currStock = Number(m.currentStock ?? 0);
+            return { ...m, currentStock: Math.min(prepStock, currStock + Number(matchingIt.quantity ?? 1)) };
           }
           return m;
         });
@@ -3183,37 +3402,125 @@ export async function rejectGuestPayment(
   const now = new Date().toISOString();
   const rejectReason = reason || 'Từ chối thanh toán';
 
-  // 1. Thử gọi RPC reject_guest_payment
+  // 0. Kiểm tra trạng thái hiện tại của đơn hàng để tránh xử lý lặp / hoàn tồn kho 2 lần
   try {
-    await supabase.rpc('reject_guest_payment', {
-      p_order_id: cleanId,
-      p_reason: rejectReason,
-    });
-  } catch (rpcEx) {
-    console.warn('[rejectGuestPayment RPC notice]:', rpcEx);
+    let checkQuery = supabase.from('orders').select('id, status, payment_status');
+    if (isValidUuid(cleanId)) {
+      checkQuery = checkQuery.or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
+    } else {
+      checkQuery = checkQuery.eq('order_code', cleanId);
+    }
+    const { data: existingOrder } = await checkQuery.limit(1).maybeSingle();
+    if (existingOrder && (existingOrder.status === 'cancelled' || existingOrder.payment_status === 'rejected')) {
+      console.info(`[rejectGuestPayment]: Đơn hàng ${cleanId} đã ở trạng thái hủy/từ chối từ trước, không cộng lại tồn kho nữa.`);
+      return { success: true };
+    }
+  } catch (checkEx) {
+    console.warn('[rejectGuestPayment check error]:', checkEx);
   }
 
-  // 2. Cập nhật trạng thái đơn thành rejected & cancelled
-  try {
-    await supabase
-      .from('orders')
-      .update({
-        payment_status: 'rejected',
-        status: 'cancelled',
-        cancelled_at: now,
-        cancel_reason: rejectReason,
-        updated_at: now,
-      })
-      .eq('id', cleanId);
-  } catch (updErr) {
-    console.warn('[rejectGuestPayment update DB notice]:', updErr);
+  // 1. Thử gọi RPC reject_guest_payment (Hàm Postgres đã tự động hoàn tồn kho cho từng món ăn)
+  let rpcHandled = false;
+  if (isValidUuid(cleanId)) {
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc('reject_guest_payment', {
+        p_order_id: cleanId,
+        p_reason: rejectReason,
+      });
+      if (!rpcErr && rpcRes && (rpcRes as any).success !== false) {
+        rpcHandled = true;
+        console.info(`[rejectGuestPayment]: RPC reject_guest_payment đã xử lý thành công (hoàn tồn kho trên Postgres).`);
+      } else if (rpcErr) {
+        console.warn('[rejectGuestPayment RPC error]:', rpcErr);
+      }
+    } catch (rpcEx) {
+      console.warn('[rejectGuestPayment RPC notice]:', rpcEx);
+    }
   }
 
-  // 3. Phục hồi tồn kho món ăn (vì lúc tạo đơn pending đã trừ tồn kho)
+  // 2. Nếu RPC không chạy được (hoặc order_id không phải UUID), cập nhật bảng orders và hoàn tồn kho bằng JS Fallback
+  if (!rpcHandled) {
+    try {
+      if (isValidUuid(cleanId)) {
+        await supabase
+          .from('orders')
+          .update({
+            payment_status: 'rejected',
+            status: 'cancelled',
+            cancelled_at: now,
+            cancel_reason: rejectReason,
+            updated_at: now,
+          })
+          .or(`id.eq.${cleanId},order_code.eq.${cleanId}`);
+      } else {
+        await supabase
+          .from('orders')
+          .update({
+            payment_status: 'rejected',
+            status: 'cancelled',
+            cancelled_at: now,
+            cancel_reason: rejectReason,
+            updated_at: now,
+          })
+          .eq('order_code', cleanId);
+      }
+    } catch (updErr) {
+      console.warn('[rejectGuestPayment update DB notice]:', updErr);
+    }
+
+    // Phục hồi tồn kho món ăn qua JS KHI VÀ CHỈ KHI RPC chưa hoàn tồn kho trên DB
+    try {
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', cleanId);
+
+      if (Array.isArray(items) && items.length > 0) {
+        for (const it of items) {
+          let mItem: any = null;
+          if (it.menu_item_id && isValidUuid(it.menu_item_id)) {
+            const { data } = await supabase
+              .from('menu_items')
+              .select('id, current_stock, prepared_stock')
+              .eq('id', it.menu_item_id)
+              .maybeSingle();
+            mItem = data;
+          }
+          if (!mItem && it.name) {
+            const { data } = await supabase
+              .from('menu_items')
+              .select('id, current_stock, prepared_stock')
+              .ilike('name', it.name.trim())
+              .limit(1)
+              .maybeSingle();
+            mItem = data;
+          }
+
+          if (mItem) {
+            const prepStock = mItem.prepared_stock !== null && mItem.prepared_stock !== undefined
+              ? Number(mItem.prepared_stock)
+              : Number(mItem.current_stock ?? 0);
+            const currStock = Number(mItem.current_stock ?? 0);
+            const qtyToRestore = Number(it.quantity ?? 1);
+            // Giới hạn tồn kho không bao giờ được vượt quá số lượng chuẩn bị ban đầu (prepared_stock)
+            const restoredStock = Math.min(prepStock, currStock + qtyToRestore);
+            await supabase
+              .from('menu_items')
+              .update({ current_stock: restoredStock, updated_at: now })
+              .eq('id', mItem.id);
+          }
+        }
+      }
+    } catch (restockErr) {
+      console.warn('[rejectGuestPayment fallback restock notice]:', restockErr);
+    }
+  }
+
+  // 2.5 Bảo vệ tuyệt đối: Đảm bảo tồn kho trên Supabase không bao giờ vượt quá prepared_stock
   try {
     const { data: items } = await supabase
       .from('order_items')
-      .select('*')
+      .select('menu_item_id, name')
       .eq('order_id', cleanId);
 
     if (Array.isArray(items) && items.length > 0) {
@@ -3222,7 +3529,7 @@ export async function rejectGuestPayment(
         if (it.menu_item_id && isValidUuid(it.menu_item_id)) {
           const { data } = await supabase
             .from('menu_items')
-            .select('id, current_stock')
+            .select('id, current_stock, prepared_stock')
             .eq('id', it.menu_item_id)
             .maybeSingle();
           mItem = data;
@@ -3230,37 +3537,51 @@ export async function rejectGuestPayment(
         if (!mItem && it.name) {
           const { data } = await supabase
             .from('menu_items')
-            .select('id, current_stock')
+            .select('id, current_stock, prepared_stock')
             .ilike('name', it.name.trim())
             .limit(1)
             .maybeSingle();
           mItem = data;
         }
 
-        if (mItem) {
-          const restoredStock = Number(mItem.current_stock ?? 0) + Number(it.quantity ?? 1);
+        if (mItem && mItem.prepared_stock !== null && mItem.prepared_stock !== undefined && Number(mItem.current_stock) > Number(mItem.prepared_stock)) {
           await supabase
             .from('menu_items')
-            .update({ current_stock: restoredStock, updated_at: now })
+            .update({ current_stock: mItem.prepared_stock, updated_at: now })
             .eq('id', mItem.id);
         }
       }
-
-      // Cập nhật tồn kho trong cache thực đơn
-      const currMenu = getCachedMenu();
-      const updatedMenu = currMenu.map((m) => {
-        const matchingIt = items.find(
-          (it) => it.menu_item_id === m.id || (it.name && m.name && it.name.trim().toLowerCase() === m.name.trim().toLowerCase())
-        );
-        if (matchingIt) {
-          return { ...m, currentStock: m.currentStock + Number(matchingIt.quantity ?? 1) };
-        }
-        return m;
-      });
-      setCachedMenu(updatedMenu);
     }
-  } catch (restockErr) {
-    console.warn('[rejectGuestPayment restock notice]:', restockErr);
+  } catch {}
+
+  // 3. Cập nhật tồn kho trong cache thực đơn cục bộ (chỉ cộng nếu RPC chưa chạy để tránh cộng đúp)
+  if (!rpcHandled) {
+    try {
+      const { data: items } = await supabase
+        .from('order_items')
+        .select('*')
+        .eq('order_id', cleanId);
+
+      if (Array.isArray(items) && items.length > 0) {
+        const currMenu = getCachedMenu();
+        const updatedMenu = currMenu.map((m) => {
+          const matchingIt = items.find(
+            (it) => it.menu_item_id === m.id || (it.name && m.name && it.name.trim().toLowerCase() === m.name.trim().toLowerCase())
+          );
+          if (matchingIt) {
+            const prepStock = m.preparedStock !== null && m.preparedStock !== undefined
+              ? Number(m.preparedStock)
+              : Number(m.currentStock ?? 0);
+            const currStock = Number(m.currentStock ?? 0);
+            return { ...m, currentStock: Math.min(prepStock, currStock + Number(matchingIt.quantity ?? 1)) };
+          }
+          return m;
+        });
+        setCachedMenu(updatedMenu);
+      }
+    } catch (cErr) {
+      console.warn('[rejectGuestPayment local cache restock note]:', cErr);
+    }
   }
 
   // 4. Cập nhật cache cục bộ

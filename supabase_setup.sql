@@ -670,13 +670,24 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE FUNCTION reject_guest_payment(p_order_id UUID, p_reason TEXT DEFAULT NULL)
 RETURNS JSONB AS $$
 DECLARE
+    v_order RECORD;
     item RECORD;
 BEGIN
-    -- Hoàn lại tồn kho cho từng món ăn
+    SELECT * INTO v_order FROM orders WHERE id = p_order_id;
+    IF v_order.id IS NULL THEN
+        RETURN jsonb_build_object('success', false, 'error', 'Không tìm thấy đơn hàng');
+    END IF;
+
+    -- Nếu đơn đã hủy hoặc từ chối trước đó, không hoàn tồn kho lần 2 (chống hoàn lặp)
+    IF v_order.status = 'cancelled' OR v_order.payment_status = 'rejected' THEN
+        RETURN jsonb_build_object('success', true, 'order_id', p_order_id, 'payment_status', 'rejected', 'already_handled', true);
+    END IF;
+
+    -- Hoàn lại tồn kho cho từng món ăn VÀ ĐẢM BẢO KHÔNG VƯỢT QUÁ SỐ LƯỢNG CHUẨN BỊ BAN ĐẦU (prepared_stock)
     FOR item IN SELECT menu_item_id, quantity FROM order_items WHERE order_id = p_order_id LOOP
         IF item.menu_item_id IS NOT NULL THEN
             UPDATE menu_items
-            SET current_stock = current_stock + item.quantity,
+            SET current_stock = LEAST(COALESCE(prepared_stock, current_stock), current_stock + item.quantity),
                 updated_at = now()
             WHERE id = item.menu_item_id;
         END IF;

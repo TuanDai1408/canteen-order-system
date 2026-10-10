@@ -434,12 +434,44 @@ export default function App() {
       }
     };
 
+    const handleMenuUpdated = () => {
+      const activeUser = userRef.current;
+      if (activeUser) {
+        refreshOrderData(activeUser, ['menu_items']);
+      }
+    };
+
+    const handleOrderCancelledEvent = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      const targetId = detail?.orderId || detail?.id;
+      if (targetId) {
+        setOrders((prev) =>
+          prev.map((o) =>
+            o.id === targetId || o.orderCode === targetId
+              ? {
+                  ...o,
+                  status: 'cancelled',
+                  paymentStatus: (detail?.paymentStatus as any) || o.paymentStatus,
+                }
+              : o
+          )
+        );
+      }
+      const activeUser = userRef.current;
+      if (activeUser) {
+        refreshOrderData(activeUser, ['menu_items', 'orders']);
+      }
+    };
+
     window.addEventListener('canteen_order_updated', handleOrderPrintUpdated);
     window.addEventListener('canteen_payment_confirmed', handleOrderPrintUpdated);
     window.addEventListener('canteen_new_order_inserted', handleNewOrderEvent);
     window.addEventListener('canteen_order_created', handleNewOrderEvent);
     window.addEventListener('canteen_order_placed', handleNewOrderEvent);
     window.addEventListener('canteen_guest_order_pending', handleNewOrderEvent);
+    window.addEventListener('canteen_order_cancelled', handleOrderCancelledEvent);
+    window.addEventListener('canteen_payment_rejected', handleOrderCancelledEvent);
+    window.addEventListener('canteen_menu_updated', handleMenuUpdated);
 
     return () => {
       window.removeEventListener('canteen_order_updated', handleOrderPrintUpdated);
@@ -448,8 +480,11 @@ export default function App() {
       window.removeEventListener('canteen_order_created', handleNewOrderEvent);
       window.removeEventListener('canteen_order_placed', handleNewOrderEvent);
       window.removeEventListener('canteen_guest_order_pending', handleNewOrderEvent);
+      window.removeEventListener('canteen_order_cancelled', handleOrderCancelledEvent);
+      window.removeEventListener('canteen_payment_rejected', handleOrderCancelledEvent);
+      window.removeEventListener('canteen_menu_updated', handleMenuUpdated);
     };
-  }, []);
+  }, [refreshOrderData]);
 
   // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
   useEffect(() => {

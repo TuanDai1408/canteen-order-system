@@ -120,11 +120,13 @@ import {
   Trash2,
   ShieldAlert,
   History,
+  Download,
 } from 'lucide-react';
 import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
+import { CopyMenuModal } from './CopyMenuModal';
 import { PaginationControls } from './PaginationControls';
-import { exportOrdersToExcel, exportUsersToExcel } from '../utils/exportExcel';
+import { exportOrdersToExcel, exportUsersToExcel, exportMenuToExcel } from '../utils/exportExcel';
 
 /**
  * Bộ đếm thời gian thực từ lúc khách đặt món (Order Live Elapsed Timer)
@@ -350,6 +352,7 @@ export function PortalDashboard({
   // Modals state
   const [isAddDishOpen, setIsAddDishOpen] = useState(false);
   const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
+  const [isCopyMenuOpen, setIsCopyMenuOpen] = useState(false);
   const [newDish, setNewDish] = useState<{
     name: string;
     category: string;
@@ -1750,6 +1753,20 @@ export function PortalDashboard({
     }
   };
 
+  // Xuất thực đơn cơ sở hiện tại ra file Excel chuẩn định dạng import
+  const handleExportMenu = () => {
+    if (!menu || menu.length === 0) {
+      setMsg({ type: 'err', text: 'Thực đơn hiện tại không có món nào để xuất file Excel.' });
+      return;
+    }
+    const currentSite = sitesList.find((s) => s.code === selectedSiteCode) || DEFAULT_SITES[0];
+    exportMenuToExcel(menu, currentSite.name, selectedSiteCode);
+    setMsg({
+      type: 'ok',
+      text: `Đã xuất ${menu.length} món ăn của cơ sở "${currentSite.name}" ra file Excel thành công! Bạn có thể sử dụng file này để nhập (import) sang site khác.`,
+    });
+  };
+
   // Bật/tắt trạng thái hiển thị món ăn trên menu cho khách hàng
   const handleToggleDishVisibility = async (item: MenuItem) => {
     const nextStatus = item.isActive === false;
@@ -2382,13 +2399,31 @@ export function PortalDashboard({
             )}
 
             {tab === 'menu' && (
-              <button
-                onClick={() => setIsAddDishOpen(true)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm shadow-indigo-600/20 flex items-center gap-1.5 cursor-pointer min-h-[40px]"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Thêm món</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportMenu}
+                  className="px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer min-h-[40px] transition shadow-2xs"
+                  title="Xuất thực đơn cơ sở hiện tại ra file Excel để lưu trữ hoặc import sang site khác"
+                >
+                  <Download className="w-4 h-4 text-emerald-600" />
+                  <span className="hidden sm:inline">Xuất Excel</span>
+                </button>
+                <button
+                  onClick={() => setIsCopyMenuOpen(true)}
+                  className="px-3 py-2 bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-200 text-xs font-bold rounded-xl flex items-center gap-1.5 cursor-pointer min-h-[40px] transition shadow-2xs"
+                  title="Sao chép thực đơn từ site này sang site khác"
+                >
+                  <Copy className="w-4 h-4 text-violet-600" />
+                  <span className="hidden sm:inline">Sao chép Menu</span>
+                </button>
+                <button
+                  onClick={() => setIsAddDishOpen(true)}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-sm shadow-indigo-600/20 flex items-center gap-1.5 cursor-pointer min-h-[40px]"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Thêm món</span>
+                </button>
+              </div>
             )}
 
             {tab === 'qr' && showQrTab && (
@@ -2765,8 +2800,8 @@ export function PortalDashboard({
                     ))}
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <div className="relative flex-1 sm:w-60">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <div className="relative flex-1 sm:w-56 min-w-[170px]">
                       <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                       <input
                         type="text"
@@ -2776,6 +2811,24 @@ export function PortalDashboard({
                         className="w-full pl-9 pr-3 py-2 bg-white border border-slate-200 rounded-xl text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       />
                     </div>
+
+                    <button
+                      onClick={handleExportMenu}
+                      className="px-3 sm:px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-2xs transition"
+                      title="Xuất thực đơn cơ sở hiện tại ra file Excel để nhập sang site khác"
+                    >
+                      <Download className="w-4 h-4 text-emerald-600" />
+                      <span>Xuất Excel</span>
+                    </button>
+
+                    <button
+                      onClick={() => setIsCopyMenuOpen(true)}
+                      className="px-3 sm:px-3.5 py-2 bg-violet-50 hover:bg-violet-100 text-violet-800 border border-violet-300 rounded-xl text-xs font-bold flex items-center gap-1.5 min-h-[40px] flex-shrink-0 cursor-pointer shadow-2xs transition"
+                      title="Sao chép thực đơn từ site này sang site khác"
+                    >
+                      <Copy className="w-4 h-4 text-violet-600" />
+                      <span>Sao chép sang Site khác</span>
+                    </button>
 
                     <button
                       onClick={() => setIsBulkUploadOpen(true)}
@@ -5707,10 +5760,28 @@ export function PortalDashboard({
         isOpen={isBulkUploadOpen}
         onClose={() => setIsBulkUploadOpen(false)}
         currentUser={currentUser}
+        siteId={selectedSiteCode}
         onSuccess={(count) => {
           setMsg({
             type: 'ok',
-            text: `Đã nạp thành công ${count} món ăn vào Thực đơn Căn tin trên Supabase!`,
+            text: `Đã nạp thành công ${count} món ăn vào Thực đơn cơ sở ${selectedSiteCode === 'g_group' ? 'Canteen G-Group' : 'Hùng Vương'} trên Supabase!`,
+          });
+          onRefresh();
+        }}
+      />
+
+      {/* ================= MODAL: COPY MENU BETWEEN SITES ================= */}
+      <CopyMenuModal
+        isOpen={isCopyMenuOpen}
+        onClose={() => setIsCopyMenuOpen(false)}
+        currentUser={currentUser}
+        currentSiteCode={selectedSiteCode}
+        sitesList={sitesList}
+        menu={menu}
+        onSuccess={(count, sourceName, targetName) => {
+          setMsg({
+            type: 'ok',
+            text: `Đã sao chép thành công ${count} món ăn từ "${sourceName}" sang "${targetName}"!`,
           });
           onRefresh();
         }}

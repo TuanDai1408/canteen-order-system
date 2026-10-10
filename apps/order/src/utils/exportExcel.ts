@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { Order, UserProfile } from '@canteen/shared';
+import type { Order, UserProfile, MenuItem } from '@canteen/shared';
 import { formatVnd, getOrderDisplayItems } from '@canteen/shared';
 
 /**
@@ -146,3 +146,52 @@ export function exportUsersToExcel(users: UserProfile[], filenamePrefix = 'Danh_
 
   XLSX.writeFile(workbook, fileName);
 }
+
+/**
+ * Xuất danh sách thực đơn ra file Excel (.xlsx) chuẩn cấu trúc mẫu import của hệ thống.
+ * Cho phép lấy thực đơn từ site này (ví dụ Hùng Vương) để nhập (import) trực tiếp vào site khác (ví dụ G-Group).
+ */
+export function exportMenuToExcel(
+  menuItems: MenuItem[],
+  siteName = 'Cơ sở',
+  siteCode = 'hung_vuong'
+): void {
+  if (!menuItems || menuItems.length === 0) {
+    alert('Không có món ăn nào trong thực đơn để xuất Excel.');
+    return;
+  }
+
+  const rows = menuItems.map((item) => ({
+    'Tên món ăn (*)': item.name || '',
+    'Danh mục': item.category || 'Cơm trưa',
+    'Đơn giá (VNĐ)': Number(item.price || 0),
+    'Số lượng chuẩn bị': Number(item.preparedStock ?? item.currentStock ?? 50),
+    'Mô tả': item.description || '',
+    'Link ảnh (tùy chọn)': item.imageUrl || '',
+    'Ngày phục vụ (YYYY-MM-DD)': item.forDate || '',
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(rows);
+
+  // Thiết lập độ rộng cột trực quan
+  worksheet['!cols'] = [
+    { wch: 32 }, // Tên món ăn (*)
+    { wch: 18 }, // Danh mục
+    { wch: 16 }, // Đơn giá (VNĐ)
+    { wch: 18 }, // Số lượng chuẩn bị
+    { wch: 45 }, // Mô tả
+    { wch: 38 }, // Link ảnh (tùy chọn)
+    { wch: 24 }, // Ngày phục vụ (YYYY-MM-DD)
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  const safeSheetName = `Thuc_Don_${(siteCode || 'Canteen').toUpperCase()}`.substring(0, 31);
+  XLSX.utils.book_append_sheet(workbook, worksheet, safeSheetName);
+
+  const now = new Date();
+  const dateStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
+  const fileName = `Thuc_Don_${siteCode || 'Canteen'}_${dateStr}.xlsx`;
+
+  XLSX.writeFile(workbook, fileName);
+}
+

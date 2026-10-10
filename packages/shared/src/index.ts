@@ -46,6 +46,8 @@ export {
   seedMenuToSupabase,
   createMenuItem,
   bulkCreateMenuItems,
+  copyMenuBetweenSites,
+  type CopyMenuOptions,
   updateMenuItem,
   placeOrder,
   cancelOrder,

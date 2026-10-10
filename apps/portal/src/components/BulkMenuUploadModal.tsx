@@ -26,6 +26,7 @@ interface Props {
   onClose: () => void;
   currentUser: UserProfile;
   onSuccess: (count: number) => void;
+  siteId?: string;
 }
 
 interface ParsedDish {
@@ -50,6 +51,7 @@ export function BulkMenuUploadModal({
   onClose,
   currentUser,
   onSuccess,
+  siteId,
 }: Props) {
   const [parsedItems, setParsedItems] = useState<ParsedDish[]>([]);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -326,7 +328,7 @@ export function BulkMenuUploadModal({
         forDate: it.forDate || getTomorrowStr(),
       }));
 
-      const res = await bulkCreateMenuItems(payload, currentUser);
+      const res = await bulkCreateMenuItems(payload, currentUser, siteId);
       if (res.success) {
         onSuccess(res.count);
         onClose();
