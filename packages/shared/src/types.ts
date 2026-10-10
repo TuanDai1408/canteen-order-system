@@ -128,11 +128,12 @@ export interface Order {
 }
 
 export interface QRExceptionToken {
+  id?: string;
   token: string;
   siteId?: string;
   createdAt: string;
   expiresAt: string;
-  createdBy: string;
+  createdBy?: string;
   createdByName: string;
   isUsed: boolean;
   isDisabled?: boolean;

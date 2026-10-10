@@ -1247,11 +1247,10 @@ export function PortalDashboard({
   // Filtered Menu
   const filteredMenu = useMemo(() => {
     return menu.filter((item) => {
-      // Lọc theo Cơ sở (Site) nếu món ăn quy định danh sách site
-      const matchSite =
-        !item.availableSiteIds ||
-        item.availableSiteIds.length === 0 ||
-        item.availableSiteIds.includes(selectedSiteCode);
+      // Lọc tách biệt tuyệt đối theo Cơ sở (Site)
+      const matchSite = selectedSiteCode === 'g_group'
+        ? (item.siteId === 'g_group' || (item.availableSiteIds && item.availableSiteIds.includes('g_group')))
+        : (item.siteId === 'hung_vuong' || !item.siteId || (item.availableSiteIds && item.availableSiteIds.includes('hung_vuong')));
       const matchCat = menuFilterCat === 'all' || item.category === menuFilterCat;
       const matchSearch =
         item.name.toLowerCase().includes(menuSearch.toLowerCase()) ||

@@ -89,6 +89,7 @@ export default function App() {
       const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
       const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
       const needProfile = shouldFetchAll || tables.includes('users') || tables.includes('orders');
+      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens') || tables.includes('system_settings');
       const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
 
       const promises: Promise<any>[] = [];
@@ -107,6 +108,11 @@ export default function App() {
         promises.push(getOrders({ userId: profile.id, authUserId: profile.authUserId, siteId: profile.siteId || 'hung_vuong' }));
         keys.push('orders');
       }
+      if (needTokens) {
+        const userSite = profile.siteId || selectedSiteCode || 'hung_vuong';
+        promises.push(getQRTokens(userSite));
+        keys.push('tokens');
+      }
       if (needTimeGate) {
         promises.push(fetchTimeGateConfig());
         keys.push('timeGate');
@@ -123,6 +129,8 @@ export default function App() {
           setMenu(res.value);
         } else if (key === 'orders' && Array.isArray(res.value)) {
           setOrders(res.value);
+        } else if (key === 'tokens' && Array.isArray(res.value)) {
+          setTokens(res.value);
         }
       });
       setTimeStatus(getTimeGateStatus());
@@ -256,11 +264,16 @@ export default function App() {
             refreshPortalData(targetSite);
           } else {
             setCurrentView('order');
-            const [ordersRes] = await Promise.allSettled([
-              getOrders({ userId: profile.id, authUserId: profile.authUserId }),
+            const targetSite = profile.siteId || selectedSiteCode || 'hung_vuong';
+            const [ordersRes, tokensRes] = await Promise.allSettled([
+              getOrders({ userId: profile.id, authUserId: profile.authUserId, siteId: targetSite }),
+              getQRTokens(targetSite),
             ]);
             if (mounted && ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
               setOrders(ordersRes.value);
+            }
+            if (mounted && tokensRes.status === 'fulfilled' && Array.isArray(tokensRes.value)) {
+              setTokens(tokensRes.value);
             }
           }
         } else if (guestMode) {
@@ -711,6 +724,7 @@ export default function App() {
       currentUser={user}
       menu={menu}
       orders={orders}
+      tokens={tokens}
       timeStatus={timeStatus}
       error={error}
       onRefresh={() => refreshOrderData(user)}

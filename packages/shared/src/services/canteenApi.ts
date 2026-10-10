@@ -1682,23 +1682,14 @@ export async function placeOrder(params: {
 
     if (!matchedToken && isSupabaseConfigured && supabase) {
       try {
+        const upperToken = cleanToken.trim().toUpperCase();
         const { data: dbToken } = await supabase
           .from('qr_exception_tokens')
           .select('*')
-          .ilike('token', cleanToken.trim())
+          .or(`token.eq.${upperToken},token.eq.${cleanToken.trim()},token.ilike.${cleanToken.trim()}`)
           .maybeSingle();
         if (dbToken) {
           matchedToken = mapQRToken(dbToken);
-        } else {
-          // Retry exact match if ilike is restricted
-          const { data: exactToken } = await supabase
-            .from('qr_exception_tokens')
-            .select('*')
-            .eq('token', cleanToken.trim())
-            .maybeSingle();
-          if (exactToken) {
-            matchedToken = mapQRToken(exactToken);
-          }
         }
       } catch (tErr) {
         console.warn('QR token query note:', tErr);
@@ -1721,6 +1712,10 @@ export async function placeOrder(params: {
         error: `Mã QR ngoại lệ "${cleanToken}" không tồn tại trên hệ thống. Vui lòng kiểm tra lại.`,
       };
     }
+
+    // Đưa token hợp lệ vào cache ngay lập tức để đồng bộ đồng thời
+    const currentCached = getCachedQRTokens();
+    setCachedQRTokens([matchedToken, ...currentCached.filter((t) => t.token.toUpperCase() !== matchedToken!.token.toUpperCase())]);
 
     if (matchedToken.isDisabled) {
       return {
@@ -2389,18 +2384,15 @@ export async function placeOrder(params: {
   // 8. Trừ tồn kho món ăn trên Supabase (Hỗ trợ tra cứu theo ID hoặc Tên món)
   for (const it of orderItemsData) {
     try {
-      let dbItem: { id: string; current_stock: number } | null = null;
+      let dbItem: { id: string; current_stock: number; site_id?: string } | null = null;
 
-      // 8.1 Thử tìm món trong database bằng ID (nếu có UUID hợp lệ) và kiểm tra đúng site_id
+      // 8.1 Thử tìm món trong database bằng ID (nếu có UUID hợp lệ)
       if (it.real_db_item_id && isValidUuid(it.real_db_item_id)) {
-        let byIdQuery = supabase
+        const { data: byId } = await supabase
           .from('menu_items')
           .select('id, current_stock, site_id')
-          .eq('id', it.real_db_item_id);
-        if (targetSiteId) {
-          byIdQuery = byIdQuery.eq('site_id', targetSiteId);
-        }
-        const { data: byId } = await byIdQuery.maybeSingle();
+          .eq('id', it.real_db_item_id)
+          .maybeSingle();
         if (byId) dbItem = byId;
       }
 
@@ -2418,6 +2410,18 @@ export async function placeOrder(params: {
         if (byName) {
           dbItem = byName;
           it.real_db_item_id = byName.id;
+        } else {
+          // Fallback tìm tên bất kỳ site
+          const { data: byNameAny } = await supabase
+            .from('menu_items')
+            .select('id, current_stock, site_id')
+            .ilike('name', cleanName)
+            .limit(1)
+            .maybeSingle();
+          if (byNameAny) {
+            dbItem = byNameAny;
+            it.real_db_item_id = byNameAny.id;
+          }
         }
       }
 
@@ -2555,16 +2559,20 @@ export async function placeOrder(params: {
       : `[Đã dùng: ${totalUsedOrders}/${allowedQty} lượt]`;
 
     if (isSupabaseConfigured && supabase) {
+      const userUuid = (userData?.id && isValidUuid(userData.id)) ? userData.id : null;
       try {
+        const payload: Record<string, any> = {
+          used_count: totalUsedOrders,
+          is_used: isFullyUsed,
+          used_at: new Date().toISOString(),
+          note: updatedNote,
+        };
+        if (userUuid) {
+          payload.used_by = userUuid;
+        }
         const { error: updErr } = await supabase
           .from('qr_exception_tokens')
-          .update({
-            used_count: totalUsedOrders,
-            is_used: isFullyUsed,
-            used_by: userData.name || authUser?.email || 'Người dùng',
-            used_at: new Date().toISOString(),
-            note: updatedNote,
-          })
+          .update(payload)
           .eq('token', matchedToken.token);
 
         if (updErr) {
@@ -4138,7 +4146,7 @@ export async function createQRToken(
 
   let insertedData: any = null;
 
-  // 1. Thử insert trực tiếp vào bảng qr_exception_tokens
+  // 1. Thử insert trực tiếp vào bảng qr_exception_tokens trong Supabase DB
   const fullPayload: Record<string, any> = {
     token,
     expires_at: expiresAt,
@@ -4148,6 +4156,7 @@ export async function createQRToken(
     is_used: false,
     is_disabled: false,
     site_id: targetSiteId,
+    created_by_name: actor.name || 'Admin Căn tin',
   };
   if (creatorId) {
     fullPayload.created_by = creatorId;
@@ -4162,6 +4171,7 @@ export async function createQRToken(
 
     if (!error && data) {
       insertedData = data;
+      console.info(`[createQRToken] Đã lưu thành công mã QR ${token} vào bảng qr_exception_tokens trên Supabase DB.`);
     } else {
       if (error) {
         console.warn('[createQRToken attempt 1 failed]:', error.message);
@@ -4179,6 +4189,7 @@ export async function createQRToken(
 
         if (!retry1.error && retry1.data) {
           insertedData = retry1.data;
+          console.info(`[createQRToken] Đã lưu thành công mã QR ${token} (attempt 2) vào bảng qr_exception_tokens.`);
         } else if (retry1.error) {
           console.warn('[createQRToken attempt 2 failed]:', retry1.error.message);
         }
@@ -4186,43 +4197,27 @@ export async function createQRToken(
 
       // Attempt 3: If still no insertedData, try legacy/minimal schema
       if (!insertedData) {
-        const legacyPayload: Record<string, any> = {
+        const payloadClean = {
           token,
           expires_at: expiresAt,
           note: formattedNote,
+          quantity,
+          used_count: 0,
           is_used: false,
+          is_disabled: false,
           site_id: targetSiteId,
         };
         const retry2 = await supabase
           .from('qr_exception_tokens')
-          .insert(legacyPayload)
+          .insert(payloadClean)
           .select()
           .maybeSingle();
 
         if (!retry2.error && retry2.data) {
           insertedData = retry2.data;
+          console.info(`[createQRToken] Đã lưu thành công mã QR ${token} (attempt 3) vào bảng qr_exception_tokens.`);
         } else if (retry2.error) {
           console.warn('[createQRToken attempt 3 failed]:', retry2.error.message);
-        }
-      }
-
-      // Attempt 4: Bare minimum payload
-      if (!insertedData) {
-        const barePayload = {
-          token,
-          expires_at: expiresAt,
-          note: formattedNote,
-        };
-        const retry3 = await supabase
-          .from('qr_exception_tokens')
-          .insert(barePayload)
-          .select()
-          .maybeSingle();
-
-        if (!retry3.error && retry3.data) {
-          insertedData = retry3.data;
-        } else {
-          console.warn('[createQRToken qr_exception_tokens table insert failed (RLS blocked)]:', retry3.error?.message || error?.message);
         }
       }
     }
@@ -5321,15 +5316,17 @@ function mapUser(row: any): UserProfile {
 }
 
 function mapMenuItem(row: any): MenuItem {
+  const rawSite = row.site_id ? String(row.site_id).toLowerCase().trim() : '';
   const siteId =
-    row.site_id ||
-    (Array.isArray(row.available_site_ids) && row.available_site_ids.length === 1
-      ? row.available_site_ids[0]
-      : undefined);
+    (rawSite === 'hung_vuong' || rawSite === 'g_group')
+      ? rawSite
+      : (Array.isArray(row.available_site_ids) && row.available_site_ids.length === 1 && (row.available_site_ids[0] === 'hung_vuong' || row.available_site_ids[0] === 'g_group')
+        ? row.available_site_ids[0]
+        : 'hung_vuong');
   const availableSiteIds =
     Array.isArray(row.available_site_ids) && row.available_site_ids.length > 0
-      ? row.available_site_ids
-      : (siteId ? [siteId] : ['hung_vuong']);
+      ? row.available_site_ids.filter((s: any) => s === 'hung_vuong' || s === 'g_group')
+      : [siteId];
 
   return {
     id: row.id,

@@ -5,6 +5,7 @@ import {
   cancelOrder,
   parseItemsFromNote,
   getOrderDisplayItems,
+  getQRTokens,
   getCachedQRTokens,
   getCachedOrders,
   subscribeGuestOrder,
@@ -13,6 +14,7 @@ import {
   type UserProfile,
   type MenuItem,
   type Order,
+  type QRExceptionToken,
   type TimeGateStatus,
   type DeliveryMethod,
   type Site,
@@ -60,6 +62,7 @@ interface Props {
   menu: MenuItem[];
   orders: Order[];
   timeStatus: TimeGateStatus;
+  tokens?: QRExceptionToken[];
   error?: string | null;
   onRefresh: () => void;
   onLogout: () => void;
@@ -76,6 +79,7 @@ export function OrderHome({
   menu,
   orders,
   timeStatus,
+  tokens = [],
   error: globalError,
   onRefresh,
   onLogout,
@@ -221,8 +225,8 @@ export function OrderHome({
   const tokenValidation = useMemo(() => {
     const raw = exceptionToken.trim().toUpperCase();
     if (!raw) return null;
-    const allTokens = getCachedQRTokens();
-    const found = allTokens.find((t) => t.token.toUpperCase() === raw);
+    const allTokens = tokens && tokens.length > 0 ? tokens : getCachedQRTokens();
+    const found = allTokens.find((t) => t.token.trim().toUpperCase() === raw);
     if (!found) {
       return {
         status: 'unknown' as const,
@@ -265,7 +269,19 @@ export function OrderHome({
       allowed: allowedQty,
       text: `Mã hợp lệ: Cấp ${allowedQty} lượt đặt (Còn lại: ${remaining} lượt). Bạn có thể chọn đặt nhiều món/suất ăn tùy ý trong đơn hàng này.`,
     };
-  }, [exceptionToken]);
+  }, [exceptionToken, tokens, orders]);
+
+  // Tự động kiểm tra trực tiếp cơ sở dữ liệu Supabase khi người dùng nhập mã QR mới
+  useEffect(() => {
+    const raw = exceptionToken.trim().toUpperCase();
+    if (!raw) return;
+    const allTokens = tokens && tokens.length > 0 ? tokens : getCachedQRTokens();
+    const found = allTokens.find((t) => t.token.trim().toUpperCase() === raw);
+    if (!found) {
+      const site = activeSite?.code || currentUser?.siteId || 'hung_vuong';
+      getQRTokens(site).catch(() => {});
+    }
+  }, [exceptionToken, tokens, activeSite?.code, currentUser?.siteId]);
 
   const addToCart = (id: string) => {
     const item = menu.find((m) => m.id === id);
