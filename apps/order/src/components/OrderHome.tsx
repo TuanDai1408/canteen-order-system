@@ -10,6 +10,8 @@ import {
   getCachedOrders,
   subscribeGuestOrder,
   getVietQrBankCode,
+  getSitePaymentQrUrl,
+  downloadQrImage,
   fetchOrderWithItems,
   type UserProfile,
   type MenuItem,
@@ -55,6 +57,9 @@ import {
   CreditCard,
   UserCheck,
   Store,
+  Download,
+  ZoomIn,
+  Maximize2,
 } from 'lucide-react';
 
 interface Props {
@@ -135,6 +140,8 @@ export function OrderHome({
   const [guestPaymentStatus, setGuestPaymentStatus] = useState<PaymentStatus>('pending');
   const [guestRejectReason, setGuestRejectReason] = useState<string | undefined>(undefined);
   const [isGuestPaymentModalOpen, setIsGuestPaymentModalOpen] = useState(false);
+  const [isCartQrZoomOpen, setIsCartQrZoomOpen] = useState(false);
+  const [isCartQrDownloading, setIsCartQrDownloading] = useState(false);
 
   // Ticker cập nhật mỗi giây để đồng hồ đếm ngược 5 phút hủy món chạy chính xác
   useEffect(() => {
@@ -1657,55 +1664,109 @@ export function OrderHome({
                     </div>
 
                     {/* Hiển thị QR kèm giá tiền bill ngay khi chọn Chuyển khoản QR */}
-                    {guestPaymentMethod === 'bank_transfer' && (
-                      <div className="mt-2.5 p-3.5 bg-gradient-to-br from-teal-50 to-emerald-50 rounded-2xl border-2 border-dashed border-teal-300 text-center space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[11px] font-bold text-teal-900 uppercase tracking-wider flex items-center gap-1.5">
-                            <QrCode className="w-3.5 h-3.5 text-teal-600" />
-                            Mã VietQR thanh toán bill
-                          </span>
-                          <span className="text-xs font-black text-teal-700 bg-white/90 border border-teal-200 px-2 py-0.5 rounded-full shadow-2xs">
-                            {formatVnd(cartSubtotal)}
-                          </span>
-                        </div>
+                    {guestPaymentMethod === 'bank_transfer' && (() => {
+                      const cartBankName = activeSite?.bankName || activeSite?.bankAccountInfo?.bankName || 'VietinBank';
+                      const cartBankAccountNo = activeSite?.bankAccountNo || activeSite?.bankAccountInfo?.accountNumber || '01CN001452330060082';
+                      const cartBankAccountName = activeSite?.bankAccountName || activeSite?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
+                      const cartTransferNote = `CT ${activeSite?.code || 'G-GROUP'}`;
+                      const cartQrUrl = getSitePaymentQrUrl(activeSite, cartSubtotal, cartTransferNote);
 
-                        {/* Hình ảnh QR kèm số tiền của bill */}
-                        <div className="bg-white p-2.5 rounded-xl shadow-xs border border-teal-200 inline-block mx-auto">
-                          <img
-                            src={
-                              activeSite?.bankQrImageUrl && !activeSite.bankQrImageUrl.includes('MB-999988886666')
-                                ? activeSite.bankQrImageUrl
-                                : `https://img.vietqr.io/image/${getVietQrBankCode(activeSite?.bankName)}-${activeSite?.bankAccountNo || '999988886666'}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(`CT ${activeSite?.code || 'G-GROUP'}`)}&accountName=${encodeURIComponent(activeSite?.bankAccountName || 'CANTEEN G-GROUP')}`
-                            }
-                            alt="VietQR thanh toán suất ăn"
-                            className="w-44 h-44 object-contain mx-auto rounded-lg"
-                          />
-                          <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-center gap-1 text-xs font-bold text-teal-900">
-                            <span className="text-slate-500 font-normal">Giá tiền bill:</span>
-                            <span className="text-teal-700 font-black">{formatVnd(cartSubtotal)}</span>
-                          </div>
-                        </div>
+                      const handleDownloadCartQr = async () => {
+                        if (isCartQrDownloading) return;
+                        setIsCartQrDownloading(true);
+                        try {
+                          await downloadQrImage(cartQrUrl, `VietQR-Bill-${activeSite?.code || 'Canteen'}`);
+                        } finally {
+                          setTimeout(() => setIsCartQrDownloading(false), 500);
+                        }
+                      };
 
-                        <div className="text-[11px] text-slate-700 bg-white/90 p-2.5 rounded-xl text-left space-y-1 border border-teal-100 font-medium">
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Ngân hàng:</span>
-                            <span className="font-bold text-slate-800">{activeSite?.bankName || 'MB Bank (Quân Đội)'}</span>
+                      return (
+                        <div className="mt-2.5 p-3.5 bg-gradient-to-br from-teal-50 to-emerald-50 rounded-2xl border-2 border-dashed border-teal-300 text-center space-y-2.5 animate-in fade-in zoom-in-95 duration-150">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-teal-900 uppercase tracking-wider flex items-center gap-1.5">
+                              <QrCode className="w-3.5 h-3.5 text-teal-600" />
+                              Mã VietQR thanh toán bill
+                            </span>
+                            <span className="text-xs font-black text-teal-700 bg-white/90 border border-teal-200 px-2 py-0.5 rounded-full shadow-2xs">
+                              {formatVnd(cartSubtotal)}
+                            </span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Số tài khoản:</span>
-                            <span className="font-mono font-bold text-slate-900">{activeSite?.bankAccountNo || '999988886666'}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-500">Chủ tài khoản:</span>
-                            <span className="font-bold text-slate-800">{activeSite?.bankAccountName || 'CANTEEN G-GROUP'}</span>
-                          </div>
-                        </div>
 
-                        <p className="text-[10px] text-teal-700 italic">
-                          💡 Quét mã QR trên bằng mọi app Ngân hàng (app sẽ tự động điền đúng {formatVnd(cartSubtotal)}). Sau khi bấm "Xác nhận đặt đơn", bạn sẽ nhận mã đơn chính thức để đối soát.
-                        </p>
-                      </div>
-                    )}
+                          {/* Hình ảnh QR kèm số tiền của bill - Bấm để phóng to */}
+                          <div
+                            onClick={() => setIsCartQrZoomOpen(true)}
+                            className="group relative bg-white p-2.5 rounded-xl shadow-xs border border-teal-200 inline-block mx-auto cursor-pointer hover:shadow-md transition"
+                            title="Bấm để phóng to mã QR"
+                          >
+                            <img
+                              src={cartQrUrl}
+                              alt="VietQR thanh toán suất ăn"
+                              className="w-44 h-44 object-contain mx-auto rounded-lg transition group-hover:scale-102"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = `https://img.vietqr.io/image/ICB-${cartBankAccountNo}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(cartTransferNote)}&accountName=${encodeURIComponent(cartBankAccountName)}`;
+                              }}
+                            />
+                            <div className="absolute inset-x-2.5 bottom-10 bg-slate-900/75 backdrop-blur-xs text-white text-[10px] font-bold py-1 px-2 rounded-lg opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-1 shadow-sm">
+                              <ZoomIn className="w-3 h-3" />
+                              <span>Bấm để phóng to QR</span>
+                            </div>
+                            <div className="mt-1.5 pt-1.5 border-t border-slate-100 flex items-center justify-center gap-1 text-xs font-bold text-teal-900">
+                              <span className="text-slate-500 font-normal">Giá tiền bill:</span>
+                              <span className="text-teal-700 font-black">{formatVnd(cartSubtotal)}</span>
+                            </div>
+                            <p className="text-[9.5px] text-teal-700 mt-0.5 font-medium flex items-center justify-center gap-1">
+                              <Maximize2 className="w-2.5 h-2.5" />
+                              <span>Bấm để phóng to & tải về</span>
+                            </p>
+                          </div>
+
+                          {/* 2 nút thao tác nhanh: Phóng to & Tải về máy */}
+                          <div className="flex items-center justify-center gap-2 max-w-[240px] mx-auto">
+                            <button
+                              type="button"
+                              onClick={() => setIsCartQrZoomOpen(true)}
+                              className="flex-1 py-1.5 px-2.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 rounded-xl text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-2xs"
+                            >
+                              <ZoomIn className="w-3 h-3 text-teal-600" />
+                              <span>Phóng to</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleDownloadCartQr}
+                              disabled={isCartQrDownloading}
+                              className="flex-1 py-1.5 px-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[11px] font-bold transition flex items-center justify-center gap-1 cursor-pointer shadow-sm shadow-emerald-600/20 disabled:opacity-50"
+                            >
+                              {isCartQrDownloading ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Download className="w-3 h-3" />
+                              )}
+                              <span>Tải ảnh QR</span>
+                            </button>
+                          </div>
+
+                          <div className="text-[11px] text-slate-700 bg-white/90 p-2.5 rounded-xl text-left space-y-1 border border-teal-100 font-medium">
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Ngân hàng:</span>
+                              <span className="font-bold text-slate-800">{cartBankName}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Số tài khoản:</span>
+                              <span className="font-mono font-bold text-slate-900">{cartBankAccountNo}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-500">Chủ tài khoản:</span>
+                              <span className="font-bold text-slate-800">{cartBankAccountName}</span>
+                            </div>
+                          </div>
+
+                          <p className="text-[10px] text-teal-700 italic">
+                            💡 Quét mã QR trên bằng mọi app Ngân hàng (app sẽ tự động điền đúng {formatVnd(cartSubtotal)}). Sau khi bấm "Xác nhận đặt đơn", bạn sẽ nhận mã đơn chính thức để đối soát.
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="pt-2 border-t border-teal-200/80 flex justify-between items-center text-xs">
@@ -1936,6 +1997,132 @@ export function OrderHome({
           }}
         />
       )}
+
+      {/* ================= MODAL: PHÓNG TO QR THANH TOÁN GIỎ HÀNG & TẢI VỀ ================= */}
+      {isCartQrZoomOpen && (() => {
+        const cartBankName = activeSite?.bankName || activeSite?.bankAccountInfo?.bankName || 'VietinBank';
+        const cartBankAccountNo = activeSite?.bankAccountNo || activeSite?.bankAccountInfo?.accountNumber || '01CN001452330060082';
+        const cartBankAccountName = activeSite?.bankAccountName || activeSite?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
+        const cartTransferNote = `CT ${activeSite?.code || 'G-GROUP'}`;
+        const cartQrUrl = getSitePaymentQrUrl(activeSite, cartSubtotal, cartTransferNote);
+
+        const handleDownloadZoomQr = async () => {
+          if (isCartQrDownloading) return;
+          setIsCartQrDownloading(true);
+          try {
+            await downloadQrImage(cartQrUrl, `VietQR-Bill-${activeSite?.code || 'Canteen'}`);
+          } finally {
+            setTimeout(() => setIsCartQrDownloading(false), 500);
+          }
+        };
+
+        return (
+          <div
+            className="fixed inset-0 z-60 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in zoom-in-95 duration-150"
+            onClick={() => setIsCartQrZoomOpen(false)}
+          >
+            <div
+              className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-sm w-full overflow-hidden p-6 space-y-4 text-center relative animate-in zoom-in-95"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-teal-800">
+                  <QrCode className="w-4 h-4 text-teal-600" />
+                  <span>Mã VietQR thanh toán bill {activeSite?.name}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsCartQrZoomOpen(false)}
+                  className="p-1 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 cursor-pointer"
+                  title="Đóng phóng to"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Ảnh QR to và rõ nét */}
+              <div className="bg-white p-3 rounded-2xl border-2 border-teal-500 shadow-inner inline-block mx-auto">
+                <img
+                  src={cartQrUrl}
+                  alt="VietQR thanh toán suất ăn phóng to"
+                  className="w-72 h-72 sm:w-80 sm:h-80 object-contain mx-auto rounded-lg"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).src = `https://img.vietqr.io/image/ICB-${cartBankAccountNo}-compact2.png?amount=${cartSubtotal}&addInfo=${encodeURIComponent(cartTransferNote)}&accountName=${encodeURIComponent(cartBankAccountName)}`;
+                  }}
+                />
+              </div>
+
+              {/* Thông tin số tiền & tài khoản */}
+              <div className="space-y-1.5 bg-slate-50 p-3 rounded-2xl border border-slate-200 text-xs text-left">
+                <div className="flex justify-between items-center pb-1 border-b border-slate-200/60">
+                  <span className="text-slate-500">Số tiền thanh toán:</span>
+                  <span className="font-black text-base text-teal-700">{formatVnd(cartSubtotal)}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1 border-b border-slate-200/60">
+                  <span className="text-slate-500">Ngân hàng:</span>
+                  <span className="font-bold text-slate-800">{cartBankName}</span>
+                </div>
+                <div className="flex justify-between items-center pb-1 border-b border-slate-200/60">
+                  <span className="text-slate-500">Số tài khoản:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-bold text-slate-900">{cartBankAccountNo}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(cartBankAccountNo);
+                        setMessage({ type: 'ok', text: 'Đã sao chép số tài khoản!' });
+                      }}
+                      className="p-1 hover:bg-slate-200 rounded text-slate-500 cursor-pointer"
+                      title="Sao chép STK"
+                    >
+                      <Copy className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+                <div className="flex justify-between items-center bg-teal-50/80 -mx-1 px-2 py-1 rounded-lg border border-teal-200">
+                  <span className="font-bold text-teal-900">Nội dung CK:</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-mono font-black text-indigo-700">{cartTransferNote}</span>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(cartTransferNote);
+                        setMessage({ type: 'ok', text: 'Đã sao chép nội dung chuyển khoản!' });
+                      }}
+                      className="px-1.5 py-0.5 bg-indigo-600 text-white rounded text-[10px] font-bold hover:bg-indigo-700 cursor-pointer flex items-center gap-0.5"
+                    >
+                      <Copy className="w-2.5 h-2.5" />
+                      <span>Copy</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Nút tải về lớn */}
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={handleDownloadZoomQr}
+                  disabled={isCartQrDownloading}
+                  className="flex-1 py-3 px-4 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 transition cursor-pointer disabled:opacity-50"
+                >
+                  {isCartQrDownloading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Download className="w-4 h-4" />
+                  )}
+                  <span>Tải ảnh QR về máy</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsCartQrZoomOpen(false)}
+                  className="py-3 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition cursor-pointer"
+                >
+                  Đóng
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

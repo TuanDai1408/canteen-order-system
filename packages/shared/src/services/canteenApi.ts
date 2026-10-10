@@ -34,15 +34,15 @@ export const DEFAULT_SITES: Site[] = [
     code: 'hung_vuong',
     name: 'Đại học Hùng Vương',
     description: 'Cơ sở Đại học Hùng Vương — Dành cho Giáo viên, Cán bộ & Khách hàng lẻ',
-    bankName: 'Vietcombank (Ngoại Thương)',
-    bankAccountNo: '1022334455',
+    bankName: 'VietinBank',
+    bankAccountNo: '01CN001452330060082',
     bankAccountName: 'CANTEEN HUNG VUONG',
-    bankQrImageUrl: 'https://img.vietqr.io/image/VCB-1022334455-compact2.png',
+    bankQrImageUrl: '',
     bankAccountInfo: {
-      bankName: 'Vietcombank (Ngân hàng TMCP Ngoại Thương)',
-      accountNumber: '1022334455',
+      bankName: 'VietinBank',
+      accountNumber: '01CN001452330060082',
       accountHolder: 'CANTEEN HUNG VUONG',
-      qrImageUrl: 'https://img.vietqr.io/image/VCB-1022334455-compact2.png',
+      qrImageUrl: '',
       instructionNote: 'Vui lòng ghi đúng nội dung chuyển khoản kèm mã đơn hàng để hệ thống tự động nhận diện thanh toán.',
     },
     features: {
@@ -58,15 +58,15 @@ export const DEFAULT_SITES: Site[] = [
     code: 'g_group',
     name: 'Canteen G-Group',
     description: 'Cơ sở Canteen G-Group — Phục vụ Cán bộ và Khách hàng lẻ',
-    bankName: 'MB Bank (Quân Đội)',
-    bankAccountNo: '999988886666',
+    bankName: 'VietinBank',
+    bankAccountNo: '01CN001452330060082',
     bankAccountName: 'CANTEEN G-GROUP',
-    bankQrImageUrl: 'https://img.vietqr.io/image/MB-999988886666-compact2.png',
+    bankQrImageUrl: '',
     bankAccountInfo: {
-      bankName: 'MB Bank (Ngân hàng TMCP Quân Đội)',
-      accountNumber: '999988886666',
+      bankName: 'VietinBank',
+      accountNumber: '01CN001452330060082',
       accountHolder: 'CANTEEN G-GROUP',
-      qrImageUrl: 'https://img.vietqr.io/image/MB-999988886666-compact2.png',
+      qrImageUrl: '',
       instructionNote: 'Vui lòng ghi đúng nội dung chuyển khoản kèm mã đơn hàng để hệ thống tự động nhận diện thanh toán.',
     },
     features: {
@@ -3620,25 +3620,160 @@ export async function rejectGuestPayment(
 }
 
 export function getVietQrBankCode(bankName?: string): string {
-  if (!bankName) return 'MB';
+  if (!bankName) return 'ICB';
+  const clean = bankName.trim().toUpperCase();
+  // Direct matches
+  const knownCodes = [
+    'ICB', 'VCB', 'BIDV', 'VBA', 'MB', 'TCB', 'ACB', 'VPB', 'TPB', 'STB',
+    'HDB', 'VIB', 'SHB', 'MSB', 'OCB', 'LPB', 'SEAB', 'BAB', 'EIB', 'NAB',
+    'VAB', 'VIETBANK', 'BVB', 'KLB', 'SGICB', 'PVCB', 'NCB', 'SHBVN', 'WVN',
+    'CAKE', 'TIMO', 'VTLMONEY', 'VNPTMONEY'
+  ];
+  if (knownCodes.includes(clean)) return clean;
+  if (clean === 'CTG') return 'ICB';
+
   const norm = bankName.toLowerCase();
-  if (norm.includes('vietcombank') || norm.includes('vcb')) return 'VCB';
-  if (norm.includes('techcombank') || norm.includes('tcb')) return 'TCB';
-  if (norm.includes('bidv')) return 'BIDV';
-  if (norm.includes('vietinbank') || norm.includes('vietin') || norm.includes('ctg') || norm.includes('icb')) return 'CTG';
-  if (norm.includes('agribank') || norm.includes('vba')) return 'VBA';
-  if (norm.includes('acb')) return 'ACB';
-  if (norm.includes('vpbank') || norm.includes('vpb')) return 'VPB';
-  if (norm.includes('tpbank') || norm.includes('tpb')) return 'TPB';
-  if (norm.includes('sacombank') || norm.includes('stb')) return 'STB';
-  if (norm.includes('hdbank') || norm.includes('hdb')) return 'HDB';
-  if (norm.includes('vib')) return 'VIB';
+  // VietinBank (Mã chuẩn VietQR Napas là ICB / BIN 970415)
+  if (
+    norm.includes('vietinbank') ||
+    norm.includes('vietin') ||
+    norm.includes('ctg') ||
+    norm.includes('icb') ||
+    norm.includes('công thương') ||
+    norm.includes('cong thuong')
+  ) {
+    return 'ICB';
+  }
+  if (norm.includes('vietcombank') || norm.includes('vcb') || norm.includes('ngoại thương') || norm.includes('ngoai thuong')) return 'VCB';
+  if (norm.includes('techcombank') || norm.includes('tcb') || norm.includes('kỹ thương') || norm.includes('ky thuong')) return 'TCB';
+  if (norm.includes('bidv') || norm.includes('đầu tư') || norm.includes('dau tu')) return 'BIDV';
+  if (norm.includes('agribank') || norm.includes('vba') || norm.includes('nông nghiệp') || norm.includes('nong nghiep')) return 'VBA';
+  if (norm.includes('acb') || norm.includes('á châu') || norm.includes('a chau')) return 'ACB';
+  if (norm.includes('vpbank') || norm.includes('vpb') || norm.includes('thịnh vượng') || norm.includes('thinh vuong')) return 'VPB';
+  if (norm.includes('tpbank') || norm.includes('tpb') || norm.includes('tiên phong') || norm.includes('tien phong')) return 'TPB';
+  if (norm.includes('sacombank') || norm.includes('stb') || norm.includes('sài gòn thương tín')) return 'STB';
+  if (norm.includes('hdbank') || norm.includes('hdb') || norm.includes('phát triển tphcm')) return 'HDB';
+  if (norm.includes('vib') || norm.includes('quốc tế')) return 'VIB';
   if (norm.includes('shb')) return 'SHB';
-  if (norm.includes('msb')) return 'MSB';
-  if (norm.includes('ocb')) return 'OCB';
-  if (norm.includes('lienviet') || norm.includes('lpb') || norm.includes('lpbank')) return 'LPB';
-  if (norm.includes('mb') || norm.includes('quân đội')) return 'MB';
-  return 'MB';
+  if (norm.includes('msb') || norm.includes('hàng hải')) return 'MSB';
+  if (norm.includes('ocb') || norm.includes('phương đông')) return 'OCB';
+  if (norm.includes('lienviet') || norm.includes('lpb') || norm.includes('lpbank') || norm.includes('lộc phát')) return 'LPB';
+  if (norm.includes('seab') || norm.includes('seabank') || norm.includes('đông nam á')) return 'SEAB';
+  if (norm.includes('baca') || norm.includes('bắc á')) return 'BAB';
+  if (norm.includes('eximbank') || norm.includes('eib')) return 'EIB';
+  if (norm.includes('nam a') || norm.includes('nam á') || norm.includes('nab')) return 'NAB';
+  if (norm.includes('viet a') || norm.includes('việt á') || norm.includes('vab')) return 'VAB';
+  if (norm.includes('vietbank')) return 'VIETBANK';
+  if (norm.includes('baoviet') || norm.includes('bảo việt') || norm.includes('bvb')) return 'BVB';
+  if (norm.includes('kienlong') || norm.includes('kiên long') || norm.includes('klb')) return 'KLB';
+  if (norm.includes('saigonbank') || norm.includes('sgicb')) return 'SGICB';
+  if (norm.includes('pvcom') || norm.includes('pvcb')) return 'PVCB';
+  if (norm.includes('ncb') || norm.includes('quốc dân')) return 'NCB';
+  if (norm.includes('shinhan')) return 'SHBVN';
+  if (norm.includes('woori')) return 'WVN';
+  if (norm.includes('cake')) return 'CAKE';
+  if (norm.includes('timo')) return 'TIMO';
+  if (norm.includes('mb') || norm.includes('quân đội') || norm.includes('mbbank')) return 'MB';
+  return 'ICB';
+}
+
+/**
+ * Tạo link ảnh VietQR động chuẩn Napas 24/7 kèm số tiền chính xác theo món ăn / bill
+ */
+export function buildVietQrUrl(params: {
+  bankName?: string;
+  bankAccountNo?: string;
+  accountName?: string;
+  amount?: number;
+  transferNote?: string;
+  template?: 'compact2' | 'compact' | 'qr_only' | 'print';
+}): string {
+  const bankCode = getVietQrBankCode(params.bankName);
+  const accountNo = (params.bankAccountNo || '01CN001452330060082').replace(/\s+/g, '');
+  const template = params.template || 'compact2';
+  const amount = Math.max(0, Math.round(params.amount || 0));
+  const transferNote = (params.transferNote || 'CT CANTEEN').trim();
+  const accountName = (params.accountName || 'CANTEEN').trim();
+
+  let url = `https://img.vietqr.io/image/${bankCode}-${accountNo}-${template}.png`;
+  const queryParts: string[] = [];
+  if (amount > 0) {
+    queryParts.push(`amount=${amount}`);
+  }
+  if (transferNote) {
+    queryParts.push(`addInfo=${encodeURIComponent(transferNote)}`);
+  }
+  if (accountName) {
+    queryParts.push(`accountName=${encodeURIComponent(accountName)}`);
+  }
+  if (queryParts.length > 0) {
+    url += `?${queryParts.join('&')}`;
+  }
+  return url;
+}
+
+/**
+ * Lấy URL QR thanh toán cho cơ sở - tự động tạo VietQR động kèm số tiền món/đơn hàng
+ */
+export function getSitePaymentQrUrl(site?: Site, amount: number = 0, transferNote?: string): string {
+  const customImg = site?.bankQrImageUrl || site?.bankAccountInfo?.qrImageUrl;
+  // Chỉ dùng ảnh tĩnh nếu là ảnh tải lên riêng (base64 hoặc ảnh ngoài) và KHÔNG phải link VietQR template
+  if (
+    customImg &&
+    customImg.trim() !== '' &&
+    !customImg.includes('img.vietqr.io') &&
+    !customImg.includes('MB-999988886666')
+  ) {
+    return customImg.trim();
+  }
+
+  const bankName = site?.bankName || site?.bankAccountInfo?.bankName || 'VietinBank';
+  const bankAccountNo = site?.bankAccountNo || site?.bankAccountInfo?.accountNumber || '01CN001452330060082';
+  const bankAccountName = site?.bankAccountName || site?.bankAccountInfo?.accountHolder || 'CANTEEN G-GROUP';
+  const note = transferNote || `CT ${site?.code || 'G-GROUP'}`;
+
+  return buildVietQrUrl({
+    bankName,
+    bankAccountNo,
+    accountName: bankAccountName,
+    amount,
+    transferNote: note,
+  });
+}
+
+/**
+ * Tải ảnh mã QR trực tiếp về thiết bị (hỗ trợ CORS blob và lưu tệp PNG)
+ */
+export async function downloadQrImage(url: string, filename: string = 'vietqr-payment.png'): Promise<boolean> {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) throw new Error('Fetch failed');
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+    return true;
+  } catch (err) {
+    console.warn('[downloadQrImage fallback to direct link]:', err);
+    try {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename.endsWith('.png') ? filename : `${filename}.png`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 }
 
 export function subscribeGuestOrder(
