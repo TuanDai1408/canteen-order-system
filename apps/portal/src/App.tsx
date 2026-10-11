@@ -38,7 +38,7 @@ export default function App() {
 
   const isMountedRef = useRef(true);
   const isRefreshingRef = useRef(false);
-  const pendingRefreshRef = useRef(false);
+  const pendingTablesRef = useRef<Set<string> | null>(null);
   const userRef = useRef<UserProfile | null>(null);
   userRef.current = user;
 
@@ -57,35 +57,52 @@ export default function App() {
   }, []);
 
   const refresh = useCallback(async (siteOrTables?: string | string[], tables?: string[]) => {
+    let targetSite: string | undefined = undefined;
+    let targetTables: string[] | undefined = undefined;
+
+    if (typeof siteOrTables === 'string') {
+      targetSite = siteOrTables;
+      targetTables = tables;
+    } else if (Array.isArray(siteOrTables)) {
+      targetTables = siteOrTables;
+    }
+
     if (isRefreshingRef.current) {
-      pendingRefreshRef.current = true;
+      if (targetTables === undefined) {
+        pendingTablesRef.current = new Set(['*']);
+      } else if (targetTables.length > 0) {
+        if (!pendingTablesRef.current) pendingTablesRef.current = new Set();
+        if (!pendingTablesRef.current.has('*')) {
+          targetTables.forEach((t) => pendingTablesRef.current!.add(t));
+        }
+      }
       return;
     }
+
     isRefreshingRef.current = true;
     try {
-      let targetSite: string | undefined = undefined;
-      let targetTables: string[] | undefined = undefined;
-
-      if (typeof siteOrTables === 'string') {
-        targetSite = siteOrTables;
-        targetTables = tables;
-      } else if (Array.isArray(siteOrTables)) {
-        targetTables = siteOrTables;
-      }
-
       const activeProfile = userRef.current;
       const effectiveSite = getEffectiveSite(activeProfile, targetSite);
       currentSiteRef.current = effectiveSite;
 
-      // Đồng bộ vào localStorage nếu là super_admin chuyển site hoặc bảo vệ admin cố định site
-      setSelectedSiteCode(effectiveSite);
+      // Chỉ cập nhật localStorage nếu có thay đổi để tránh dispatch event thừa
+      if (getSelectedSiteCode() !== effectiveSite) {
+        setSelectedSiteCode(effectiveSite);
+      }
 
-      const shouldFetchAll = !targetTables || targetTables.length === 0;
-      const needMenu = shouldFetchAll || (targetTables ? targetTables.includes('menu_items') || targetTables.includes('orders') || targetTables.includes('order_items') : false);
-      const needOrders = shouldFetchAll || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
-      const needUsers = shouldFetchAll || (targetTables ? targetTables.includes('users') : false);
-      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') || targetTables.includes('system_settings') : false);
-      const needTimeGate = targetTables ? targetTables.includes('settings') || targetTables.includes('system_settings') : false;
+      // isFullSync chỉ xảy ra khi targetTables là undefined (lần đầu, chuyển site, quay lại tab) hoặc chứa '*'
+      const isFullSync = targetTables === undefined || targetTables.includes('*');
+      const isGGroup = effectiveSite === 'g_group';
+      const isSuperAdmin = activeProfile?.role === 'super_admin';
+
+      const needMenu = isFullSync || (targetTables ? targetTables.includes('menu_items') : false);
+      const needOrders = isFullSync || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      // Site g_group: Không tải danh sách cán bộ nếu không phải super_admin
+      const needUsers = (!isGGroup || isSuperAdmin) && (isFullSync || (targetTables ? targetTables.includes('users') : false));
+      // Site g_group: Hoàn toàn không tải mã QR ngoại lệ
+      const needTokens = !isGGroup && (isFullSync || (targetTables ? targetTables.includes('qr_exception_tokens') : false));
+      // Time-gate: Site g_group không dùng time-gate
+      const needTimeGate = !isGGroup && (targetTables ? targetTables.includes('settings') : false);
 
       const promises: Promise<any>[] = [];
       const keys: string[] = [];
@@ -111,6 +128,10 @@ export default function App() {
         keys.push('timeGate');
       }
 
+      if (promises.length === 0) {
+        return;
+      }
+
       const results = await Promise.allSettled(promises);
       if (!isMountedRef.current) return;
 
@@ -132,12 +153,22 @@ export default function App() {
       console.warn('Portal refresh note:', e);
     } finally {
       isRefreshingRef.current = false;
-      if (pendingRefreshRef.current && isMountedRef.current) {
-        pendingRefreshRef.current = false;
-        refresh();
+      if (pendingTablesRef.current && isMountedRef.current) {
+        const pending = Array.from(pendingTablesRef.current);
+        pendingTablesRef.current = null;
+        if (pending.includes('*')) {
+          refresh();
+        } else if (pending.length > 0) {
+          refresh(pending);
+        }
       }
     }
   }, [getEffectiveSite]);
+
+  const refreshRef = useRef(refresh);
+  useEffect(() => {
+    refreshRef.current = refresh;
+  }, [refresh]);
 
   // 1. Khởi tạo dữ liệu ban đầu
   useEffect(() => {
@@ -157,27 +188,44 @@ export default function App() {
         if (profile) {
           const effectiveSite = getEffectiveSite(profile);
           currentSiteRef.current = effectiveSite;
-          setSelectedSiteCode(effectiveSite);
+          if (getSelectedSiteCode() !== effectiveSite) {
+            setSelectedSiteCode(effectiveSite);
+          }
 
-          const [mRes, oRes, uRes, tRes] = await Promise.allSettled([
+          const isGGroup = effectiveSite === 'g_group';
+          const isSuperAdmin = profile.role === 'super_admin';
+
+          const initPromises: Promise<any>[] = [
             getAllMenuItems({ siteId: effectiveSite }),
             getOrders({ siteId: effectiveSite }),
-            getUsers(effectiveSite),
-            getQRTokens(effectiveSite),
-          ]);
+          ];
+          const initKeys = ['menu', 'orders'];
+
+          if (!isGGroup || isSuperAdmin) {
+            initPromises.push(getUsers(effectiveSite));
+            initKeys.push('users');
+          }
+          if (!isGGroup) {
+            initPromises.push(getQRTokens(effectiveSite));
+            initKeys.push('tokens');
+          }
+
+          const initResults = await Promise.allSettled(initPromises);
           if (!isMountedRef.current) return;
-          if (mRes.status === 'fulfilled' && Array.isArray(mRes.value) && mRes.value.length > 0) {
-            setMenu(mRes.value);
-          }
-          if (oRes.status === 'fulfilled' && Array.isArray(oRes.value)) {
-            setOrders(oRes.value);
-          }
-          if (uRes.status === 'fulfilled' && Array.isArray(uRes.value)) {
-            setUsers(uRes.value);
-          }
-          if (tRes.status === 'fulfilled' && Array.isArray(tRes.value)) {
-            setTokens(tRes.value);
-          }
+
+          initResults.forEach((res, idx) => {
+            if (res.status !== 'fulfilled') return;
+            const key = initKeys[idx];
+            if (key === 'menu' && Array.isArray(res.value) && res.value.length > 0) {
+              setMenu(res.value);
+            } else if (key === 'orders' && Array.isArray(res.value)) {
+              setOrders(res.value);
+            } else if (key === 'users' && Array.isArray(res.value)) {
+              setUsers(res.value);
+            } else if (key === 'tokens' && Array.isArray(res.value)) {
+              setTokens(res.value);
+            }
+          });
           setTimeStatus(getTimeGateStatus());
         }
       } catch (err) {
@@ -193,21 +241,23 @@ export default function App() {
     };
   }, [getEffectiveSite]);
 
-  // 2. Kênh Realtime Supabase: CHỈ kích hoạt sau khi đã có user đăng nhập, dọn dẹp khi logout/unmount
+  // 2. Kênh Realtime Supabase: Subscribe 1 lần duy nhất theo user.id, callback gọi qua ref ổn định
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
 
     const unsub = subscribeRealtime((info) => {
       if (isMountedRef.current) {
         setTimeStatus(getTimeGateStatus());
-        refresh(info?.tables);
+        if (info?.tables && info.tables.length > 0) {
+          refreshRef.current(info.tables);
+        }
       }
     });
 
     return () => {
       unsub();
     };
-  }, [user?.id, refresh]);
+  }, [user?.id]);
 
   // Lắng nghe sự kiện cập nhật trạng thái in bill & trạng thái đơn hàng thời gian thực
   useEffect(() => {
@@ -261,7 +311,7 @@ export default function App() {
     };
 
     const handleMenuUpdated = () => {
-      refresh(['menu_items']);
+      refreshRef.current(['menu_items']);
     };
 
     const handleOrderCancelledEvent = (e: Event) => {
@@ -280,7 +330,7 @@ export default function App() {
           )
         );
       }
-      refresh(['menu_items', 'orders']);
+      refreshRef.current(['orders']);
     };
 
     window.addEventListener('canteen_order_updated', handleOrderPrintUpdated);
@@ -304,7 +354,7 @@ export default function App() {
       window.removeEventListener('canteen_payment_rejected', handleOrderCancelledEvent);
       window.removeEventListener('canteen_menu_updated', handleMenuUpdated);
     };
-  }, [refresh]);
+  }, []);
 
   // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
   useEffect(() => {
@@ -319,14 +369,14 @@ export default function App() {
   // 4. Khi người dùng quay lại tab trình duyệt thì làm mới dữ liệu đúng 1 lần
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden && user) {
+      if (isMountedRef.current && typeof document !== 'undefined' && !document.hidden && userRef.current) {
         setTimeStatus(getTimeGateStatus());
-        refresh();
+        refreshRef.current();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [user, refresh]);
+  }, []);
 
   const handleLogout = async () => {
     await logout();

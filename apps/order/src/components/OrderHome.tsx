@@ -23,6 +23,7 @@ import {
   type SiteCode,
   type PaymentMethod,
   type PaymentStatus,
+  type OrderStatus,
 } from '@canteen/shared';
 import { BrandLogo } from './BrandLogo';
 import { GuestPaymentModal } from './GuestPaymentModal';
@@ -138,6 +139,7 @@ export function OrderHome({
     site?: Site;
   } | null>(null);
   const [guestPaymentStatus, setGuestPaymentStatus] = useState<PaymentStatus>('pending');
+  const [guestWaitingOrderStatus, setGuestWaitingOrderStatus] = useState<OrderStatus>('confirmed');
   const [guestRejectReason, setGuestRejectReason] = useState<string | undefined>(undefined);
   const [isGuestPaymentModalOpen, setIsGuestPaymentModalOpen] = useState(false);
   const [isCartQrZoomOpen, setIsCartQrZoomOpen] = useState(false);
@@ -151,14 +153,39 @@ export function OrderHome({
     return () => clearInterval(timer);
   }, []);
 
-  // Chủ động thăm dò trạng thái đơn hàng khi đang mở màn hình chờ thanh toán
+  // Lắng nghe trạng thái đơn hàng thời gian thực khi đang mở màn hình chờ thanh toán
   useEffect(() => {
     if (!isGuestPaymentModalOpen || !guestWaitingOrder || guestPaymentStatus !== 'pending') return;
 
-    const pollTimer = setInterval(async () => {
+    const targetId = guestWaitingOrder.id || guestWaitingOrder.orderCode;
+
+    const handlePaymentEvent = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      const orderId = detail?.orderId || detail?.id || detail?.orderCode || detail?.order_code;
+      if (orderId && targetId && (orderId === targetId || orderId === guestWaitingOrder.id || orderId === guestWaitingOrder.orderCode)) {
+        if (e.type === 'canteen_payment_confirmed' || detail?.paymentStatus === 'paid' || detail?.payment_status === 'paid') {
+          setGuestPaymentStatus('paid');
+          onRefresh();
+        } else if (e.type === 'canteen_payment_rejected' || detail?.paymentStatus === 'rejected' || detail?.payment_status === 'rejected' || detail?.status === 'cancelled') {
+          setGuestPaymentStatus('rejected');
+          setGuestRejectReason(detail?.cancelReason || detail?.reason || 'Nhân viên đã từ chối đơn hàng');
+          onRefresh();
+        } else if (detail?.status) {
+          setGuestWaitingOrderStatus(detail.status);
+          onRefresh();
+        }
+      }
+    };
+
+    window.addEventListener('canteen_payment_confirmed', handlePaymentEvent);
+    window.addEventListener('canteen_payment_rejected', handlePaymentEvent);
+    window.addEventListener('canteen_order_updated', handlePaymentEvent);
+    window.addEventListener('canteen_order_cancelled', handlePaymentEvent);
+
+    // Fallback chậm an toàn (30 giây) phòng trường hợp đứt mạng WebSocket tạm thời
+    const fallbackTimer = setInterval(async () => {
       try {
-        const orderId = guestWaitingOrder.id;
-        const latestOrder = await fetchOrderWithItems(orderId, 1, 0);
+        const latestOrder = await fetchOrderWithItems(targetId, 1, 0);
         if (latestOrder) {
           if (latestOrder.paymentStatus === 'paid') {
             setGuestPaymentStatus('paid');
@@ -170,11 +197,17 @@ export function OrderHome({
           }
         }
       } catch (e) {
-        console.warn('[OrderHome active status poll note]:', e);
+        console.warn('[OrderHome status check note]:', e);
       }
-    }, 1500);
+    }, 30_000);
 
-    return () => clearInterval(pollTimer);
+    return () => {
+      window.removeEventListener('canteen_payment_confirmed', handlePaymentEvent);
+      window.removeEventListener('canteen_payment_rejected', handlePaymentEvent);
+      window.removeEventListener('canteen_order_updated', handlePaymentEvent);
+      window.removeEventListener('canteen_order_cancelled', handlePaymentEvent);
+      clearInterval(fallbackTimer);
+    };
   }, [isGuestPaymentModalOpen, guestWaitingOrder, guestPaymentStatus, onRefresh]);
 
   const handleManualRefresh = async () => {
@@ -463,20 +496,22 @@ export function OrderHome({
           setIsGuestPaymentModalOpen(true);
 
           // Lắng nghe Realtime & Polling xác nhận từ Portal theo order id / code
-          const trackingOrderId = result.order_id || result.order_code;
-          if (trackingOrderId) {
-            const unsub = subscribeGuestOrder(trackingOrderId, (update) => {
+          const unsub = subscribeGuestOrder(
+            { orderId: result.order_id, orderCode: result.order_code },
+            (update) => {
               if (update.paymentStatus === 'paid') {
                 setGuestPaymentStatus('paid');
-                onRefresh();
               } else if (update.paymentStatus === 'rejected' || update.status === 'cancelled') {
                 setGuestPaymentStatus('rejected');
                 setGuestRejectReason(update.order?.cancelReason || 'Nhân viên đã từ chối đơn hàng');
-                onRefresh();
               }
-            });
-            setTimeout(() => unsub(), 30 * 60 * 1000);
-          }
+              if (update.status) {
+                setGuestWaitingOrderStatus(update.status);
+              }
+              onRefresh();
+            }
+          );
+          setTimeout(() => unsub(), 30 * 60 * 1000);
 
           setCart({});
           setIsCartOpen(false);
@@ -1990,7 +2025,13 @@ export function OrderHome({
           isOpen={isGuestPaymentModalOpen}
           order={guestWaitingOrder}
           status={guestPaymentStatus}
+          orderStatus={guestWaitingOrderStatus}
           rejectReason={guestRejectReason}
+          onPaymentStatusChange={(newPStatus, newOStatus) => {
+            setGuestPaymentStatus(newPStatus);
+            if (newOStatus) setGuestWaitingOrderStatus(newOStatus);
+            onRefresh();
+          }}
           onClose={() => {
             setIsGuestPaymentModalOpen(false);
             setTab('orders');

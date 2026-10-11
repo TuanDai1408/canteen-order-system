@@ -73,24 +73,39 @@ export default function App() {
   userRef.current = user;
   const currentViewRef = useRef<'order' | 'portal'>(currentView);
   currentViewRef.current = currentView;
+  const selectedSiteCodeRef = useRef<SiteCode>(selectedSiteCode);
+  selectedSiteCodeRef.current = selectedSiteCode;
+  const guestModeRef = useRef<boolean>(guestMode);
+  guestModeRef.current = guestMode;
+
   const isRefreshingOrderRef = useRef(false);
-  const pendingRefreshOrderRef = useRef(false);
+  const pendingOrderTablesRef = useRef<Set<string> | null>(null);
   const isRefreshingPortalRef = useRef(false);
-  const pendingRefreshPortalRef = useRef(false);
+  const pendingPortalTablesRef = useRef<Set<string> | null>(null);
 
   const refreshOrderData = useCallback(async (profile: UserProfile, tables?: string[]) => {
     if (isRefreshingOrderRef.current) {
-      pendingRefreshOrderRef.current = true;
+      if (tables === undefined) {
+        pendingOrderTablesRef.current = new Set(['*']);
+      } else if (tables.length > 0) {
+        if (!pendingOrderTablesRef.current) pendingOrderTablesRef.current = new Set();
+        if (!pendingOrderTablesRef.current.has('*')) {
+          tables.forEach((t) => pendingOrderTablesRef.current!.add(t));
+        }
+      }
       return;
     }
     isRefreshingOrderRef.current = true;
     try {
-      const shouldFetchAll = !tables || tables.length === 0;
-      const needMenu = shouldFetchAll || tables.includes('menu_items') || tables.includes('orders') || tables.includes('order_items');
-      const needOrders = shouldFetchAll || tables.includes('orders') || tables.includes('order_items');
-      const needProfile = shouldFetchAll || tables.includes('users') || tables.includes('orders');
-      const needTokens = shouldFetchAll || tables.includes('qr_exception_tokens') || tables.includes('system_settings');
-      const needTimeGate = tables?.includes('settings') || tables?.includes('system_settings');
+      const isFullSync = tables === undefined || tables.includes('*');
+      const userSite = profile.siteId || selectedSiteCodeRef.current || 'hung_vuong';
+      const isGGroup = userSite === 'g_group';
+
+      const needProfile = isFullSync || (tables ? tables.includes('users') : false);
+      const needMenu = isFullSync || (tables ? tables.includes('menu_items') : false);
+      const needOrders = isFullSync || (tables ? tables.includes('orders') || tables.includes('order_items') : false);
+      const needTokens = !isGGroup && (isFullSync || (tables ? tables.includes('qr_exception_tokens') : false));
+      const needTimeGate = !isGGroup && (tables ? tables.includes('settings') : false);
 
       const promises: Promise<any>[] = [];
       const keys: string[] = [];
@@ -100,7 +115,6 @@ export default function App() {
         keys.push('profile');
       }
       if (needMenu) {
-        const userSite = profile.siteId || selectedSiteCode || 'hung_vuong';
         promises.push(getMenu(userSite));
         keys.push('menu');
       }
@@ -109,7 +123,6 @@ export default function App() {
         keys.push('orders');
       }
       if (needTokens) {
-        const userSite = profile.siteId || selectedSiteCode || 'hung_vuong';
         promises.push(getQRTokens(userSite));
         keys.push('tokens');
       }
@@ -117,6 +130,8 @@ export default function App() {
         promises.push(fetchTimeGateConfig());
         keys.push('timeGate');
       }
+
+      if (promises.length === 0) return;
 
       const results = await Promise.allSettled(promises);
       results.forEach((res, idx) => {
@@ -139,31 +154,43 @@ export default function App() {
       console.warn('[refreshOrderData notice]:', e);
     } finally {
       isRefreshingOrderRef.current = false;
-      if (pendingRefreshOrderRef.current) {
-        pendingRefreshOrderRef.current = false;
+      if (pendingOrderTablesRef.current) {
+        const pending = Array.from(pendingOrderTablesRef.current);
+        pendingOrderTablesRef.current = null;
         const targetProfile = userRef.current || profile;
-        refreshOrderData(targetProfile);
+        if (pending.includes('*')) {
+          refreshOrderData(targetProfile);
+        } else if (pending.length > 0) {
+          refreshOrderData(targetProfile, pending);
+        }
       }
     }
   }, []);
 
   const refreshPortalData = useCallback(async (siteOrTables?: string | string[], tables?: string[]) => {
+    let targetSite: string | undefined = undefined;
+    let targetTables: string[] | undefined = undefined;
+
+    if (typeof siteOrTables === 'string') {
+      targetSite = siteOrTables;
+      targetTables = tables;
+    } else if (Array.isArray(siteOrTables)) {
+      targetTables = siteOrTables;
+    }
+
     if (isRefreshingPortalRef.current) {
-      pendingRefreshPortalRef.current = true;
+      if (targetTables === undefined) {
+        pendingPortalTablesRef.current = new Set(['*']);
+      } else if (targetTables.length > 0) {
+        if (!pendingPortalTablesRef.current) pendingPortalTablesRef.current = new Set();
+        if (!pendingPortalTablesRef.current.has('*')) {
+          targetTables.forEach((t) => pendingPortalTablesRef.current!.add(t));
+        }
+      }
       return;
     }
     isRefreshingPortalRef.current = true;
     try {
-      let targetSite: string | undefined = undefined;
-      let targetTables: string[] | undefined = undefined;
-
-      if (typeof siteOrTables === 'string') {
-        targetSite = siteOrTables;
-        targetTables = tables;
-      } else if (Array.isArray(siteOrTables)) {
-        targetTables = siteOrTables;
-      }
-
       const activeProfile = userRef.current;
       const isSuper = activeProfile?.role === 'super_admin';
       const effectiveSite: SiteCode = isSuper
@@ -171,14 +198,18 @@ export default function App() {
         : (activeProfile?.siteId === 'g_group' ? 'g_group' : 'hung_vuong');
 
       setSelectedSiteCodeState(effectiveSite);
-      setSelectedSiteCode(effectiveSite);
+      if (getSelectedSiteCode() !== effectiveSite) {
+        setSelectedSiteCode(effectiveSite);
+      }
 
-      const shouldFetchAll = !targetTables || targetTables.length === 0;
-      const needMenu = shouldFetchAll || (targetTables ? targetTables.includes('menu_items') || targetTables.includes('orders') || targetTables.includes('order_items') : false);
-      const needOrders = shouldFetchAll || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
-      const needUsers = shouldFetchAll || (targetTables ? targetTables.includes('users') : false);
-      const needTokens = shouldFetchAll || (targetTables ? targetTables.includes('qr_exception_tokens') || targetTables.includes('system_settings') : false);
-      const needTimeGate = targetTables ? targetTables.includes('settings') || targetTables.includes('system_settings') : false;
+      const isFullSync = targetTables === undefined || targetTables.includes('*');
+      const isGGroup = effectiveSite === 'g_group';
+
+      const needMenu = isFullSync || (targetTables ? targetTables.includes('menu_items') : false);
+      const needOrders = isFullSync || (targetTables ? targetTables.includes('orders') || targetTables.includes('order_items') : false);
+      const needUsers = (!isGGroup || isSuper) && (isFullSync || (targetTables ? targetTables.includes('users') : false));
+      const needTokens = !isGGroup && (isFullSync || (targetTables ? targetTables.includes('qr_exception_tokens') : false));
+      const needTimeGate = !isGGroup && (targetTables ? targetTables.includes('settings') : false);
 
       const promises: Promise<any>[] = [];
       const keys: string[] = [];
@@ -204,6 +235,8 @@ export default function App() {
         keys.push('timeGate');
       }
 
+      if (promises.length === 0) return;
+
       const results = await Promise.allSettled(promises);
       results.forEach((res, idx) => {
         if (res.status !== 'fulfilled') return;
@@ -223,12 +256,27 @@ export default function App() {
       console.warn('[refreshPortalData notice]:', e);
     } finally {
       isRefreshingPortalRef.current = false;
-      if (pendingRefreshPortalRef.current) {
-        pendingRefreshPortalRef.current = false;
-        refreshPortalData();
+      if (pendingPortalTablesRef.current) {
+        const pending = Array.from(pendingPortalTablesRef.current);
+        pendingPortalTablesRef.current = null;
+        if (pending.includes('*')) {
+          refreshPortalData();
+        } else if (pending.length > 0) {
+          refreshPortalData(undefined, pending);
+        }
       }
     }
   }, []);
+
+  const refreshOrderDataRef = useRef(refreshOrderData);
+  useEffect(() => {
+    refreshOrderDataRef.current = refreshOrderData;
+  }, [refreshOrderData]);
+
+  const refreshPortalDataRef = useRef(refreshPortalData);
+  useEffect(() => {
+    refreshPortalDataRef.current = refreshPortalData;
+  }, [refreshPortalData]);
 
   // 1. Khởi tạo dữ liệu ban đầu
   useEffect(() => {
@@ -294,25 +342,25 @@ export default function App() {
     };
   }, []);
 
-  // 2. Kênh Realtime Supabase: Kích hoạt cho cả user và khách lẻ để nhận cập nhật trạng thái đơn và cơ sở
+  // 2. Kênh Realtime Supabase: Kích hoạt cho cả user và khách lẻ, subscribe 1 lần duy nhất, gọi qua ref
   useEffect(() => {
     const handleRealtimeSync = (info?: { tables?: string[]; payload?: any }) => {
       setTimeStatus(getTimeGateStatus());
-      const currentUser = userRef.current || user;
       const tables = info?.tables;
+      if (!tables || tables.length === 0) return;
+
+      const currentUser = userRef.current;
       if (currentViewRef.current === 'portal') {
-        refreshPortalData(tables);
+        refreshPortalDataRef.current(undefined, tables);
       } else if (currentUser) {
-        refreshOrderData(currentUser, tables);
-      } else if (guestMode) {
-        getSites().then((s) => {
-          if (Array.isArray(s) && s.length > 0) setSitesList(s);
-        }).catch(() => {});
-        getMenu(selectedSiteCode).then((m) => {
-          if (Array.isArray(m) && m.length > 0) setMenu(m);
-        }).catch(() => {});
-        const o = getCachedOrders(undefined, selectedSiteCode);
-        setOrders(o);
+        refreshOrderDataRef.current(currentUser, tables);
+      } else if (guestModeRef.current) {
+        if (tables.includes('menu_items')) {
+          const site = selectedSiteCodeRef.current || 'hung_vuong';
+          getMenu(site).then((m) => {
+            if (Array.isArray(m) && m.length > 0) setMenu(m);
+          }).catch(() => {});
+        }
       }
     };
 
@@ -321,7 +369,7 @@ export default function App() {
     return () => {
       unsub();
     };
-  }, [user?.id, guestMode, selectedSiteCode, refreshOrderData, refreshPortalData]);
+  }, []);
 
   // Lắng nghe cập nhật thông tin Cơ sở & Mã QR Ngân hàng tức thì toàn hệ thống
   useEffect(() => {
@@ -459,7 +507,7 @@ export default function App() {
       }
       const activeUser = userRef.current;
       if (activeUser) {
-        refreshOrderData(activeUser, ['menu_items', 'orders']);
+        refreshOrderDataRef.current(activeUser, ['orders']);
       }
     };
 
@@ -484,7 +532,7 @@ export default function App() {
       window.removeEventListener('canteen_payment_rejected', handleOrderCancelledEvent);
       window.removeEventListener('canteen_menu_updated', handleMenuUpdated);
     };
-  }, [refreshOrderData]);
+  }, []);
 
   // 3. Đồng hồ local tính toán giờ (chu kỳ 30 giây, hoàn toàn thuần client, KHÔNG gọi API)
   useEffect(() => {
@@ -500,15 +548,15 @@ export default function App() {
       if (typeof document !== 'undefined' && !document.hidden && userRef.current) {
         setTimeStatus(getTimeGateStatus());
         if (currentViewRef.current === 'portal') {
-          refreshPortalData();
+          refreshPortalDataRef.current();
         } else {
-          refreshOrderData(userRef.current);
+          refreshOrderDataRef.current(userRef.current);
         }
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [refreshOrderData, refreshPortalData]);
+  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -592,14 +640,14 @@ export default function App() {
           timeStatus={guestTimeStatus}
           error={error}
           onRefresh={async () => {
-            const [m, s] = await Promise.all([
+            const [m, s, o] = await Promise.all([
               getMenu(selectedSiteCode),
               getSites(),
+              getOrders({ siteId: selectedSiteCode }),
             ]);
             if (Array.isArray(m) && m.length > 0) setMenu(m);
             if (Array.isArray(s) && s.length > 0) setSitesList(s);
-            const o = getCachedOrders(undefined, selectedSiteCode);
-            setOrders(o);
+            if (Array.isArray(o)) setOrders(o);
           }}
           onLogout={() => {
             setGuestMode(false);

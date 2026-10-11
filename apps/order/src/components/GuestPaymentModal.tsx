@@ -18,16 +18,19 @@ import {
   Maximize2,
   X,
   Loader2,
+  UtensilsCrossed,
+  BellRing,
 } from 'lucide-react';
 import {
   formatVnd,
   Site,
   PaymentMethod,
   PaymentStatus,
-  getVietQrBankCode,
+  OrderStatus,
   getCachedSites,
   getSitePaymentQrUrl,
   downloadQrImage,
+  subscribeGuestOrder,
 } from '@canteen/shared';
 
 interface GuestPaymentModalProps {
@@ -41,9 +44,12 @@ interface GuestPaymentModalProps {
     guestPhone?: string;
     pickupTime?: string;
     site?: Site;
+    status?: OrderStatus;
   } | null;
   status: PaymentStatus;
+  orderStatus?: OrderStatus;
   rejectReason?: string;
+  onPaymentStatusChange?: (paymentStatus: PaymentStatus, orderStatus?: OrderStatus) => void;
   onClose: () => void;
 }
 
@@ -51,13 +57,46 @@ export function GuestPaymentModal({
   isOpen,
   order,
   status,
+  orderStatus,
   rejectReason,
+  onPaymentStatusChange,
   onClose,
 }: GuestPaymentModalProps) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [, setSiteVersion] = useState(0);
   const [isZoomOpen, setIsZoomOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [livePaymentStatus, setLivePaymentStatus] = useState<PaymentStatus>(status);
+  const [liveOrderStatus, setLiveOrderStatus] = useState<OrderStatus>(orderStatus || order?.status || 'confirmed');
+  const effectiveStatus = livePaymentStatus;
+  const effectiveOrderStatus = liveOrderStatus;
+
+  useEffect(() => {
+    setLivePaymentStatus(status);
+  }, [status]);
+
+  useEffect(() => {
+    if (orderStatus) {
+      setLiveOrderStatus(orderStatus);
+    }
+  }, [orderStatus]);
+
+  useEffect(() => {
+    if (!isOpen || !order) return;
+    const unsub = subscribeGuestOrder(
+      { orderId: order.id, orderCode: order.orderCode },
+      (update) => {
+        if (update.paymentStatus) {
+          setLivePaymentStatus(update.paymentStatus);
+        }
+        if (update.status) {
+          setLiveOrderStatus(update.status);
+        }
+        onPaymentStatusChange?.(update.paymentStatus, update.status);
+      }
+    );
+    return () => unsub();
+  }, [isOpen, order?.id, order?.orderCode, onPaymentStatusChange]);
 
   useEffect(() => {
     const handleSiteUpdate = () => setSiteVersion((v) => v + 1);
@@ -110,7 +149,7 @@ export function GuestPaymentModal({
         </div>
 
         {/* 1. STATE: PENDING (Đang chờ thanh toán) */}
-        {status === 'pending' && (
+        {effectiveStatus === 'pending' && (
           <div className="space-y-4">
             {order.paymentMethod === 'cash' ? (
               // Tiền mặt
@@ -287,7 +326,7 @@ export function GuestPaymentModal({
         )}
 
         {/* 2. STATE: PAID (Đã thanh toán thành công) */}
-        {status === 'paid' && (
+        {effectiveStatus === 'paid' && (
           <div className="space-y-4 text-center py-2 animate-in zoom-in-95 duration-200">
             <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 border border-emerald-300 mx-auto flex items-center justify-center shadow-sm">
               <CheckCircle2 className="w-10 h-10" />
@@ -302,28 +341,74 @@ export function GuestPaymentModal({
               </p>
             </div>
 
-            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 flex items-center gap-3 text-left">
-              <ChefHat className="w-6 h-6 text-emerald-600 shrink-0" />
-              <div>
-                <p className="font-bold">Bếp đang chế biến món ăn</p>
-                <p className="text-[11px] text-emerald-700 mt-0.5">
-                  Vui lòng chờ gọi số hoặc liên hệ quầy theo giờ nhận: <strong>{order.pickupTime || 'Ngay bây giờ'}</strong>.
-                </p>
+            {/* Trạng thái đơn hàng thời gian thực: Confirmed -> Preparing -> Ready -> Completed */}
+            <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 text-left space-y-2.5">
+              <div className="flex items-center gap-2.5 font-bold">
+                {effectiveOrderStatus === 'preparing' ? (
+                  <>
+                    <ChefHat className="w-5 h-5 text-amber-600 animate-bounce" />
+                    <span className="text-amber-800">Bếp đang chế biến món ăn...</span>
+                  </>
+                ) : effectiveOrderStatus === 'ready' ? (
+                  <>
+                    <BellRing className="w-5 h-5 text-emerald-600 animate-bounce" />
+                    <span className="text-emerald-800 font-black">Món đã sẵn sàng! Mời bạn tới nhận tại quầy</span>
+                  </>
+                ) : effectiveOrderStatus === 'completed' ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5 text-teal-600" />
+                    <span className="text-teal-800">Đơn hàng đã hoàn tất! Chúc bạn ngon miệng.</span>
+                  </>
+                ) : (
+                  <>
+                    <UtensilsCrossed className="w-5 h-5 text-emerald-600" />
+                    <span>Đã tiếp nhận đơn hàng — Bếp chuẩn bị chế biến</span>
+                  </>
+                )}
               </div>
+
+              {/* Progress Steps */}
+              <div className="grid grid-cols-3 gap-1 pt-1 text-center text-[10px] font-bold">
+                <div className={`p-1.5 rounded-lg border transition ${
+                  ['confirmed', 'preparing', 'ready', 'completed'].includes(effectiveOrderStatus)
+                    ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                    : 'bg-white text-slate-400 border-slate-200'
+                }`}>
+                  1. Đã duyệt
+                </div>
+                <div className={`p-1.5 rounded-lg border transition ${
+                  ['preparing', 'ready', 'completed'].includes(effectiveOrderStatus)
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-2xs'
+                    : 'bg-white text-slate-400 border-slate-200'
+                }`}>
+                  2. Đang nấu
+                </div>
+                <div className={`p-1.5 rounded-lg border transition ${
+                  ['ready', 'completed'].includes(effectiveOrderStatus)
+                    ? 'bg-teal-700 text-white border-teal-700 shadow-2xs'
+                    : 'bg-white text-slate-400 border-slate-200'
+                }`}>
+                  3. Sẵn sàng
+                </div>
+              </div>
+
+              <p className="text-[11px] text-emerald-700 pt-1">
+                Giờ nhận mong muốn: <strong>{order.pickupTime || 'Ngay bây giờ'}</strong>. Vui lòng theo dõi hoặc liên hệ quầy thu ngân khi tới giờ.
+              </p>
             </div>
 
             <button
               onClick={onClose}
               className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-xs transition cursor-pointer shadow-md shadow-emerald-600/25 flex items-center justify-center gap-2 min-h-[44px]"
             >
-              <span>Hoàn tất & Tiếp tục đặt món</span>
+              <span>Tiếp tục đặt món / Đóng</span>
               <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         )}
 
         {/* 3. STATE: REJECTED (Bị từ chối / Hủy) */}
-        {status === 'rejected' && (
+        {effectiveStatus === 'rejected' && (
           <div className="space-y-4 text-center py-2 animate-in zoom-in-95 duration-200">
             <div className="w-16 h-16 rounded-full bg-rose-100 text-rose-600 border border-rose-300 mx-auto flex items-center justify-center shadow-sm">
               <XCircle className="w-10 h-10" />

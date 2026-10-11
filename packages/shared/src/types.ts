@@ -71,7 +71,7 @@ export interface MenuItem {
 
 export type DeliveryMethod = 'dine_in' | 'room_delivery';
 
-export type OrderStatus = 'confirmed' | 'preparing' | 'completed' | 'cancelled';
+export type OrderStatus = 'confirmed' | 'preparing' | 'ready' | 'completed' | 'cancelled';
 
 export type PaymentMethod = 'wallet' | 'cash' | 'bank_transfer';
 
