@@ -131,7 +131,8 @@ import { ImageUploader } from './ImageUploader';
 import { BulkMenuUploadModal } from './BulkMenuUploadModal';
 import { CopyMenuModal } from './CopyMenuModal';
 import { PaginationControls } from './PaginationControls';
-import { exportOrdersToExcel, exportUsersToExcel, exportMenuToExcel } from '../utils/exportExcel';
+import { exportOrdersToExcel, exportUsersToExcel, exportMenuToExcel, exportAccountingReconciliationToExcel } from '../utils/exportExcel';
+import { AdminAnalyticsAndReconciliation } from './AdminAnalyticsAndReconciliation';
 
 /**
  * Bộ đếm thời gian thực từ lúc khách đặt món (Order Live Elapsed Timer)
@@ -2499,6 +2500,15 @@ export function PortalDashboard({
           {/* ================= TAB: OVERVIEW ================= */}
           {tab === 'overview' && (
             <div className="space-y-4 sm:space-y-6">
+              {/* Phân hệ Phân tích Doanh thu, Chart Sản lượng & Đối soát Kế toán chuyên sâu */}
+              <AdminAnalyticsAndReconciliation
+                orders={orders}
+                menu={menu}
+                users={users}
+                siteName={activeSite.name}
+                selectedSiteCode={selectedSiteCode}
+              />
+
               {/* Stat Cards */}
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
                 <div className="bg-white border border-slate-200 rounded-2xl p-4 sm:p-5 shadow-xs">
