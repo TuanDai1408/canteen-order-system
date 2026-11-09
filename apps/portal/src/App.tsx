@@ -298,6 +298,17 @@ export default function App() {
 
       try {
         const mapped = mapOrder(rawOrder);
+        // Đảm bảo cách ly đa cơ sở: Chỉ nhận đơn thuộc đúng cơ sở hiện tại
+        const activeSite = currentSiteRef.current || 'hung_vuong';
+        const isMatchSite =
+          activeSite === 'g_group'
+            ? mapped.siteId === 'g_group'
+            : !mapped.siteId || mapped.siteId === 'hung_vuong';
+
+        if (!isMatchSite) {
+          return;
+        }
+
         setOrders((prev) => {
           const exists = prev.some((o) => o.id === mapped.id || o.orderCode === mapped.orderCode);
           if (exists) {

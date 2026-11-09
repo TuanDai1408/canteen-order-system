@@ -8,6 +8,7 @@ import {
   createQRToken,
   toggleQRTokenStatus,
   deleteQRToken,
+  deleteAllQRTokens,
   updateOrderStatus,
   updateUserWallet,
   setUserDisabledStatus,
@@ -1114,8 +1115,17 @@ export function PortalDashboard({
     );
   };
 
+  // Site-isolated orders
+  const siteOrders = useMemo(() => {
+    return orders.filter((o) =>
+      selectedSiteCode === 'g_group'
+        ? o.siteId === 'g_group'
+        : !o.siteId || o.siteId === 'hung_vuong'
+    );
+  }, [orders, selectedSiteCode]);
+
   // Overview metrics
-  const activeOrders = useMemo(() => orders.filter((o) => o.status !== 'cancelled'), [orders]);
+  const activeOrders = useMemo(() => siteOrders.filter((o) => o.status !== 'cancelled'), [siteOrders]);
   const totalRevenue = useMemo(() => activeOrders.reduce((s, o) => s + o.totalAmount, 0), [activeOrders]);
   const roomDeliveryCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'room_delivery').length, [activeOrders]);
   const dineInCount = useMemo(() => activeOrders.filter((o) => o.deliveryMethod === 'dine_in').length, [activeOrders]);
@@ -1124,7 +1134,7 @@ export function PortalDashboard({
   const kitchenDishSummary = useMemo(() => {
     // Lọc theo ngày được chọn (hoặc tất cả các ngày nếu chọn 'all'), loại bỏ đơn hủy
     const targetOrders = (orderDateFilter && orderDateFilter !== 'all'
-      ? orders.filter((o) => {
+      ? siteOrders.filter((o) => {
           const d = o.targetDate || (o.createdAt ? o.createdAt.split('T')[0] : '');
           return d === orderDateFilter && o.status !== 'cancelled';
         })
@@ -1231,11 +1241,11 @@ export function PortalDashboard({
   const dishSummary = kitchenDishSummary;
 
   const ordersByStatus = useMemo(() => ({
-    confirmed: orders.filter((o) => o.status === 'confirmed').length,
-    preparing: orders.filter((o) => o.status === 'preparing').length,
-    completed: orders.filter((o) => o.status === 'completed').length,
-    cancelled: orders.filter((o) => o.status === 'cancelled').length,
-  }), [orders]);
+    confirmed: siteOrders.filter((o) => o.status === 'confirmed').length,
+    preparing: siteOrders.filter((o) => o.status === 'preparing').length,
+    completed: siteOrders.filter((o) => o.status === 'completed').length,
+    cancelled: siteOrders.filter((o) => o.status === 'cancelled').length,
+  }), [siteOrders]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -1750,6 +1760,24 @@ export function PortalDashboard({
     }
   };
 
+  const [isDeletingAllQR, setIsDeletingAllQR] = useState(false);
+
+  const handleDeleteAllQR = async () => {
+    if (!window.confirm('Bạn có chắc chắn muốn xóa TOÀN BỘ danh sách mã QR ngoại lệ không? Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác.')) {
+      return;
+    }
+    setIsDeletingAllQR(true);
+    try {
+      await deleteAllQRTokens(selectedSiteCode);
+      setMsg({ type: 'ok', text: 'Đã xóa toàn bộ mã QR ngoại lệ thành công.' });
+      onRefresh();
+    } catch (e: any) {
+      setMsg({ type: 'err', text: e.message || 'Lỗi khi xóa tất cả mã QR' });
+    } finally {
+      setIsDeletingAllQR(false);
+    }
+  };
+
   // Adjust stock
   const handleToggleStock = async (item: MenuItem, delta: number) => {
     try {
@@ -2014,7 +2042,7 @@ export function PortalDashboard({
   };
 
   const selectPendingKitchenOrders = () => {
-    const kitchenOrders = orders.filter(
+    const kitchenOrders = siteOrders.filter(
       (o) => o.status === 'confirmed' || o.status === 'preparing'
     );
     setSelectedOrderIds(kitchenOrders.map((o) => o.id));
@@ -2502,7 +2530,7 @@ export function PortalDashboard({
             <div className="space-y-4 sm:space-y-6">
               {/* Phân hệ Phân tích Doanh thu, Chart Sản lượng & Đối soát Kế toán chuyên sâu */}
               <AdminAnalyticsAndReconciliation
-                orders={orders}
+                orders={siteOrders}
                 menu={menu}
                 users={users}
                 siteName={activeSite.name}
@@ -3414,7 +3442,7 @@ export function PortalDashboard({
                       className="px-3 py-1.5 bg-white hover:bg-slate-50 border border-indigo-200 text-indigo-700 text-xs font-bold rounded-xl shadow-2xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
                     >
                       <ChefHat className="w-4 h-4 text-indigo-600" />
-                      <span>Chọn & In Đơn Bếp ({orders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
+                      <span>Chọn & In Đơn Bếp ({siteOrders.filter(o => o.status === 'confirmed' || o.status === 'preparing').length})</span>
                     </button>
 
                     {selectedOrderIds.length > 0 && (
@@ -3429,7 +3457,7 @@ export function PortalDashboard({
                         <button
                           onClick={() => {
                             setBatchTestCount(null);
-                            setBatchPrintOrders(orders.filter((o) => selectedOrderIds.includes(o.id)));
+                            setBatchPrintOrders(siteOrders.filter((o) => selectedOrderIds.includes(o.id)));
                           }}
                           className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5 min-h-[36px]"
                         >
@@ -4600,13 +4628,31 @@ export function PortalDashboard({
                       Dùng khi cổng đặt món thường đã đóng (sau {timeStatus.closesAt || '16:00'}). Quản trị viên cấp mã để cán bộ đặt suất ăn bổ sung ngoài giờ quy định.
                     </p>
                   </div>
-                  <button
-                    onClick={() => setIsCreateQROpen(true)}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0 transition"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Tạo mã mới</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {enrichedTokens.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleDeleteAllQR}
+                        disabled={isDeletingAllQR}
+                        className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] transition disabled:opacity-50"
+                        title="Xóa tất cả mã QR ngoại lệ hiện có"
+                      >
+                        {isDeletingAllQR ? (
+                          <Loader2 className="w-4 h-4 animate-spin text-rose-600" />
+                        ) : (
+                          <Trash2 className="w-4 h-4 text-rose-600" />
+                        )}
+                        <span>Xóa tất cả ({enrichedTokens.length})</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setIsCreateQROpen(true)}
+                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer min-h-[40px] shadow-sm flex-shrink-0 transition"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Tạo mã mới</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Quick Summary Cards */}

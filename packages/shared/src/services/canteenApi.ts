@@ -4787,11 +4787,13 @@ export async function getQRTokens(siteId?: string): Promise<QRExceptionToken[]> 
         });
       }
     }
-    // Nguồn 3: cache client
-    for (const ct of existingCached) {
-      const key = ct.token.toUpperCase();
-      if (!tokenMap.has(key)) {
-        tokenMap.set(key, ct);
+    // Nguồn 3: cache client (Chỉ nạp dự phòng khi không kết nối được Supabase)
+    if (!isSupabaseConfigured || !supabase) {
+      for (const ct of existingCached) {
+        const key = ct.token.toUpperCase();
+        if (!tokenMap.has(key)) {
+          tokenMap.set(key, ct);
+        }
       }
     }
 
@@ -4932,6 +4934,58 @@ export async function deleteQRToken(tokenString: string): Promise<boolean> {
     }
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('canteen_qr_token_updated', { detail: { token: cleanToken, deleted: true } }));
+    }
+  } catch {}
+
+  return true;
+}
+
+export async function deleteAllQRTokens(siteId?: string): Promise<boolean> {
+  checkSupabase();
+  if (isSupabaseConfigured && supabase) {
+    try {
+      if (siteId) {
+        if (siteId === 'hung_vuong') {
+          await supabase.from('qr_exception_tokens').delete().or('site_id.eq.hung_vuong,site_id.is.null');
+        } else {
+          await supabase.from('qr_exception_tokens').delete().eq('site_id', siteId);
+        }
+      } else {
+        await supabase.from('qr_exception_tokens').delete().neq('token', '');
+      }
+    } catch (e) {
+      console.warn('deleteAllQRTokens table err:', e);
+    }
+
+    try {
+      if (siteId) {
+        const { data } = await supabase.from('system_settings').select('value').eq('key', SYSTEM_QR_TOKENS_KEY).maybeSingle();
+        if (data && Array.isArray(data.value)) {
+          const remaining = data.value.filter((item: any) =>
+            siteId === 'hung_vuong' ? item.siteId && item.siteId !== 'hung_vuong' : item.siteId !== siteId
+          );
+          await supabase.from('system_settings').upsert({ key: SYSTEM_QR_TOKENS_KEY, value: remaining, updated_at: new Date().toISOString() });
+        }
+      } else {
+        await supabase.from('system_settings').upsert({ key: SYSTEM_QR_TOKENS_KEY, value: [], updated_at: new Date().toISOString() });
+      }
+    } catch (e) {
+      console.warn('deleteAllQRTokens settings err:', e);
+    }
+  }
+
+  const cached = getCachedQRTokens();
+  const updatedList = siteId
+    ? cached.filter((t) => (siteId === 'hung_vuong' ? t.siteId && t.siteId !== 'hung_vuong' : t.siteId !== siteId))
+    : [];
+  setCachedQRTokens(updatedList);
+
+  try {
+    if (broadcastSyncChannel) {
+      broadcastSyncChannel.postMessage({ type: 'qr_tokens_cleared', siteId });
+    }
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('canteen_qr_token_updated', { detail: { cleared: true, siteId } }));
     }
   } catch {}
 

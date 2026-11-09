@@ -69,6 +69,7 @@ export {
   createQRToken,
   toggleQRTokenStatus,
   deleteQRToken,
+  deleteAllQRTokens,
   getQRTokens,
   getCachedQRTokens,
   setCachedQRTokens,
