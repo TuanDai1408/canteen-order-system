@@ -5332,6 +5332,7 @@ export function getCustomPrinterConfig(): PrinterConfig {
           tongPrinterName: parsed.tongPrinterName || parsed.tong_printer || '',
           comPrinterName: parsed.comPrinterName || parsed.com_printer || '',
           nuocPrinterName: parsed.nuocPrinterName || parsed.nuoc_printer || '',
+          splitBillsEnabled: parsed.splitBillsEnabled !== undefined ? !!parsed.splitBillsEnabled : false,
         };
       }
     }
@@ -5340,6 +5341,7 @@ export function getCustomPrinterConfig(): PrinterConfig {
     tongPrinterName: '',
     comPrinterName: '',
     nuocPrinterName: '',
+    splitBillsEnabled: false,
   };
 }
 
@@ -5388,13 +5390,15 @@ export async function fetchPrinterConfig(): Promise<PrinterConfig> {
           tongPrinterName: val.tongPrinterName || val.tong_printer || '',
           comPrinterName: val.comPrinterName || val.com_printer || '',
           nuocPrinterName: val.nuocPrinterName || val.nuoc_printer || '',
+          splitBillsEnabled: val.splitBillsEnabled !== undefined ? !!val.splitBillsEnabled : false,
         };
 
         const oldCfg = getCustomPrinterConfig();
         const hasChanged =
           oldCfg.tongPrinterName !== cfg.tongPrinterName ||
           oldCfg.comPrinterName !== cfg.comPrinterName ||
-          oldCfg.nuocPrinterName !== cfg.nuocPrinterName;
+          oldCfg.nuocPrinterName !== cfg.nuocPrinterName ||
+          oldCfg.splitBillsEnabled !== cfg.splitBillsEnabled;
 
         if (hasChanged) {
           localStorage.setItem(PRINTER_CONFIG_STORAGE_KEY, JSON.stringify(cfg));
@@ -5419,6 +5423,7 @@ export async function setPrinterConfig(
     tongPrinterName: (config.tongPrinterName || '').trim(),
     comPrinterName: (config.comPrinterName || '').trim(),
     nuocPrinterName: (config.nuocPrinterName || '').trim(),
+    splitBillsEnabled: !!config.splitBillsEnabled,
   };
 
   localStorage.setItem(PRINTER_CONFIG_STORAGE_KEY, JSON.stringify(cleanCfg));
@@ -5992,21 +5997,30 @@ export function getOrderDisplayItems(
 export function parseComboItem(name: string): { mainName: string; parts: string[] } | null {
   if (!name || typeof name !== 'string') return null;
   // Match standard pattern: <Tên combo> ( <Món A> + <Món B> )
-  const match = name.match(/^(.*?)\s*[\(（]([^)）]+?\+[^)）]+?)[\)）]/);
+  // Hỗ trợ linh hoạt cả dấu +, dấu phẩy ,, dấu chấm phẩy ;, chữ "và", "kèm"
+  const match = name.match(/^(.*?)\s*[\(（]([^)）]+)[\)）]/);
   if (match) {
     const mainName = match[1].trim();
-    const parts = match[2].split('+').map((s) => s.trim()).filter(Boolean);
+    const rawParts = match[2];
+    const parts = rawParts
+      .split(/\s*(?:\+|\band\b|\bvà\b|\bkèm\b|,|;)\s*/i)
+      .map((s) => s.trim())
+      .filter(Boolean);
     if (parts.length >= 2) {
       return { mainName: mainName || name.trim(), parts };
     }
   }
 
-  // Fallback pattern nếu không dùng ngoặc: "Combo ... : Món A + Món B"
-  if (name.toLowerCase().includes('combo') && name.includes('+')) {
-    const colonIdx = name.indexOf(':');
+  // Fallback pattern nếu không dùng ngoặc: "Combo ... : Món A + Món B" hoặc "Combo ... - Món A + Món B"
+  if (name.toLowerCase().includes('combo')) {
+    const colonIdx = name.indexOf(':') !== -1 ? name.indexOf(':') : name.indexOf(' - ');
     if (colonIdx !== -1) {
       const mainName = name.substring(0, colonIdx).trim();
-      const parts = name.substring(colonIdx + 1).split('+').map((s) => s.trim()).filter(Boolean);
+      const rawParts = name.substring(colonIdx + (name[colonIdx] === ':' ? 1 : 3));
+      const parts = rawParts
+        .split(/\s*(?:\+|\band\b|\bvà\b|\bkèm\b|,|;)\s*/i)
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (parts.length >= 2) {
         return { mainName: mainName || name.trim(), parts };
       }
@@ -6071,6 +6085,16 @@ export function isDrinkItem(name: string, category?: string, menuList: MenuItem[
     }
   }
 
+  // 2b. Ngoại lệ: Nước lèo, nước sốt, nước mắm, nước canh là món ăn / gia vị, KHÔNG PHẢI ĐỒ UỐNG
+  const brothExceptions = [
+    'nước lèo', 'nuoc leo', 'nước súp', 'nuoc sup', 'nước mắm', 'nuoc mam',
+    'nước sốt', 'nuoc sot', 'nước chấm', 'nuoc cham', 'nước canh', 'nuoc canh',
+    'nước dùng', 'nuoc dung', 'nước tương', 'nuoc tuong'
+  ];
+  if (brothExceptions.some((b) => nameNorm.includes(b))) {
+    return false;
+  }
+
   // 3. Quy tắc ưu tiên món ăn chính (chống nhầm lẫn món ăn như "Gà hấp lá chanh", "Cá sốt chua ngọt")
   const foodKeywords = [
     'cơm', 'com', 'bún', 'bun', 'phở', 'pho', 'mì', 'mi', 'hủ tiếu', 'hu tieu',
@@ -6125,7 +6149,16 @@ export interface OrderTicket {
  * 2. Bill Món Cơm: chỉ tạo khi có ít nhất 1 món ăn chính / cơm (hoặc tách từ combo). Không có giá.
  * 3. Bill Món Nước: chỉ tạo khi có ít nhất 1 món đồ uống / tráng miệng (hoặc tách từ combo). Không có giá.
  */
-export function getOrderTickets(order: Order, menuList: MenuItem[] = []): OrderTicket[] {
+export function getOrderTickets(
+  order: Order,
+  menuList: MenuItem[] = [],
+  splitBillsEnabled?: boolean
+): OrderTicket[] {
+  const isSplitOn =
+    splitBillsEnabled !== undefined
+      ? splitBillsEnabled
+      : getCustomPrinterConfig().splitBillsEnabled;
+
   const displayItems = getOrderDisplayItems(order, menuList);
   const orderId = order.id || order.orderCode || 'ord';
 
@@ -6146,6 +6179,11 @@ export function getOrderTickets(order: Order, menuList: MenuItem[] = []): OrderT
     totalQuantity: displayItems.reduce((acc, it) => acc + (it.quantity || 1), 0),
     totalAmount: order.totalAmount,
   };
+
+  // Nếu không bật tính năng tách bill (chỉ dùng 1 máy in duy nhất cho quầy), chỉ xuất Bill Tổng
+  if (!isSplitOn) {
+    return [totalTicket];
+  }
 
   // 2. Phân tách danh sách món ăn cho Bếp Cơm và Bếp Nước
   const foodItems: TicketItem[] = [];
@@ -6264,12 +6302,24 @@ export type BillType = 'tong' | 'com' | 'nuoc';
 /**
  * Kiểm tra xem đơn hàng cần những loại bill nào (Tổng, Cơm, Nước)
  */
-export function getOrderBillRequirements(order: Order, menuList: MenuItem[] = []): {
+export function getOrderBillRequirements(
+  order: Order,
+  menuList: MenuItem[] = [],
+  printerConfig?: PrinterConfig
+): {
   hasTotal: boolean;
   hasFood: boolean;
   hasDrink: boolean;
 } {
-  const tickets = getOrderTickets(order, menuList);
+  const cfg = printerConfig || getCustomPrinterConfig();
+  if (!cfg.splitBillsEnabled) {
+    return {
+      hasTotal: true,
+      hasFood: false,
+      hasDrink: false,
+    };
+  }
+  const tickets = getOrderTickets(order, menuList, true);
   return {
     hasTotal: true,
     hasFood: tickets.some((t) => t.ticketType === 'food'),
@@ -6280,11 +6330,21 @@ export function getOrderBillRequirements(order: Order, menuList: MenuItem[] = []
 /**
  * Kiểm tra xem một đơn hàng đã được in đủ tất cả các bill cần thiết hay chưa
  */
-export function isOrderFullyPrinted(order: Order, menuList: MenuItem[] = []): boolean {
+export function isOrderFullyPrinted(
+  order: Order,
+  menuList: MenuItem[] = [],
+  printerConfig?: PrinterConfig
+): boolean {
   if (!order.printedTongAt) return false;
-  const { hasFood, hasDrink } = getOrderBillRequirements(order, menuList);
-  if (hasFood && !order.printedComAt) return false;
-  if (hasDrink && !order.printedNuocAt) return false;
+  const cfg = printerConfig || getCustomPrinterConfig();
+  if (!cfg.splitBillsEnabled) {
+    // Chế độ in 1 bill tổng: Đã in bill tổng là hoàn thành
+    return true;
+  }
+  const { hasFood, hasDrink } = getOrderBillRequirements(order, menuList, cfg);
+  // Chỉ yêu cầu in bếp cơm / bếp nước nếu quầy có cấu hình máy in cho bếp đó
+  if (hasFood && cfg.comPrinterName?.trim() && !order.printedComAt) return false;
+  if (hasDrink && cfg.nuocPrinterName?.trim() && !order.printedNuocAt) return false;
   return true;
 }
 

@@ -132,6 +132,7 @@ export {
   printBillToPrinter,
   printTestTicket,
   printOrderToAllPrinters,
+  printSingleTicket,
   renderTicketToCanvasImage,
   renderTestTicketToCanvasImage,
   removeVietnameseTones,

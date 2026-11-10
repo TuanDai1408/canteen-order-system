@@ -42,6 +42,7 @@ import {
   listAvailablePrinters,
   printTestTicket,
   printOrderToAllPrinters,
+  printSingleTicket,
   fetchOrderWithItems,
   markBillPrinted,
   unmarkBillPrinted,
@@ -404,6 +405,14 @@ export function PortalDashboard({
     printedCount: number;
     message?: string;
   } | null>(null);
+
+  // Tab chọn loại phiếu in khi xem trước bill (Tất cả / Bill Tổng / Bếp Cơm / Bếp Nước)
+  const [previewTicketTab, setPreviewTicketTab] = useState<'all' | 'total' | 'food' | 'drink'>('all');
+
+  // Reset tab về 'all' khi mở đơn hàng mới
+  useEffect(() => {
+    setPreviewTicketTab('all');
+  }, [printReceiptOrder?.id]);
 
   // Tự động đóng popup "In thành công" sau 2.5 giây
   useEffect(() => {
@@ -828,6 +837,60 @@ export function PortalDashboard({
     }
   };
 
+  // Xử lý in riêng 1 phiếu in cụ thể (chỉ in Bill Tổng, hoặc chỉ in Bếp Cơm, hoặc chỉ in Bếp Nước)
+  const handlePrintSpecificTicket = async (order: Order, ticket: OrderTicket) => {
+    setIsPrinting(true);
+    try {
+      const orderOwner = users.find((u) => u.id === order.userId);
+      const walletBalanceAfter = orderOwner?.walletBalance;
+      const res = await printSingleTicket(
+        order,
+        ticket,
+        printerConfig,
+        walletBalanceAfter,
+        receiptPaperSize
+      );
+
+      if (res.success) {
+        setPrintReceiptOrder(null);
+        await onRefresh();
+        setPrintSuccessInfo({
+          orderCode: order.orderCode,
+          printedCount: 1,
+          message: `Đã in: ${ticket.subtitle || ticket.title}`,
+        });
+        return;
+      }
+
+      // Fallback về window.print()
+      console.info('[Print Fallback] In riêng phiếu qua window.print()');
+      const billType: BillType =
+        ticket.ticketType === 'total' ? 'tong' : ticket.ticketType === 'food' ? 'com' : 'nuoc';
+      const handleAfterPrint = async () => {
+        window.removeEventListener('afterprint', handleAfterPrint);
+        setPrintReceiptOrder(null);
+        try {
+          await markBillPrinted(order.id, billType);
+        } catch (err) {
+          console.warn('[Print Fallback] markBillPrinted notice:', err);
+        }
+        await onRefresh();
+        setPrintSuccessInfo({
+          orderCode: order.orderCode,
+          printedCount: 1,
+          message: `Đã in: ${ticket.subtitle || ticket.title}`,
+        });
+      };
+      window.addEventListener('afterprint', handleAfterPrint, { once: true });
+      window.print();
+    } catch (err: any) {
+      console.warn('[Print Specific Ticket Error]:', err);
+      window.print();
+    } finally {
+      setIsPrinting(false);
+    }
+  };
+
   // Xử lý in 1 đơn hàng qua QZ Tray (fallback window.print nếu chưa mở QZ Tray)
   const handlePrintSingleReceipt = async (order: Order) => {
     setIsPrinting(true);
@@ -877,15 +940,19 @@ export function PortalDashboard({
           setPrintReceiptOrder(null);
           try {
             await markBillPrinted(order.id, 'tong');
-            const reqs = getOrderBillRequirements(order, menu);
-            if (reqs.hasFood) await markBillPrinted(order.id, 'com');
-            if (reqs.hasDrink) await markBillPrinted(order.id, 'nuoc');
+            if (printerConfig.splitBillsEnabled) {
+              const reqs = getOrderBillRequirements(order, menu, printerConfig);
+              if (reqs.hasFood && printerConfig.comPrinterName?.trim()) await markBillPrinted(order.id, 'com');
+              if (reqs.hasDrink && printerConfig.nuocPrinterName?.trim()) await markBillPrinted(order.id, 'nuoc');
+            }
           } catch (err) {
             console.warn('[Print Fallback] markBillPrinted notice:', err);
           }
           await onRefresh();
-          const reqs = getOrderBillRequirements(order, menu);
-          const expectedCount = 1 + (reqs.hasFood ? 1 : 0) + (reqs.hasDrink ? 1 : 0);
+          const reqs = getOrderBillRequirements(order, menu, printerConfig);
+          const expectedCount = printerConfig.splitBillsEnabled
+            ? 1 + (reqs.hasFood && printerConfig.comPrinterName?.trim() ? 1 : 0) + (reqs.hasDrink && printerConfig.nuocPrinterName?.trim() ? 1 : 0)
+            : 1;
           setPrintSuccessInfo({
             orderCode: order.orderCode,
             printedCount: expectedCount,
@@ -916,15 +983,19 @@ export function PortalDashboard({
         setPrintReceiptOrder(null);
         try {
           await markBillPrinted(order.id, 'tong');
-          const reqs = getOrderBillRequirements(order, menu);
-          if (reqs.hasFood) await markBillPrinted(order.id, 'com');
-          if (reqs.hasDrink) await markBillPrinted(order.id, 'nuoc');
+          if (printerConfig.splitBillsEnabled) {
+            const reqs = getOrderBillRequirements(order, menu, printerConfig);
+            if (reqs.hasFood && printerConfig.comPrinterName?.trim()) await markBillPrinted(order.id, 'com');
+            if (reqs.hasDrink && printerConfig.nuocPrinterName?.trim()) await markBillPrinted(order.id, 'nuoc');
+          }
         } catch (err2) {
           console.warn('[Print Fallback] markBillPrinted notice:', err2);
         }
         await onRefresh();
-        const reqs = getOrderBillRequirements(order, menu);
-        const expectedCount = 1 + (reqs.hasFood ? 1 : 0) + (reqs.hasDrink ? 1 : 0);
+        const reqs = getOrderBillRequirements(order, menu, printerConfig);
+        const expectedCount = printerConfig.splitBillsEnabled
+          ? 1 + (reqs.hasFood && printerConfig.comPrinterName?.trim() ? 1 : 0) + (reqs.hasDrink && printerConfig.nuocPrinterName?.trim() ? 1 : 0)
+          : 1;
         setPrintSuccessInfo({
           orderCode: order.orderCode,
           printedCount: expectedCount,
@@ -5019,6 +5090,54 @@ export function PortalDashboard({
                 </div>
               </div>
 
+              {/* Section 2b: Split Bills Toggle Switch Card */}
+              <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-7 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-base font-extrabold text-slate-900">
+                        Chế độ Tách Phiếu Bếp (Phiếu Món Cơm & Phiếu Món Nước)
+                      </span>
+                      <span
+                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                          printerConfig.splitBillsEnabled
+                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                            : 'bg-indigo-50 text-indigo-700 border border-indigo-200'
+                        }`}
+                      >
+                        {printerConfig.splitBillsEnabled ? 'TÁCH PHIẾU BẾP (3 PHIẾU)' : 'ĐƠN PHIẾU (CHỈ 1 BILL TỔNG)'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 leading-relaxed max-w-2xl">
+                      • <strong>TẮT (Khuyên dùng cho Căn tin có 1 máy in như Hùng Vương):</strong> Khi in hoặc in tự động, hệ thống chỉ xuất <strong>1 Bill Tổng duy nhất</strong> có đầy đủ món ăn, nước uống, đơn giá và phương thức thanh toán. Đơn hàng được xác nhận &quot;Đã in đủ&quot; ngay sau đó.<br />
+                      • <strong>BẬT (Dành cho Căn tin quy mô lớn có quầy Bếp riêng):</strong> Tự động phân tách thêm phiếu Món Cơm gửi máy in Bếp và phiếu Món Nước gửi máy in Pha Chế.
+                    </p>
+                  </div>
+
+                  {/* Toggle Switch Component */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPrinterConfigState((prev) => ({
+                        ...prev,
+                        splitBillsEnabled: !prev.splitBillsEnabled,
+                      }));
+                    }}
+                    className={`relative inline-flex h-8 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-hidden ${
+                      printerConfig.splitBillsEnabled ? 'bg-amber-500' : 'bg-slate-300'
+                    }`}
+                    role="switch"
+                    aria-checked={printerConfig.splitBillsEnabled}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                        printerConfig.splitBillsEnabled ? 'translate-x-8' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+
               {/* Section 3: 3 Physical Printers Setup */}
               <form onSubmit={handleSavePrinterConfig} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -6989,7 +7108,20 @@ export function PortalDashboard({
       {/* POS Thermal Bill Modal (K80 / K58 Monospace) */}
       {printReceiptOrder &&
         (() => {
-          const tickets = getOrderTickets(printReceiptOrder, menu);
+          const allTickets = getOrderTickets(printReceiptOrder, menu, true);
+          const hasFood = allTickets.some((t) => t.ticketType === 'food');
+          const hasDrink = allTickets.some((t) => t.ticketType === 'drink');
+
+          // Nếu tắt tách bill thì 'all' mặc định chỉ hiển thị Bill Tổng (đơn phiếu)
+          const effectiveTickets = printerConfig.splitBillsEnabled || previewTicketTab !== 'all'
+            ? allTickets
+            : [allTickets[0]];
+
+          const displayedTickets =
+            previewTicketTab === 'all'
+              ? effectiveTickets
+              : allTickets.filter((t) => t.ticketType === previewTicketTab);
+
           return (
             <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 pos-modal-overlay">
               <div className="bg-white rounded-3xl max-w-md w-full shadow-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
@@ -6999,7 +7131,8 @@ export function PortalDashboard({
                     <div>
                       <span className="font-bold text-sm block">Hóa đơn nhiệt POS</span>
                       <span className="text-[10px] text-slate-400">
-                        Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} · {tickets.length} Phiếu in
+                        Khổ {receiptPaperSize === 'k58' ? 'K58 (58mm)' : 'K80 (80mm)'} ·{' '}
+                        {printerConfig.splitBillsEnabled ? `${allTickets.length} Phiếu bếp` : '1 Bill Tổng duy nhất'}
                       </span>
                     </div>
                   </div>
@@ -7061,24 +7194,102 @@ export function PortalDashboard({
                   </div>
                 </div>
 
+                {/* Ticket Selection Tabs Bar */}
+                <div className="bg-slate-800/90 px-4 py-2 border-b border-slate-700/80 flex items-center justify-between gap-2 overflow-x-auto">
+                  <div className="flex items-center gap-1.5 text-xs">
+                    <span className="text-[11px] text-slate-400 font-semibold mr-1">Xem phiếu:</span>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTicketTab('all')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        previewTicketTab === 'all'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-700/70 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      {printerConfig.splitBillsEnabled ? `Tất cả (${allTickets.length})` : 'Mặc định (1)'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPreviewTicketTab('total')}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        previewTicketTab === 'total'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'bg-slate-700/70 text-slate-300 hover:text-white'
+                      }`}
+                    >
+                      Bill Tổng
+                    </button>
+                    {hasFood && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTicketTab('food')}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          previewTicketTab === 'food'
+                            ? 'bg-amber-600 text-white shadow-xs'
+                            : 'bg-slate-700/70 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        Bếp Cơm
+                      </button>
+                    )}
+                    {hasDrink && (
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTicketTab('drink')}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                          previewTicketTab === 'drink'
+                            ? 'bg-cyan-600 text-white shadow-xs'
+                            : 'bg-slate-700/70 text-slate-300 hover:text-white'
+                        }`}
+                      >
+                        Bếp Nước
+                      </button>
+                    )}
+                  </div>
+
+                  {!printerConfig.splitBillsEnabled && (
+                    <span className="text-[10px] text-amber-300 bg-amber-950/60 border border-amber-800/80 px-2 py-0.5 rounded-md whitespace-nowrap">
+                      1 máy in
+                    </span>
+                  )}
+                </div>
+
                 <div className="p-4 sm:p-6 bg-slate-100/70 overflow-y-auto flex-1 space-y-6">
                   {(() => {
                     const orderOwner = users.find((u) => u.id === printReceiptOrder.userId);
                     const walletBalanceAfter = orderOwner?.walletBalance;
-                    return tickets.map((t, idx) => (
-                      <PosReceiptTicket
-                        key={`${printReceiptOrder.id}-${t.ticketType}`}
-                        order={printReceiptOrder}
-                        ticket={t}
-                        menu={menu}
-                        paperSize={receiptPaperSize}
-                        index={idx}
-                        totalCount={tickets.length}
-                        isPrintMode={false}
-                        isLast={idx === tickets.length - 1}
-                        isSingle={false}
-                        walletBalanceAfter={walletBalanceAfter}
-                      />
+                    return displayedTickets.map((t, idx) => (
+                      <div key={`${printReceiptOrder.id}-${t.ticketType}`} className="space-y-2">
+                        <div className="flex items-center justify-between px-1">
+                          <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider flex items-center gap-1.5">
+                            {t.ticketType === 'total' ? '📄 ' : t.ticketType === 'food' ? '🍲 ' : '🥤 '}
+                            {t.ticketType === 'total' ? 'Bill Tổng Quầy' : t.ticketType === 'food' ? 'Phiếu Bếp Cơm' : 'Phiếu Bếp Nước'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handlePrintSpecificTicket(printReceiptOrder, t)}
+                            disabled={isPrinting}
+                            className="px-2.5 py-1 bg-white hover:bg-indigo-50 border border-slate-300 hover:border-indigo-300 text-slate-700 hover:text-indigo-700 rounded-lg text-[11px] font-bold shadow-2xs transition flex items-center gap-1 cursor-pointer"
+                            title={`In riêng phiếu ${t.ticketType}`}
+                          >
+                            <Printer className="w-3 h-3 text-indigo-600" />
+                            <span>In riêng phiếu này</span>
+                          </button>
+                        </div>
+                        <PosReceiptTicket
+                          order={printReceiptOrder}
+                          ticket={t}
+                          menu={menu}
+                          paperSize={receiptPaperSize}
+                          index={idx}
+                          totalCount={displayedTickets.length}
+                          isPrintMode={false}
+                          isLast={idx === displayedTickets.length - 1}
+                          isSingle={displayedTickets.length === 1}
+                          walletBalanceAfter={walletBalanceAfter}
+                        />
+                      </div>
                     ));
                   })()}
                 </div>
@@ -7090,18 +7301,48 @@ export function PortalDashboard({
                   >
                     Đóng
                   </button>
-                  <button
-                    onClick={() => handlePrintSingleReceipt(printReceiptOrder)}
-                    disabled={isPrinting}
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
-                  >
-                    {isPrinting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Printer className="w-4 h-4" />
+
+                  <div className="flex items-center gap-2">
+                    {previewTicketTab !== 'all' && (
+                      <button
+                        onClick={() => handlePrintSingleReceipt(printReceiptOrder)}
+                        disabled={isPrinting}
+                        className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition flex items-center gap-1.5 cursor-pointer min-h-[44px]"
+                      >
+                        <Printer className="w-4 h-4 text-slate-500" />
+                        <span>In toàn bộ đơn</span>
+                      </button>
                     )}
-                    <span>In Phiếu Nhiệt POS ({tickets.length} Phiếu)</span>
-                  </button>
+
+                    <button
+                      onClick={() => {
+                        if (previewTicketTab === 'all') {
+                          handlePrintSingleReceipt(printReceiptOrder);
+                        } else if (displayedTickets.length > 0) {
+                          handlePrintSpecificTicket(printReceiptOrder, displayedTickets[0]);
+                        }
+                      }}
+                      disabled={isPrinting}
+                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs rounded-xl shadow-md shadow-indigo-600/20 flex items-center gap-2 cursor-pointer min-h-[44px]"
+                    >
+                      {isPrinting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Printer className="w-4 h-4" />
+                      )}
+                      <span>
+                        {previewTicketTab === 'all'
+                          ? `In Phiếu Nhiệt POS (${displayedTickets.length} Phiếu)`
+                          : `In Phiếu: ${
+                              previewTicketTab === 'total'
+                                ? 'Bill Tổng'
+                                : previewTicketTab === 'food'
+                                ? 'Bếp Cơm'
+                                : 'Bếp Nước'
+                            }`}
+                      </span>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -7413,10 +7654,17 @@ export function PortalDashboard({
             `}</style>
             {printReceiptOrder &&
               (() => {
-                const tickets = getOrderTickets(printReceiptOrder, menu);
+                const allPossible = getOrderTickets(printReceiptOrder, menu, true);
+                const effectiveTickets = printerConfig.splitBillsEnabled || previewTicketTab !== 'all'
+                  ? allPossible
+                  : [allPossible[0]];
+                const ticketsToPrint =
+                  previewTicketTab === 'all'
+                    ? effectiveTickets
+                    : allPossible.filter((t) => t.ticketType === previewTicketTab);
                 const orderOwner = users.find((u) => u.id === printReceiptOrder.userId);
                 const walletBalanceAfter = orderOwner?.walletBalance;
-                return tickets.map((t, idx) => (
+                return ticketsToPrint.map((t, idx) => (
                   <PosReceiptTicket
                     key={`${printReceiptOrder.id}-${t.ticketType}`}
                     order={printReceiptOrder}
@@ -7424,10 +7672,10 @@ export function PortalDashboard({
                     menu={menu}
                     paperSize={receiptPaperSize}
                     index={idx}
-                    totalCount={tickets.length}
+                    totalCount={ticketsToPrint.length}
                     isPrintMode={true}
                     isSingle={true}
-                    isLast={idx === tickets.length - 1}
+                    isLast={idx === ticketsToPrint.length - 1}
                     walletBalanceAfter={walletBalanceAfter}
                   />
                 ));

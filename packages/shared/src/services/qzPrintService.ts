@@ -1280,7 +1280,7 @@ export async function printOrderToAllPrinters(
   }
 
   // 2. Tạo danh sách các phiếu in theo logic chuẩn của dự án (tự động tách combo, lọc bỏ bill rỗng)
-  const tickets = getOrderTickets(order, menu);
+  const tickets = getOrderTickets(order, menu, printerConfig.splitBillsEnabled);
 
   // 3. Ghép phiếu in với máy in tương ứng
   interface PrintTask {
@@ -1299,17 +1299,23 @@ export async function printOrderToAllPrinters(
         roleName: 'Máy in Bill Tổng',
       });
     } else if (t.ticketType === 'food') {
-      tasks.push({
-        ticket: t,
-        printerName: printerConfig.comPrinterName || '',
-        roleName: 'Máy in Bếp Cơm',
-      });
+      // Chỉ gửi in bếp cơm nếu cấu hình máy in bếp cơm có tồn tại
+      if (printerConfig.comPrinterName?.trim()) {
+        tasks.push({
+          ticket: t,
+          printerName: printerConfig.comPrinterName.trim(),
+          roleName: 'Máy in Bếp Cơm',
+        });
+      }
     } else if (t.ticketType === 'drink') {
-      tasks.push({
-        ticket: t,
-        printerName: printerConfig.nuocPrinterName || '',
-        roleName: 'Máy in Bếp Nước',
-      });
+      // Chỉ gửi in bếp nước nếu cấu hình máy in bếp nước có tồn tại
+      if (printerConfig.nuocPrinterName?.trim()) {
+        tasks.push({
+          ticket: t,
+          printerName: printerConfig.nuocPrinterName.trim(),
+          roleName: 'Máy in Bếp Nước',
+        });
+      }
     }
   }
 
@@ -1319,7 +1325,7 @@ export async function printOrderToAllPrinters(
   //    3. Feed 6 dòng giấy (~25-30mm) đẩy nội dung hoàn toàn qua khỏi dao cắt
   //    4. Lệnh cắt giấy (partial cut / full cut)
   //    5. Tự động markBillPrinted cho phiếu tương ứng
-  //    6. Nghỉ 300ms giữa các phiếu để dao cắt hoàn thành hành trình trước khi in phiếu kế tiếp
+  //    6. Nghỉ 600ms giữa các phiếu để dao cắt hoàn thành hành trình trước khi in phiếu kế tiếp
   const results: PrintBillResult[] = [];
 
   for (let i = 0; i < tasks.length; i++) {
@@ -1359,9 +1365,9 @@ export async function printOrderToAllPrinters(
         }
       }
 
-      // Giãn cách ngắn giữa các phiếu (~300ms) để cụm dao cắt hoàn thành và bộ đệm máy in sẵn sàng cho phiếu kế tiếp
+      // Giãn cách an toàn giữa các phiếu (600ms) để cụm dao cắt hoàn thành và bộ đệm máy in sẵn sàng cho phiếu kế tiếp
       if (i < tasks.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await new Promise((resolve) => setTimeout(resolve, 600));
       }
     } catch (err: any) {
       console.warn(`[qzPrintService] Lỗi in tại ${roleName} ("${printerName}"):`, err);
@@ -1391,5 +1397,78 @@ export async function printOrderToAllPrinters(
           .join('; ')}`
       : undefined,
   };
+}
+
+/**
+ * In riêng 1 phiếu in đơn lẻ (chỉ in Bill Tổng, hoặc chỉ in Bếp Cơm, hoặc chỉ in Bếp Nước)
+ */
+export async function printSingleTicket(
+  order: Order,
+  ticket: OrderTicket,
+  printerConfig: PrinterConfig,
+  walletBalanceAfter?: number,
+  paperSize: 'k80' | 'k58' = 'k80'
+): Promise<PrintBillResult> {
+  const conn = await connectQz();
+  const billType: BillType =
+    ticket.ticketType === 'total' ? 'tong' : ticket.ticketType === 'food' ? 'com' : 'nuoc';
+  const ticketTitle = ticket.subtitle || ticket.title;
+
+  if (!conn.success) {
+    return {
+      printerName: '',
+      ticketType: ticket.ticketType,
+      billType,
+      ticketTitle,
+      success: false,
+      error: conn.error || 'Không tìm thấy QZ Tray đang chạy trên máy này.',
+    };
+  }
+
+  let targetPrinter = printerConfig.tongPrinterName || '';
+  if (ticket.ticketType === 'food' && printerConfig.comPrinterName?.trim()) {
+    targetPrinter = printerConfig.comPrinterName.trim();
+  } else if (ticket.ticketType === 'drink' && printerConfig.nuocPrinterName?.trim()) {
+    targetPrinter = printerConfig.nuocPrinterName.trim();
+  }
+
+  if (!targetPrinter || !targetPrinter.trim()) {
+    return {
+      printerName: '(Chưa cấu hình)',
+      ticketType: ticket.ticketType,
+      billType,
+      ticketTitle,
+      success: false,
+      error: `Chưa cấu hình máy in cho phiếu [${ticketTitle}]`,
+    };
+  }
+
+  try {
+    const res = await printBillToPrinter(
+      targetPrinter.trim(),
+      ticket,
+      ticket.ticketType === 'total' ? walletBalanceAfter : undefined,
+      paperSize
+    );
+
+    if (res.success && order.id) {
+      try {
+        await markBillPrinted(order.id, billType);
+      } catch (e) {
+        console.warn('[printSingleTicket] markBillPrinted warning:', e);
+      }
+    }
+
+    return res;
+  } catch (err: any) {
+    return {
+      printerName: targetPrinter.trim(),
+      ticketType: ticket.ticketType,
+      billType,
+      ticketTitle,
+      success: false,
+      error: err?.message || 'Lỗi gửi lệnh in ESC/POS tới máy in.',
+    };
+  }
 }
 

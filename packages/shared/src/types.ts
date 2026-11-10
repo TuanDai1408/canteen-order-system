@@ -171,6 +171,7 @@ export interface PrinterConfig {
   tongPrinterName: string;
   comPrinterName: string;
   nuocPrinterName: string;
+  splitBillsEnabled?: boolean;
 }
 
 export interface AutoPrintConfig {
