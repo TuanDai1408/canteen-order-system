@@ -6142,7 +6142,7 @@ export function PortalDashboard({
                 </label>
                 <input
                   type="number"
-                  step="5000"
+                  step="any"
                   required
                   value={walletAmountChange}
                   onChange={(e) => setWalletAmountChange(Number(e.target.value))}
@@ -6245,7 +6245,7 @@ export function PortalDashboard({
                 </label>
                 <input
                   type="number"
-                  step="50000"
+                  step="any"
                   min="0"
                   required
                   value={approvalWalletAmount}
@@ -6803,7 +6803,7 @@ export function PortalDashboard({
                   </label>
                   <input
                     type="number"
-                    step="50000"
+                    step="any"
                     required
                     value={newUserForm.walletBalance}
                     onChange={(e) =>
